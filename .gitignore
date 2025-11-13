@@ -60,3 +60,6 @@ test/
 !account_config.json.example
 stock_pool.json
 data/trading.db
+data/trading.db
+stock_pool.json
+logs/qmt_trading.log
