@@ -20,6 +20,7 @@ from indicator_calculator import get_indicator_calculator
 from position_manager import get_position_manager
 from trading_executor import get_trading_executor
 from strategy import get_trading_strategy
+from config_manager import get_config_manager
 import utils
 
 
@@ -39,6 +40,7 @@ indicator_calculator = get_indicator_calculator()
 position_manager = get_position_manager()
 trading_executor = get_trading_executor()
 trading_strategy = get_trading_strategy()
+config_manager = get_config_manager()
 
 # 实时推送的数据
 realtime_data = {
@@ -269,22 +271,22 @@ def get_config():
 
 @app.route('/api/config/save', methods=['POST'])
 def save_config():
-    """保存系统配置"""
+    """保存系统配置（持久化到数据库）"""
     try:
         config_data = request.json
-        
+
         # 参数校验
         validation_errors = []
         for param_name, value in config_data.items():
             # 检查类型，跳过布尔值和字符串
             if isinstance(value, bool) or isinstance(value, str):
                 continue
-                
+
             # 校验参数
             is_valid, error_msg = config.validate_config_param(param_name, value)
             if not is_valid:
                 validation_errors.append(error_msg)
-        
+
         # 如果有验证错误，返回错误信息
         if validation_errors:
             return jsonify({
@@ -292,50 +294,80 @@ def save_config():
                 'message': '参数校验失败',
                 'errors': validation_errors
             }), 400
-        
-        # 更新配置
-        # 注意：这里只是临时更新运行时配置，不会修改配置文件
-        # 在实际应用中，您可能需要将配置写入配置文件
-        
-        # 更新主要参数
+
+        # 用于持久化的配置字典（数据库键名 -> 实际值）
+        db_configs = {}
+
+        # 更新主要参数并准备持久化
         if "singleBuyAmount" in config_data:
-            config.POSITION_UNIT = float(config_data["singleBuyAmount"])
+            value = float(config_data["singleBuyAmount"])
+            config.POSITION_UNIT = value
+            db_configs['POSITION_UNIT'] = value
+
         if "firstProfitSell" in config_data:
-            config.INITIAL_TAKE_PROFIT_RATIO = float(config_data["firstProfitSell"]) / 100
+            value = float(config_data["firstProfitSell"]) / 100
+            config.INITIAL_TAKE_PROFIT_RATIO = value
+            db_configs['INITIAL_TAKE_PROFIT_RATIO'] = value
+
         if "firstProfitSellEnabled" in config_data:
-            config.ENABLE_DYNAMIC_STOP_PROFIT = bool(config_data["firstProfitSellEnabled"])
+            value = bool(config_data["firstProfitSellEnabled"])
+            config.ENABLE_DYNAMIC_STOP_PROFIT = value
+            db_configs['ENABLE_DYNAMIC_STOP_PROFIT'] = value
+
         if "stockGainSellPencent" in config_data:
-            config.INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = float(config_data["stockGainSellPencent"]) / 100
+            value = float(config_data["stockGainSellPencent"]) / 100
+            config.INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = value
+            db_configs['INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE'] = value
+
         if "stopLossBuy" in config_data:
             # 更新第二个网格级别
             ratio = 1 - float(config_data["stopLossBuy"]) / 100
             config.BUY_GRID_LEVELS[1] = ratio
+            db_configs['BUY_GRID_LEVEL_1'] = ratio
+
         if "stockStopLoss" in config_data:
-            config.STOP_LOSS_RATIO = -float(config_data["stockStopLoss"]) / 100
+            value = -float(config_data["stockStopLoss"]) / 100
+            config.STOP_LOSS_RATIO = value
+            db_configs['STOP_LOSS_RATIO'] = value
+
         if "singleStockMaxPosition" in config_data:
-            config.MAX_POSITION_VALUE = float(config_data["singleStockMaxPosition"])
+            value = float(config_data["singleStockMaxPosition"])
+            config.MAX_POSITION_VALUE = value
+            db_configs['MAX_POSITION_VALUE'] = value
+
         if "totalMaxPosition" in config_data:
-            config.MAX_TOTAL_POSITION_RATIO = float(config_data["totalMaxPosition"]) / 1000000
-            
+            value = float(config_data["totalMaxPosition"]) / 1000000
+            config.MAX_TOTAL_POSITION_RATIO = value
+            db_configs['MAX_TOTAL_POSITION_RATIO'] = value
+
         # 开关类参数
         if "allowBuy" in config_data:
-            setattr(config, 'ENABLE_ALLOW_BUY', bool(config_data["allowBuy"]))
+            value = bool(config_data["allowBuy"])
+            setattr(config, 'ENABLE_ALLOW_BUY', value)
+            db_configs['ENABLE_ALLOW_BUY'] = value
+
         if "allowSell" in config_data:
-            setattr(config, 'ENABLE_ALLOW_SELL', bool(config_data["allowSell"]))
+            value = bool(config_data["allowSell"])
+            setattr(config, 'ENABLE_ALLOW_SELL', value)
+            db_configs['ENABLE_ALLOW_SELL'] = value
+
         if "globalAllowBuySell" in config_data:
             old_auto_trading = config.ENABLE_AUTO_TRADING
-            config.ENABLE_AUTO_TRADING = bool(config_data["globalAllowBuySell"])
-            logger.info(f"自动交易总开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING}")
-        
-        # 在处理保存配置的API中添加
+            value = bool(config_data["globalAllowBuySell"])
+            config.ENABLE_AUTO_TRADING = value
+            # 注意：自动交易总开关不持久化，为了安全每次启动需手动确认
+            logger.info(f"自动交易总开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (仅运行时，不持久化)")
+
+        # 处理模拟交易模式切换
         if "simulationMode" in config_data:
             old_simulation_mode = getattr(config, 'ENABLE_SIMULATION_MODE', False)
             new_simulation_mode = bool(config_data["simulationMode"])
-            
+            # 注意：模拟交易模式不持久化，避免误切换到实盘模式
+
             # 如果模式发生变化
             if old_simulation_mode != new_simulation_mode:
                 setattr(config, 'ENABLE_SIMULATION_MODE', new_simulation_mode)
-                
+
                 # 模式变化时重新初始化内存数据库
                 position_manager = get_position_manager()
                 # 创建新的内存连接
@@ -343,28 +375,28 @@ def save_config():
                 position_manager._create_memory_table()
                 position_manager._sync_db_to_memory()  # 从SQLite重新加载数据
 
-                # 添加这部分代码-切换模式时只重置了内存数据库，但没有更新trading_executor的模拟账户状态
-                # trading_executor = get_trading_executor()
-                # if new_simulation_mode:
-                #     trading_executor.init_simulation_account()  # 初始化模拟账户
-                
-                logger.warning(f"交易模式切换: {'模拟交易' if new_simulation_mode else '实盘交易'}")
-        
-        # 新增：处理补仓功能开关
+                logger.warning(f"交易模式切换: {'模拟交易' if new_simulation_mode else '实盘交易'} (仅运行时，不持久化)")
+
+        # 处理补仓功能开关
         if "stopLossBuyEnabled" in config_data:
             old_stop_loss_buy = getattr(config, 'ENABLE_STOP_LOSS_BUY', True)
             new_stop_loss_buy = bool(config_data["stopLossBuyEnabled"])
             setattr(config, 'ENABLE_STOP_LOSS_BUY', new_stop_loss_buy)
+            db_configs['ENABLE_STOP_LOSS_BUY'] = new_stop_loss_buy
             logger.info(f"补仓功能开关: {old_stop_loss_buy} -> {new_stop_loss_buy}")
 
+        # 持久化所有配置到数据库
+        success_count, fail_count = config_manager.save_batch_configs(db_configs)
 
-        logger.info(f"配置已更新: {config_data}")
-        
+        logger.info(f"配置已更新并持久化: {len(db_configs)} 个配置项, 成功: {success_count}, 失败: {fail_count}")
+
         return jsonify({
             'status': 'success',
-            'message': '配置已保存并应用',
-            'isMonitoring': config.ENABLE_MONITORING,  # 返回不变的监控状态
-            'autoTradingEnabled': config.ENABLE_AUTO_TRADING
+            'message': f'配置已保存并应用 (成功: {success_count}, 失败: {fail_count})',
+            'isMonitoring': config.ENABLE_MONITORING,
+            'autoTradingEnabled': config.ENABLE_AUTO_TRADING,
+            'saved_count': success_count,
+            'failed_count': fail_count
         })
     except Exception as e:
         logger.error(f"保存配置时出错: {str(e)}")

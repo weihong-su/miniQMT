@@ -30,11 +30,11 @@ test_trading_executor.log
 
 # Claude Code 索引
 .claude/index.json
+.claude/
+
 
 # Spec Workflow 配置和模板
-.spec-workflow/config.example.toml
-.spec-workflow/templates/
-.spec-workflow/user-templates/README.md
+.spec-workflow/
 
 # 临时文件
 *.tmp
@@ -54,12 +54,9 @@ ENV/
 # 测试文件和临时数据
 test_*.py.bak
 data/stock2buy.json.bak
+test/
 
 # 注意：account_config.json.example 应该被跟踪，作为配置模板
 !account_config.json.example
 stock_pool.json
-__pycache__/config.cpython-38.pyc
-__pycache__/data_manager.cpython-38.pyc
-__pycache__/logger.cpython-38.pyc
-__pycache__/position_manager.cpython-38.pyc
 data/trading.db

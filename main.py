@@ -16,6 +16,7 @@ from position_manager import get_position_manager
 from trading_executor import get_trading_executor
 from strategy import get_trading_strategy
 from web_server import start_web_server
+from config_manager import get_config_manager
 
 # 获取logger
 logger = get_logger("main")
@@ -30,22 +31,37 @@ def signal_handler(sig, frame):
     stop_event.set()
     sys.exit(0)
 
+def load_persisted_configs():
+    """从数据库加载持久化配置"""
+    logger.info("开始加载持久化配置...")
+    try:
+        config_manager = get_config_manager()
+        applied_count = config_manager.apply_configs_to_runtime()
+        logger.info(f"成功加载并应用 {applied_count} 个持久化配置")
+        return applied_count
+    except Exception as e:
+        logger.error(f"加载持久化配置失败: {str(e)}")
+        return 0
+
 def init_system():
     """初始化系统"""
     logger.info("开始初始化系统...")
-    
+
     # 创建数据目录
     if not os.path.exists(config.DATA_DIR):
         os.makedirs(config.DATA_DIR)
         logger.info(f"创建数据目录: {config.DATA_DIR}")
-    
+
+    # 加载持久化配置（在初始化其他模块之前）
+    load_persisted_configs()
+
     # 获取各个模块的实例
     data_manager = get_data_manager()
     indicator_calculator = get_indicator_calculator()
     position_manager = get_position_manager()
     trading_executor = get_trading_executor()
     trading_strategy = get_trading_strategy()
-    
+
     logger.info("系统初始化完成")
     return data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy
 
