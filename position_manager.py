@@ -1688,8 +1688,9 @@ class PositionManager:
             # 6. 首次止盈检查（增加回撤条件）
             if not profit_triggered:
                 # 检查是否已突破初始止盈阈值
-                profit_breakout_triggered = position.get('profit_breakout_triggered', False)
-                breakout_highest_price = float(position.get('breakout_highest_price', 0))
+                profit_breakout_triggered_raw = position.get('profit_breakout_triggered', False)
+                profit_breakout_triggered = bool(profit_breakout_triggered_raw) if profit_breakout_triggered_raw not in [None, '', 'False', '0', 0] else False
+                breakout_highest_price = float(position.get('breakout_highest_price', 0) or 0)
                 
                 if not profit_breakout_triggered:
                     # 首次突破5%盈利阈值

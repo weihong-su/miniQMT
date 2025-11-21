@@ -745,13 +745,13 @@ class TradingStrategy:
                             logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
                             self.position_manager.mark_signal_processed(stock_code)
                             return
-                    
+
                         if config.ENABLE_AUTO_TRADING:
                             # 添加调试日志
                             logger.info(f"{stock_code} 开始执行{signal_type}信号，重试次数: {retry_count}")
-                            
+
                             success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                            
+
                             if success:
                                 self.position_manager.mark_signal_processed(stock_code)
                                 self.retry_counts.pop(retry_key, None)
@@ -759,6 +759,13 @@ class TradingStrategy:
                             else:
                                 self.retry_counts[retry_key] = retry_count + 1
                                 logger.warning(f"{stock_code} {signal_type}执行失败，重试次数: {retry_count + 1}")
+
+                                # 🔑 修复: 如果信号验证失败(返回False)，立即清除信号避免阻塞
+                                # 检查是否是验证失败(available=0等严重错误)
+                                if retry_count + 1 >= 3:
+                                    logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除避免阻塞其他信号")
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    self.retry_counts.pop(retry_key, None)
                         else:
                             logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                             self.position_manager.mark_signal_processed(stock_code)
