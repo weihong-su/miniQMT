@@ -993,10 +993,10 @@ class TradingExecutor:
                 logger.error(f"买入 {stock_code} 时出错: {str(e)}")
                 return None
     
-    def sell_stock(self, stock_code, volume=None, price=None, ratio=None, price_type=5, callback=None, strategy='default'):
+    def sell_stock(self, stock_code, volume=None, price=None, ratio=None, price_type=5, callback=None, strategy='default', signal_type=None, signal_info=None):
         """
         卖出股票
-        
+
         参数:
         stock_code (str): 股票代码
         volume (int): 卖出数量，与ratio二选一
@@ -1005,7 +1005,9 @@ class TradingExecutor:
         price_type (int): 价格类型，默认为5（特定的限价类型）
         callback (function): 成交回调函数
         strategy (str): 策略标识
-        
+        signal_type (str): 信号类型（可选，用于委托单跟踪）
+        signal_info (dict): 信号详情（可选，用于委托单跟踪）
+
         返回:
         str: 委托编号，失败返回None
         """
@@ -1191,11 +1193,23 @@ class TradingExecutor:
                                 }
                                 
                                 logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号: {order_id}, 价格: {price}, 数量: {volume}, 价格类型: {price_type}")
-                                
+
+                                # 🔑 新增：跟踪委托单（用于超时管理）
+                                if signal_type and signal_info and not is_simulation:
+                                    try:
+                                        self.position_manager.track_order(
+                                            stock_code=stock_code,
+                                            order_id=str(order_id),
+                                            signal_type=signal_type,
+                                            signal_info=signal_info
+                                        )
+                                    except Exception as track_error:
+                                        logger.warning(f"跟踪委托单失败（不影响交易）: {str(track_error)}")
+
                                 # 注册回调（如果有）
                                 if callback:
                                     self.callbacks[order_id] = callback
-                                    
+
                             break
                         else:
                             logger.warning(f"卖出 {formatted_stock_code} 下单失败，尝试重试 ({retry_count + 1}/{max_retries})")

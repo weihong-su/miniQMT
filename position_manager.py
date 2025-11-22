@@ -84,7 +84,13 @@ class PositionManager:
         # 添加信号状态管理
         self.signal_lock = threading.Lock()
         self.latest_signals = {}  # 存储最新检测到的信号
-        self.signal_timestamps = {}  # 信号时间戳      
+        self.signal_timestamps = {}  # 信号时间戳
+
+        # 🔑 新增：委托单跟踪管理
+        self.pending_orders_lock = threading.Lock()
+        self.pending_orders = {}  # 存储待处理的委托单: {stock_code: {'order_id', 'submit_time', 'signal_type', ...}}
+        self.order_check_interval = 30  # 委托单检查间隔（秒）
+        self.last_order_check_time = 0      
 
 
     def _increment_data_version(self):
@@ -1774,66 +1780,127 @@ class PositionManager:
     def validate_trading_signal(self, stock_code, signal_type, signal_info):
         """
         交易信号最后验证 - 防止异常信号执行
-        
+
         参数:
         stock_code (str): 股票代码
         signal_type (str): 信号类型
         signal_info (dict): 信号详细信息
-        
+
         返回:
         bool: 是否通过验证
         """
         try:
+            # 🔑 新增：检查是否有未成交委托单
+            position = self.get_position(stock_code)
+            if position:
+                available = int(position.get('available', 0))
+                volume = int(position.get('volume', 0))
+
+                # 如果available=0但volume>0，可能有未成交委托单
+                if available == 0 and volume > 0:
+                    logger.warning(f"⚠️ {stock_code} 可用数量为0（总持仓{volume}），检查是否有未成交委托单...")
+
+                    # 检查是否有活跃委托单
+                    if self._has_pending_orders(stock_code):
+                        logger.error(f"🚨 {stock_code} 存在未成交委托单，拒绝新信号执行")
+                        logger.error(f"   建议: 等待委托单成交或手动撤单后再操作")
+                        return False
+                    else:
+                        logger.warning(f"⚠️ {stock_code} 未检测到活跃委托单，但available=0")
+                        logger.warning(f"   可能原因: 1)委托单刚成交 2)系统数据未同步 3)其他原因")
+                        # 继续验证其他条件
+
             if signal_type == 'stop_loss':
                 current_price = signal_info.get('current_price', 0)
                 stop_loss_price = signal_info.get('stop_loss_price', 0)
                 cost_price = signal_info.get('cost_price', 0)
-                
+
                 # 🔑 基础数据验证
                 if current_price <= 0 or cost_price <= 0 or stop_loss_price <= 0:
                     logger.error(f"🚨 {stock_code} 止损信号数据包含无效值，拒绝执行")
                     logger.error(f"   current_price={current_price}, cost_price={cost_price}, stop_loss_price={stop_loss_price}")
                     return False
-                
+
                 # 🔑 价格比例检查 - 防止字段错乱导致的异常
                 stop_ratio = stop_loss_price / cost_price
                 if stop_ratio > 1.5 or stop_ratio < 0.5:
                     logger.error(f"🚨 {stock_code} 止损价比例异常 {stop_ratio:.3f}，疑似字段错乱，拒绝执行")
                     return False
-                
+
                 # 🔑 亏损比例检查
                 loss_ratio = (cost_price - current_price) / cost_price
                 if loss_ratio < 0.02:  # 亏损小于2%
                     logger.error(f"🚨 {stock_code} 亏损比例过小 {loss_ratio:.2%}，可能是误触发，拒绝执行")
                     return False
-                
+
                 # 🔑 异常值检查
                 if current_price > cost_price * 10 or stop_loss_price > cost_price * 10:
                     logger.error(f"🚨 {stock_code} 价格数据异常，疑似单位错误，拒绝执行")
                     logger.error(f"   current_price={current_price}, stop_loss_price={stop_loss_price}, cost_price={cost_price}")
                     return False
-                
+
                 logger.info(f"✅ {stock_code} 止损信号验证通过: 亏损{loss_ratio:.2%}, 止损比例{stop_ratio:.3f}")
-                
+
             elif signal_type in ['take_profit_half', 'take_profit_full']:
                 current_price = signal_info.get('current_price', 0)
                 cost_price = signal_info.get('cost_price', 0)
-                
+
                 if current_price <= 0 or cost_price <= 0:
                     logger.error(f"🚨 {stock_code} 止盈信号数据无效，拒绝执行")
                     return False
-                
+
                 # 确保是盈利状态
                 if current_price <= cost_price:
                     logger.error(f"🚨 {stock_code} 止盈信号但当前亏损，拒绝执行")
                     return False
-                
+
                 logger.info(f"✅ {stock_code} 止盈信号验证通过")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"🚨 {stock_code} 信号验证失败: {e}")
+            return False
+
+    def _has_pending_orders(self, stock_code):
+        """
+        检查股票是否有未成交的委托单
+
+        参数:
+        stock_code (str): 股票代码
+
+        返回:
+        bool: 是否有未成交委托单
+        """
+        try:
+            # 在实盘模式下查询委托单
+            if not config.ENABLE_SIMULATION_MODE and self.qmt_trader:
+                try:
+                    # 查询活跃委托单（未成交和部分成交）
+                    orders = self.qmt_trader.xt_trader.query_stock_orders(self.qmt_trader.acc, cancelable_only=False)
+
+                    if orders:
+                        for order in orders:
+                            # 检查是否是当前股票的委托单
+                            if order.stock_code == stock_code:
+                                # 委托状态：48=未报, 49=待报, 50=已报, 55=部成
+                                if order.order_status in [48, 49, 50, 55]:
+                                    logger.info(f"   发现未成交委托单: {stock_code}, 状态={order.order_status}, "
+                                              f"委托量={order.order_volume}, 已成交={order.traded_volume}")
+                                    return True
+
+                    return False
+
+                except Exception as e:
+                    logger.warning(f"查询 {stock_code} 委托单失败: {str(e)}")
+                    # 查询失败时保守处理，返回False允许信号执行
+                    return False
+            else:
+                # 模拟交易模式下不检查委托单
+                return False
+
+        except Exception as e:
+            logger.error(f"检查 {stock_code} 委托单状态出错: {str(e)}")
             return False
 
     def _get_profit_level_info(self, cost_price, highest_price):
@@ -2697,7 +2764,10 @@ class PositionManager:
                                     )
                         except (TypeError, ValueError) as e:
                             logger.error(f"更新最高价时类型转换错误 - {stock_code}: {e}")
-                    
+
+                    # 🔑 新增：检查委托单超时
+                    self.check_pending_orders_timeout()
+
                     # 等待下一次监控
                     for _ in range(5):  # 每5s检查一次
                         if self.stop_flag:
@@ -2707,6 +2777,266 @@ class PositionManager:
             except Exception as e:
                 logger.error(f"持仓监控循环出错: {str(e)}")
                 time.sleep(60)  # 出错后等待一分钟再继续
+
+    # ========== 委托单超时管理功能 ==========
+
+    def track_order(self, stock_code, order_id, signal_type, signal_info):
+        """
+        跟踪新提交的委托单
+
+        参数:
+        stock_code (str): 股票代码
+        order_id (str): 委托单ID
+        signal_type (str): 信号类型
+        signal_info (dict): 信号详细信息
+        """
+        try:
+            with self.pending_orders_lock:
+                self.pending_orders[stock_code] = {
+                    'order_id': order_id,
+                    'submit_time': datetime.now(),
+                    'signal_type': signal_type,
+                    'signal_info': signal_info,
+                    'stock_code': stock_code
+                }
+                logger.info(f"📋 开始跟踪委托单: {stock_code} {signal_type} order_id={order_id}")
+        except Exception as e:
+            logger.error(f"跟踪委托单失败: {str(e)}")
+
+    def check_pending_orders_timeout(self):
+        """
+        检查所有待处理委托单是否超时
+        在持仓监控线程中定期调用
+        """
+        try:
+            # 功能开关检查
+            if not config.ENABLE_PENDING_ORDER_AUTO_CANCEL:
+                return
+
+            # 仅在实盘模式下检查
+            if config.ENABLE_SIMULATION_MODE:
+                return
+
+            # 检查间隔控制
+            current_time = time.time()
+            if current_time - self.last_order_check_time < self.order_check_interval:
+                return
+
+            self.last_order_check_time = current_time
+
+            # 检查每个待处理委托单
+            timeout_orders = []
+
+            with self.pending_orders_lock:
+                for stock_code, order_info in list(self.pending_orders.items()):
+                    submit_time = order_info['submit_time']
+                    elapsed_minutes = (datetime.now() - submit_time).total_seconds() / 60
+
+                    # 检查是否超时
+                    if elapsed_minutes >= config.PENDING_ORDER_TIMEOUT_MINUTES:
+                        timeout_orders.append(order_info)
+
+            # 处理超时委托单
+            for order_info in timeout_orders:
+                self._handle_timeout_order(order_info)
+
+        except Exception as e:
+            logger.error(f"检查委托单超时失败: {str(e)}")
+
+    def _handle_timeout_order(self, order_info):
+        """
+        处理超时的委托单
+
+        参数:
+        order_info (dict): 委托单信息
+        """
+        try:
+            stock_code = order_info['stock_code']
+            order_id = order_info['order_id']
+            signal_type = order_info['signal_type']
+            signal_info = order_info['signal_info']
+            submit_time = order_info['submit_time']
+            elapsed = (datetime.now() - submit_time).total_seconds() / 60
+
+            logger.warning(f"⏰ {stock_code} 委托单超时: order_id={order_id}, "
+                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟")
+
+            # 查询委托单当前状态
+            order_status = self._query_order_status(stock_code, order_id)
+
+            if order_status is None:
+                logger.error(f"❌ 无法查询委托单状态: {stock_code} {order_id}")
+                # 从跟踪列表移除
+                with self.pending_orders_lock:
+                    self.pending_orders.pop(stock_code, None)
+                return
+
+            # 如果已成交，移除跟踪
+            if order_status in [56]:  # 56=已成
+                logger.info(f"✅ {stock_code} 委托单已成交: {order_id}")
+                with self.pending_orders_lock:
+                    self.pending_orders.pop(stock_code, None)
+                return
+
+            # 如果是未成交状态，执行撤单
+            if order_status in [48, 49, 50, 55]:  # 未成交状态
+                logger.warning(f"🚨 {stock_code} 委托单超时未成交，准备撤单...")
+
+                # 执行撤单
+                cancel_result = self._cancel_order(stock_code, order_id)
+
+                if cancel_result:
+                    logger.info(f"✅ {stock_code} 委托单撤销成功: {order_id}")
+
+                    # 如果配置了自动重新挂单
+                    if config.PENDING_ORDER_AUTO_REORDER:
+                        logger.info(f"🔄 {stock_code} 准备重新挂单...")
+                        self._reorder_after_cancel(stock_code, signal_type, signal_info)
+
+                    # 从跟踪列表移除
+                    with self.pending_orders_lock:
+                        self.pending_orders.pop(stock_code, None)
+                else:
+                    logger.error(f"❌ {stock_code} 委托单撤销失败: {order_id}")
+                    # 失败后也移除，避免重复处理
+                    with self.pending_orders_lock:
+                        self.pending_orders.pop(stock_code, None)
+            else:
+                # 其他状态（已撤、废单等），直接移除跟踪
+                logger.info(f"ℹ️ {stock_code} 委托单状态={order_status}, 移除跟踪")
+                with self.pending_orders_lock:
+                    self.pending_orders.pop(stock_code, None)
+
+        except Exception as e:
+            logger.error(f"处理超时委托单失败: {str(e)}")
+
+    def _query_order_status(self, stock_code, order_id):
+        """
+        查询委托单状态
+
+        参数:
+        stock_code (str): 股票代码
+        order_id (str): 委托单ID
+
+        返回:
+        int: 委托单状态码，查询失败返回None
+        """
+        try:
+            if not self.qmt_trader or not self.qmt_connected:
+                return None
+
+            # 查询单个委托单
+            order = self.qmt_trader.xt_trader.query_stock_order(
+                self.qmt_trader.acc, order_id
+            )
+
+            if order:
+                return order.order_status
+
+            return None
+
+        except Exception as e:
+            logger.error(f"查询委托单状态失败: {str(e)}")
+            return None
+
+    def _cancel_order(self, stock_code, order_id):
+        """
+        撤销委托单
+
+        参数:
+        stock_code (str): 股票代码
+        order_id (str): 委托单ID
+
+        返回:
+        bool: 是否撤单成功
+        """
+        try:
+            if not self.qmt_trader or not self.qmt_connected:
+                logger.error("QMT未连接，无法撤单")
+                return False
+
+            # 调用QMT撤单接口
+            result = self.qmt_trader.xt_trader.cancel_order_stock(
+                self.qmt_trader.acc, order_id
+            )
+
+            # 0表示成功，-1表示失败
+            return result == 0
+
+        except Exception as e:
+            logger.error(f"撤单失败: {str(e)}")
+            return False
+
+    def _reorder_after_cancel(self, stock_code, signal_type, signal_info):
+        """
+        撤单后重新挂单
+
+        参数:
+        stock_code (str): 股票代码
+        signal_type (str): 信号类型
+        signal_info (dict): 原信号信息
+        """
+        try:
+            # 获取最新价格
+            latest_quote = self.data_manager.get_latest_data(stock_code)
+            if not latest_quote:
+                logger.error(f"{stock_code} 无法获取最新价格，放弃重新挂单")
+                return
+
+            current_price = latest_quote.get('close', 0)
+
+            # 根据配置的价格模式确定新挂单价格
+            price_mode = config.PENDING_ORDER_REORDER_PRICE_MODE
+
+            if price_mode == "market":
+                # 市价模式：使用当前价
+                new_price = current_price
+                logger.info(f"📌 使用市价模式: {new_price:.2f}")
+
+            elif price_mode == "best":
+                # 对手价模式：卖单用买三价，买单用卖三价
+                # 对于卖出信号，使用买三价
+                bid3 = latest_quote.get('bid3', latest_quote.get('bid1', current_price))
+                new_price = bid3
+                logger.info(f"📌 使用对手价模式(买三价): {new_price:.2f}")
+
+            else:  # "limit"
+                # 限价模式：使用原价格
+                new_price = signal_info.get('current_price', current_price)
+                logger.info(f"📌 使用限价模式(原价格): {new_price:.2f}")
+
+            # 获取卖出数量
+            volume = signal_info.get('volume', 0)
+
+            if volume <= 0:
+                logger.error(f"{stock_code} 卖出数量无效: {volume}，放弃重新挂单")
+                return
+
+            # 调用交易执行器重新挂单
+            from trading_executor import get_trading_executor
+            trading_executor = get_trading_executor()
+
+            logger.info(f"🔄 {stock_code} 重新挂单: 数量={volume}, 价格={new_price:.2f}")
+
+            # 执行卖出
+            result = trading_executor.sell_stock(
+                stock_code=stock_code,
+                sell_volume=volume,
+                sell_price=new_price,
+                strategy=f"reorder_{signal_type}"
+            )
+
+            if result:
+                logger.info(f"✅ {stock_code} 重新挂单成功")
+                # 跟踪新委托单
+                new_order_id = result.get('order_id')
+                if new_order_id:
+                    self.track_order(stock_code, new_order_id, signal_type, signal_info)
+            else:
+                logger.error(f"❌ {stock_code} 重新挂单失败")
+
+        except Exception as e:
+            logger.error(f"重新挂单失败: {str(e)}")
 
 
 # 单例模式

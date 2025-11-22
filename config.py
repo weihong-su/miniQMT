@@ -162,6 +162,22 @@ INITIAL_TAKE_PROFIT_RATIO = 0.06   # 首次止盈触发阈值：盈利6%时触�
 INITIAL_TAKE_PROFIT_PULLBACK_RATIO = 0.005  # 回撤比例：0.5%（可配置）
 INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = 0.6  # 首次止盈卖出比例：50%（半仓）
 
+# 🔑 委托单超时管理配置
+ENABLE_PENDING_ORDER_AUTO_CANCEL = True  # 是否启用委托单超时自动撤单
+PENDING_ORDER_TIMEOUT_MINUTES = 5        # 委托单超时时间（分钟），默认5分钟
+PENDING_ORDER_AUTO_REORDER = True        # 撤单后是否自动重新挂单
+PENDING_ORDER_REORDER_PRICE_MODE = "best"  # 重新挂单价格模式: "market"=市价, "limit"=限价, "best"=对手价
+
+# 说明:
+# - 当止盈止损委托单提交后超过指定时间仍未成交时:
+#   1. ENABLE_PENDING_ORDER_AUTO_CANCEL=True: 自动撤销旧委托单
+#   2. PENDING_ORDER_AUTO_REORDER=True: 撤单后自动以新价格重新挂单
+#   3. 价格模式:
+#      - "market": 以当前市价(最新成交价)挂单
+#      - "limit": 以原价格挂单(适用于价格回调情况)
+#      - "best": 以对手方最优价格挂单(买单用卖三价,卖单用买三价)
+# - ENABLE_PENDING_ORDER_AUTO_CANCEL=False: 仅提示用户，不自动处理
+
 # 分级动态止盈设置（已触发首次止盈后的动态止盈位）
 # 格式：(最高盈利比例阈值, 止盈位系数)
 # 说明：当最高盈利达到阈值后，止盈位 = 最高价 × 系数

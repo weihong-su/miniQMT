@@ -361,8 +361,16 @@ class TradingStrategy:
                 logger.warning(f"[实盘交易] {stock_code} 止损信号已识别，执行实盘交易stop_loss")
                 
                 # 实盘交易功能
+                # 🔑 新增：传递信号信息用于委托单跟踪
                 order_id = self.trading_executor.sell_stock(
-                    stock_code, volume, price_type=5, strategy='stop_loss'
+                    stock_code, volume, price_type=5, strategy='stop_loss',
+                    signal_type='stop_loss',
+                    signal_info={
+                        'current_price': current_price,
+                        'cost_price': signal_info.get('cost_price', 0),
+                        'volume': volume,
+                        'loss_ratio': signal_info.get('loss_ratio', 0)
+                    }
                 )
                 return order_id is not None
             
@@ -430,8 +438,18 @@ class TradingStrategy:
                 logger.info(f"[实盘交易] {stock_code} 首次止盈信号已识别，执行实盘卖出交易take_profit_half")
                 
                 # 实盘交易
+                # 🔑 新增：传递信号信息用于委托单跟踪
                 order_id = self.trading_executor.sell_stock(
-                    stock_code, sell_volume, price_type=5, strategy='auto_partial'
+                    stock_code, sell_volume, price_type=5, strategy='auto_partial',
+                    signal_type='take_profit_half',
+                    signal_info={
+                        'current_price': current_price,
+                        'cost_price': signal_info.get('cost_price', 0),
+                        'volume': sell_volume,
+                        'sell_ratio': sell_ratio,
+                        'breakout_highest_price': breakout_highest_price,
+                        'pullback_ratio': pullback_ratio
+                    }
                 )
                 if order_id:
                     logger.info(f"[实盘交易] {stock_code} 首次止盈卖出委托已下达，委托号: {order_id}")
@@ -494,8 +512,17 @@ class TradingStrategy:
                 logger.info(f"[实盘交易] {stock_code} 动态止盈信号已识别，执行实盘卖出交易take_profit_full")
                 
                 # 实盘交易
+                # 🔑 新增：传递信号信息用于委托单跟踪
                 order_id = self.trading_executor.sell_stock(
-                    stock_code, volume, price_type=5, strategy='auto_full'
+                    stock_code, volume, price_type=5, strategy='auto_full',
+                    signal_type='take_profit_full',
+                    signal_info={
+                        'current_price': current_price,
+                        'cost_price': signal_info.get('cost_price', 0),
+                        'volume': volume,
+                        'dynamic_take_profit_price': dynamic_take_profit_price,
+                        'highest_price': signal_info.get('highest_price', 0)
+                    }
                 )
 
                 if order_id:
