@@ -737,104 +737,173 @@ class TradingStrategy:
     
     def check_and_execute_strategies(self, stock_code):
         """
-        检查并执行所有交易策略 - 重构版本
+        检查并执行所有交易策略 - 修复版本
         策略检测始终运行，但交易执行依赖ENABLE_AUTO_TRADING
+
+        修复说明:
+        - 调整信号处理优先级: 止损 > 止盈 > 补仓 > 其他
+        - 止损作为最高优先级,确保风控底线
+        - 补仓前检查是否有止损信号,避免冲突
         """
         try:
             # 添加调试日志
             logger.debug(f"开始检查 {stock_code} 的交易策略，自动交易状态: {config.ENABLE_AUTO_TRADING}")
-            
+
             # 更新数据（始终执行）
             self.data_manager.update_stock_data(stock_code)
             self.indicator_calculator.calculate_all_indicators(stock_code)
-            
-            # 1. 检查止盈止损信号（如果启用）
-            if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                pending_signals = self.position_manager.get_pending_signals()
-                
-                # 添加调试日志
-                logger.debug(f"{stock_code} 待处理信号: {list(pending_signals.keys())}")
-                
-                if stock_code in pending_signals:
-                    signal_data = pending_signals[stock_code]
-                    signal_type = signal_data['type']
-                    signal_info = signal_data['info']
 
-                    # 只处理止盈信号，止损信号留到后面处理
-                    if signal_type in ['take_profit_half', 'take_profit_full']:
+            # ========== 🔑 动态优先级信号处理 - 根据配置参数自动调整执行顺序 ==========
+            # 获取动态优先级信息
+            priority_info = config.determine_stop_loss_add_position_priority()
+            priority_mode = priority_info['priority']
+            scenario = priority_info['scenario']
 
-                        logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
-                        
-                        # 检查是否已处理过该信号（防重复,每分钟3次）
-                        retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                        retry_count = self.retry_counts.get(retry_key, 0)
-                        if retry_count >= 3:
-                            logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
-                            self.position_manager.mark_signal_processed(stock_code)
-                            return
+            # 场景A: 补仓优先 (补仓阈值 < 止损阈值, 例如补仓5% < 止损7%)
+            # 执行顺序: 止盈 → 补仓 → 止损
+            if priority_mode == 'add_position_first':
+                logger.debug(f"【场景{scenario}】使用补仓优先策略: 止盈 → 补仓 → 止损")
 
-                        if config.ENABLE_AUTO_TRADING:
-                            # 添加调试日志
-                            logger.info(f"{stock_code} 开始执行{signal_type}信号，重试次数: {retry_count}")
+                # 1️⃣ 止盈信号处理（第一优先级）
+                if config.ENABLE_DYNAMIC_STOP_PROFIT:
+                    pending_signals = self.position_manager.get_pending_signals()
+                    if stock_code in pending_signals:
+                        signal_data = pending_signals[stock_code]
+                        signal_type = signal_data['type']
+                        signal_info = signal_data['info']
 
-                            success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                        if signal_type in ['take_profit_half', 'take_profit_full']:
+                            logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
+                            retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                            retry_count = self.retry_counts.get(retry_key, 0)
 
-                            if success:
+                            if retry_count >= 3:
+                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
                                 self.position_manager.mark_signal_processed(stock_code)
-                                self.retry_counts.pop(retry_key, None)
-                                logger.info(f"{stock_code} {signal_type}信号执行成功")
-                            else:
-                                self.retry_counts[retry_key] = retry_count + 1
-                                logger.warning(f"{stock_code} {signal_type}执行失败，重试次数: {retry_count + 1}")
+                                return
 
-                                # 🔑 修复: 如果信号验证失败(返回False)，立即清除信号避免阻塞
-                                # 检查是否是验证失败(available=0等严重错误)
-                                if retry_count + 1 >= 3:
-                                    logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除避免阻塞其他信号")
+                            if config.ENABLE_AUTO_TRADING:
+                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if success:
                                     self.position_manager.mark_signal_processed(stock_code)
                                     self.retry_counts.pop(retry_key, None)
-                        else:
-                            logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
-                            self.position_manager.mark_signal_processed(stock_code)
-                else:
-                    logger.debug(f"{stock_code} 当前无待处理信号")
-
-
-            # 2. 检查补仓信号（第二优先级 - 下跌时摊平成本）
-            add_position_signal, add_position_info = self.position_manager.check_add_position_signal(stock_code)
-            if add_position_signal == 'add_position':
-                logger.info(f"{stock_code} 检测到补仓信号")
-                
-                if config.ENABLE_AUTO_TRADING:
-                    if self.execute_add_position_strategy(stock_code, add_position_info):
-                        logger.info(f"{stock_code} 执行补仓策略成功")
-                        return  # 补仓执行后直接返回
-                else:
-                    logger.info(f"{stock_code} 检测到补仓信号，但自动交易已关闭")
-
-            # 3. 检查止损信号（第三优先级 - 最终风控底线）
-            if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                pending_signals = self.position_manager.get_pending_signals()
-                
-                if stock_code in pending_signals:
-                    signal_data = pending_signals[stock_code]
-                    signal_type = signal_data['type']
-                    signal_info = signal_data['info']
-                    
-                    # 处理止损信号
-                    if signal_type == 'stop_loss':
-                        logger.warning(f"{stock_code} 处理待执行的{signal_type}信号")
-                        
-                        if config.ENABLE_AUTO_TRADING:
-                            success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                            if success:
+                                    logger.info(f"{stock_code} {signal_type}信号执行成功")
+                                    return  # 止盈执行成功后直接返回
+                                else:
+                                    self.retry_counts[retry_key] = retry_count + 1
+                                    if retry_count + 1 >= 3:
+                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                        self.position_manager.mark_signal_processed(stock_code)
+                                        self.retry_counts.pop(retry_key, None)
+                            else:
+                                logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                                 self.position_manager.mark_signal_processed(stock_code)
-                                logger.warning(f"{stock_code} {signal_type}信号执行成功")
-                                return  # 止损执行后直接返回
-                        else:
-                            logger.warning(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
-                            self.position_manager.mark_signal_processed(stock_code)
-                            return
+
+                # 2️⃣ 补仓信号处理（第二优先级）
+                add_position_signal, add_position_info = self.position_manager.check_add_position_signal(stock_code)
+                if add_position_signal == 'add_position':
+                    logger.info(f"✅ 【场景{scenario}】{stock_code} 检测到补仓信号")
+
+                    if config.ENABLE_AUTO_TRADING:
+                        if self.execute_add_position_strategy(stock_code, add_position_info):
+                            logger.info(f"{stock_code} 执行补仓策略成功")
+                            return  # 补仓执行后直接返回
+                    else:
+                        logger.info(f"{stock_code} 检测到补仓信号，但自动交易已关闭")
+
+                # 3️⃣ 止损信号处理（第三优先级 - 仅在仓位已满时触发）
+                if config.ENABLE_DYNAMIC_STOP_PROFIT:
+                    pending_signals = self.position_manager.get_pending_signals()
+                    if stock_code in pending_signals:
+                        signal_data = pending_signals[stock_code]
+                        signal_type = signal_data['type']
+                        signal_info = signal_data['info']
+
+                        if signal_type == 'stop_loss':
+                            logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(仓位已满)")
+
+                            if config.ENABLE_AUTO_TRADING:
+                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if success:
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    logger.warning(f"✅ {stock_code} 止损信号执行成功")
+                                    return
+                                else:
+                                    logger.error(f"❌ {stock_code} 止损信号执行失败")
+                                    return
+                            else:
+                                logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                                self.position_manager.mark_signal_processed(stock_code)
+                                return
+
+            # 场景B: 止损优先 (止损阈值 <= 补仓阈值, 例如止损5% <= 补仓7%)
+            # 执行顺序: 止损 → 止盈 → (永不补仓)
+            elif priority_mode == 'stop_loss_first':
+                logger.debug(f"【场景{scenario}】使用止损优先策略: 止损 → 止盈 → (永不补仓)")
+
+                # 1️⃣ 止损信号处理（最高优先级）
+                if config.ENABLE_DYNAMIC_STOP_PROFIT:
+                    pending_signals = self.position_manager.get_pending_signals()
+                    if stock_code in pending_signals:
+                        signal_data = pending_signals[stock_code]
+                        signal_type = signal_data['type']
+                        signal_info = signal_data['info']
+
+                        if signal_type == 'stop_loss':
+                            logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(最高优先级)，立即处理")
+
+                            if config.ENABLE_AUTO_TRADING:
+                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if success:
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    logger.warning(f"✅ {stock_code} 止损信号执行成功，跳过其他策略")
+                                    return  # 止损执行后直接返回
+                                else:
+                                    logger.error(f"❌ {stock_code} 止损信号执行失败")
+                                    return
+                            else:
+                                logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                                self.position_manager.mark_signal_processed(stock_code)
+                                return
+
+                # 2️⃣ 止盈信号处理（第二优先级）
+                if config.ENABLE_DYNAMIC_STOP_PROFIT:
+                    pending_signals = self.position_manager.get_pending_signals()
+                    if stock_code in pending_signals:
+                        signal_data = pending_signals[stock_code]
+                        signal_type = signal_data['type']
+                        signal_info = signal_data['info']
+
+                        if signal_type in ['take_profit_half', 'take_profit_full']:
+                            logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
+                            retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                            retry_count = self.retry_counts.get(retry_key, 0)
+
+                            if retry_count >= 3:
+                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
+                                self.position_manager.mark_signal_processed(stock_code)
+                                return
+
+                            if config.ENABLE_AUTO_TRADING:
+                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if success:
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    self.retry_counts.pop(retry_key, None)
+                                    logger.info(f"{stock_code} {signal_type}信号执行成功")
+                                    return
+                                else:
+                                    self.retry_counts[retry_key] = retry_count + 1
+                                    if retry_count + 1 >= 3:
+                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                        self.position_manager.mark_signal_processed(stock_code)
+                                        self.retry_counts.pop(retry_key, None)
+                            else:
+                                logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
+                                self.position_manager.mark_signal_processed(stock_code)
+
+                # 3️⃣ 补仓信号 - 在场景B中永远不会触发
+                # check_add_position_signal() 已在 position_manager 中拒绝补仓
+                logger.debug(f"【场景{scenario}】补仓功能已禁用(止损优先策略)")
 
             # 4. 检查网格交易信号（如果启用）
             if config.ENABLE_GRID_TRADING:

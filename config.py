@@ -149,12 +149,15 @@ MAX_TOTAL_POSITION_RATIO = 0.95  # 最大总持仓比例（占总资金）
 SIMULATION_BALANCE = 1000000 # 模拟持仓
 
 # 买入策略
-BUY_GRID_LEVELS = [1.0, 0.93, 0.86]  # 建仓价格网格（第一个是初次建仓价格比例，后面是补仓价格比例）
+BUY_GRID_LEVELS = [1.0, 0.93, 0.88]  # 建仓价格网格（第一个是初次建仓价格比例，后面是补仓价格比例）
 BUY_AMOUNT_RATIO = [0.4, 0.3, 0.3]  # 每次买入金额占单元的比例
 
 # ======================= 止盈止损策略配置 =======================
+# 补仓功能开关
+ENABLE_STOP_LOSS_BUY = True  # 是否启用止损补仓功能
+
 # 统一的止损比例
-STOP_LOSS_RATIO = -0.07  # 固定止损比例：成本价下跌7%触发止损
+STOP_LOSS_RATIO = -0.075  # 固定止损比例：成本价下跌7.5%触发止损
 
 # 动态止盈配置
 ENABLE_DYNAMIC_STOP_PROFIT = True  # 启用动态止盈功能
@@ -313,3 +316,64 @@ def load_stock_pool(file_path=STOCK_POOL_FILE):
 
 # 实际使用的股票池
 STOCK_POOL = load_stock_pool()
+
+# ======================= 动态优先级决策函数 =======================
+def determine_stop_loss_add_position_priority():
+    """
+    根据配置参数动态确定止损和补仓的优先级顺序
+
+    设计逻辑:
+    - 场景A: 补仓阈值 < 止损阈值 → 先补仓,达到仓位上限后再止损
+    - 场景B: 止损阈值 < 补仓阈值 → 先止损,永不补仓
+
+    返回:
+    dict: {
+        'priority': str,  # 'add_position_first' 或 'stop_loss_first'
+        'add_position_threshold': float,  # 补仓阈值(正数,如0.05表示5%)
+        'stop_loss_threshold': float,     # 止损阈值(正数,如0.07表示7%)
+        'scenario': str  # 'A' 或 'B'
+    }
+    """
+    # 计算补仓阈值:1 - BUY_GRID_LEVELS[1]
+    # 例如: BUY_GRID_LEVELS[1]=0.95 → 补仓阈值=1-0.95=0.05 (5%)
+    add_position_threshold = 1 - BUY_GRID_LEVELS[1]
+
+    # 计算止损阈值:abs(STOP_LOSS_RATIO)
+    # 例如: STOP_LOSS_RATIO=-0.07 → 止损阈值=0.07 (7%)
+    stop_loss_threshold = abs(STOP_LOSS_RATIO)
+
+    # 动态判断优先级
+    if add_position_threshold < stop_loss_threshold:
+        # 场景A: 补仓5% < 止损7% → 先补仓后止损
+        return {
+            'priority': 'add_position_first',
+            'add_position_threshold': add_position_threshold,
+            'stop_loss_threshold': stop_loss_threshold,
+            'scenario': 'A',
+            'description': f'补仓{add_position_threshold*100:.0f}% < 止损{stop_loss_threshold*100:.0f}% → 先补仓(至仓位上限)后止损'
+        }
+    else:
+        # 场景B: 止损5% <= 补仓7% → 先止损,永不补仓
+        return {
+            'priority': 'stop_loss_first',
+            'add_position_threshold': add_position_threshold,
+            'stop_loss_threshold': stop_loss_threshold,
+            'scenario': 'B',
+            'description': f'止损{stop_loss_threshold*100:.0f}% <= 补仓{add_position_threshold*100:.0f}% → 先止损,永不补仓'
+        }
+
+def log_priority_scenario():
+    """记录当前优先级场景信息(用于系统启动时打印)"""
+    priority_info = determine_stop_loss_add_position_priority()
+    scenario = priority_info['scenario']
+    description = priority_info['description']
+
+    print(f"\n{'='*60}")
+    print(f"动态优先级止损补仓系统 - 场景{scenario}")
+    print(f"{'='*60}")
+    print(f"补仓阈值: {priority_info['add_position_threshold']*100:.1f}%")
+    print(f"止损阈值: {priority_info['stop_loss_threshold']*100:.1f}%")
+    print(f"执行策略: {description}")
+    print(f"{'='*60}\n")
+
+    return priority_info

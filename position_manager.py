@@ -1493,10 +1493,14 @@ class PositionManager:
         检查补仓信号 - 使用web页面现有参数
         启用开关：stopLossBuyEnabled
         补仓阈值：stopLossBuy（通过BUY_GRID_LEVELS[1]获取）
-        
+
+        修复说明:
+        - 增加止损排除逻辑: 如果亏损达到止损阈值,不执行补仓
+        - 确保补仓阈值小于止损阈值,避免冲突
+
         参数:
         stock_code (str): 股票代码
-        
+
         返回:
         tuple: (信号类型, 详细信息) - ('add_position', {...}) 或 (None, None)
         """
@@ -1506,32 +1510,32 @@ class PositionManager:
             if not stop_loss_buy_enabled:
                 logger.debug(f"{stock_code} 补仓功能已关闭")
                 return None, None
-                
+
             # 获取持仓数据
             position = self.get_position(stock_code)
             if not position:
                 logger.debug(f"未持有 {stock_code}，无需检查补仓信号")
                 return None, None
-            
+
             # 获取最新行情数据
             latest_quote = self.data_manager.get_latest_data(stock_code)
             if not latest_quote:
                 latest_quote = {'lastPrice': position.get('current_price', 0)}
-            
+
             # 数据验证和转换
             try:
                 current_price = float(latest_quote.get('lastPrice', 0)) if latest_quote else 0
                 if current_price <= 0:
                     current_price = float(position.get('current_price', 0))
-                
+
                 cost_price = float(position.get('cost_price', 0))
                 current_value = float(position.get('market_value', 0))
                 profit_triggered = bool(position.get('profit_triggered', False))
-                
+
                 if cost_price <= 0 or current_price <= 0:
                     logger.debug(f"{stock_code} 价格数据无效")
                     return None, None
-                    
+
             except (TypeError, ValueError) as e:
                 logger.error(f"补仓信号检查 - 价格数据转换错误 {stock_code}: {e}")
                 return None, None
@@ -1543,49 +1547,69 @@ class PositionManager:
 
             # 计算价格下跌比例
             price_drop_ratio = (cost_price - current_price) / cost_price
-            
-            # 从配置获取补仓跌幅阈值（使用web页面的stopLossBuy参数）
-            add_position_threshold = 1 - config.BUY_GRID_LEVELS[1]  # 由stopLossBuy参数控制
-            
-            # 检查是否达到止损线（如果下跌超过止损比例且无法补仓，应该止损而非补仓）
-            stop_loss_threshold = abs(config.STOP_LOSS_RATIO)
-            
-            # 优先级判断：
-            # 1. 如果下跌幅度达到补仓条件，且还有补仓空间 → 补仓
-            # 2. 如果下跌幅度达到止损条件，且无补仓空间 → 让止损逻辑处理
-            
-            if price_drop_ratio >= add_position_threshold:
-                # 检查是否还有补仓空间
-                remaining_space = config.MAX_POSITION_VALUE - current_value
-                min_add_amount = 1000  # 最小补仓金额
-                
-                if remaining_space >= min_add_amount:
-                    # 还有补仓空间，执行补仓
-                    add_amount = min(config.POSITION_UNIT, remaining_space)
-                    
-                    logger.info(f"{stock_code} 触发补仓条件：成本价={cost_price:.2f}, 当前价={current_price:.2f}, "
-                            f"下跌={price_drop_ratio:.2%}, 补仓阈值={add_position_threshold:.2%}, "
-                            f"补仓金额={add_amount:.0f}")
-                    
-                    return 'add_position', {
-                        'stock_code': stock_code,
-                        'current_price': current_price,
-                        'cost_price': cost_price,
-                        'add_amount': add_amount,
-                        'price_drop_ratio': price_drop_ratio,
-                        'threshold': add_position_threshold,
-                        'current_value': current_value,
-                        'remaining_space': remaining_space,
-                        'reason': 'price_drop_add_position'
-                    }
-                else:
-                    # 无补仓空间且已达到补仓条件，记录日志但不执行补仓
-                    # 让后续的止损逻辑来处理
-                    logger.warning(f"{stock_code} 达到补仓条件但无补仓空间：下跌={price_drop_ratio:.2%}, "
-                                f"剩余空间={remaining_space:.0f}, 将由止损逻辑处理")
-            
+
+            # ========== 🔑 动态优先级判断 - 根据配置参数自动调整执行顺序 ==========
+            # 获取动态优先级信息
+            priority_info = config.determine_stop_loss_add_position_priority()
+            add_position_threshold = priority_info['add_position_threshold']
+            stop_loss_threshold = priority_info['stop_loss_threshold']
+            priority_mode = priority_info['priority']
+            scenario = priority_info['scenario']
+
+            # 场景A: 补仓阈值 < 止损阈值 (例如补仓5% < 止损7%)
+            # 执行逻辑: 先补仓,达到仓位上限后再止损
+            if priority_mode == 'add_position_first':
+                # 补仓条件: 补仓阈值 <= 下跌幅度 < 止损阈值
+                if price_drop_ratio >= add_position_threshold and price_drop_ratio < stop_loss_threshold:
+                    # 检查是否还有补仓空间
+                    remaining_space = config.MAX_POSITION_VALUE - current_value
+                    min_add_amount = 1000  # 最小补仓金额
+
+                    if remaining_space >= min_add_amount:
+                        # 还有补仓空间，执行补仓
+                        add_amount = min(config.POSITION_UNIT, remaining_space)
+
+                        logger.info(f"✅ 【场景{scenario}】{stock_code} 触发补仓条件：成本价={cost_price:.2f}, 当前价={current_price:.2f}, "
+                                f"下跌={price_drop_ratio:.2%}, 补仓阈值={add_position_threshold:.2%}, "
+                                f"止损阈值={stop_loss_threshold:.2%}, 补仓金额={add_amount:.0f}")
+
+                        return 'add_position', {
+                            'stock_code': stock_code,
+                            'current_price': current_price,
+                            'cost_price': cost_price,
+                            'add_amount': add_amount,
+                            'price_drop_ratio': price_drop_ratio,
+                            'threshold': add_position_threshold,
+                            'current_value': current_value,
+                            'remaining_space': remaining_space,
+                            'reason': 'price_drop_add_position',
+                            'scenario': scenario
+                        }
+                    else:
+                        # 无补仓空间且已达到补仓条件，让止损逻辑处理
+                        logger.warning(f"⚠️  【场景{scenario}】{stock_code} 达到补仓条件但已达仓位上限：下跌={price_drop_ratio:.2%}, "
+                                    f"剩余空间={remaining_space:.0f}, 将由止损逻辑处理")
+
+            # 场景B: 止损阈值 <= 补仓阈值 (例如止损5% <= 补仓7%)
+            # 执行逻辑: 止损优先,永不补仓
+            elif priority_mode == 'stop_loss_first':
+                # 任何下跌幅度只要达到止损阈值,立即拒绝补仓
+                if price_drop_ratio >= stop_loss_threshold:
+                    logger.warning(f"⚠️  【场景{scenario}】{stock_code} 亏损已达止损线: 下跌{price_drop_ratio:.2%} >= 止损阈值{stop_loss_threshold:.2%}, "
+                                 f"拒绝补仓，由止损逻辑处理")
+                    return None, None
+
+                # 即使下跌未达止损阈值,也要检查是否达到补仓阈值
+                # 但由于补仓阈值 >= 止损阈值,一旦达到补仓条件就意味着已达止损条件
+                # 因此这个分支永远不会触发补仓
+                if price_drop_ratio >= add_position_threshold:
+                    logger.warning(f"⚠️  【场景{scenario}】{stock_code} 下跌{price_drop_ratio:.2%}达到补仓阈值{add_position_threshold:.2%}, "
+                                 f"但止损优先策略拒绝补仓")
+                    return None, None
+
+            # 兜底: 未达到任何条件
             return None, None
-            
+
         except Exception as e:
             logger.error(f"检查 {stock_code} 补仓信号时出错: {str(e)}")
             return None, None
