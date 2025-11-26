@@ -1567,6 +1567,8 @@ class PositionManager:
 
                     if remaining_space >= min_add_amount:
                         # 还有补仓空间，执行补仓
+                        # 补仓金额固定使用POSITION_UNIT，不使用BUY_AMOUNT_RATIO比例
+                        # 这是补仓策略(止盈止损策略)与网格交易策略的核心区别
                         add_amount = min(config.POSITION_UNIT, remaining_space)
 
                         logger.info(f"✅ 【场景{scenario}】{stock_code} 触发补仓条件：成本价={cost_price:.2f}, 当前价={current_price:.2f}, "
