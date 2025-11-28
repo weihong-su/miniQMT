@@ -1176,7 +1176,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                     (entry.trade_type === 'SELL' ? '卖出' : entry.trade_type);
                     
                     // 格式化为要求的格式
-                    return `${dateStr}, ${entry.stock_code || ''}, ${entry.stock_name || ''}, ${actionType}, 价格: ${entry.price || ''}, 数量: ${entry.volume || ''}, 策略: ${entry.strategy || ''}`;
+                    const formattedPrice = entry.price ? Number(entry.price).toFixed(2) : '';
+                    const formattedVolume = entry.volume ? Number(entry.volume).toFixed(0) : '';
+                    return `${dateStr}, ${entry.stock_code || ''}, ${entry.stock_name || ''}, ${actionType}, 价格: ${formattedPrice}, 数量: ${formattedVolume}, 策略: ${entry.strategy || ''}`;
                 } else {
                     return String(entry); // 如果不是对象，直接转换为字符串
                 }
