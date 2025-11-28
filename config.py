@@ -31,6 +31,11 @@ ENABLE_DATA_SYNC = True             # 是否启用数据同步
 ENABLE_POSITION_MONITOR = True      # 是否启用持仓监控
 ENABLE_LOG_CLEANUP = True           # 是否启用日志清理
 
+# QMT API配置
+USE_SYNC_ORDER_API = False          # 使用同步下单接口(True)还是异步接口(False)
+                                     # False: 使用order_stock_async()返回seq号,需要回调映射
+                                     # True: 使用order_stock()直接返回order_id
+
 # 注释说明：
 # - 策略线程始终运行，进行信号检测和监控
 # - ENABLE_AUTO_TRADING 控制是否执行检测到的交易信号
@@ -321,7 +326,7 @@ LOG_CLEANUP_TIME = "00:00:00"  # 每天凌晨执行清理
 # ======================= 功能配置 =======================
 # 交易时间配置
 TRADE_TIME = {
-    "morning_start": "09:25:00",
+    "morning_start": "09:30:00",
     "morning_end": "13:00:00",
     "afternoon_start": "13:00:00",
     "afternoon_end": "15:00:00",

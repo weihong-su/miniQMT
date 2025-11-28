@@ -1816,25 +1816,36 @@ class PositionManager:
         bool: 是否通过验证
         """
         try:
-            # 🔑 新增：检查是否有未成交委托单
-            position = self.get_position(stock_code)
-            if position:
-                available = int(position.get('available', 0))
-                volume = int(position.get('volume', 0))
+            # 关键修改: 全仓止盈信号跳过活跃委托单检查
+            # 全仓止盈是风险兜底机制,即使有活跃委托单也应该执行
+            if signal_type != 'take_profit_full':
+                # 检查是否有未成交委托单 (仅非全仓止盈信号)
+                position = self.get_position(stock_code)
+                if position:
+                    available = int(position.get('available', 0))
+                    volume = int(position.get('volume', 0))
 
-                # 如果available=0但volume>0，可能有未成交委托单
-                if available == 0 and volume > 0:
-                    logger.warning(f"⚠️ {stock_code} 可用数量为0（总持仓{volume}），检查是否有未成交委托单...")
+                    # 如果available=0但volume>0，可能有未成交委托单
+                    if available == 0 and volume > 0:
+                        logger.warning(f"警告 {stock_code} 可用数量为0（总持仓{volume}），检查是否有未成交委托单...")
 
-                    # 检查是否有活跃委托单
-                    if self._has_pending_orders(stock_code):
-                        logger.error(f"🚨 {stock_code} 存在未成交委托单，拒绝新信号执行")
-                        logger.error(f"   建议: 等待委托单成交或手动撤单后再操作")
-                        return False
-                    else:
-                        logger.warning(f"⚠️ {stock_code} 未检测到活跃委托单，但available=0")
-                        logger.warning(f"   可能原因: 1)委托单刚成交 2)系统数据未同步 3)其他原因")
-                        # 继续验证其他条件
+                        # 修复后的查询机制：使用标准化股票代码匹配
+                        if self._has_pending_orders(stock_code):
+                            logger.error(f"错误 {stock_code} 存在未成交委托单，拒绝新信号执行")
+                            logger.error(f"   建议：等待委托单处理完毕或手动确认持仓状态")
+                            return False
+                        else:
+                            logger.warning(f"警告 {stock_code} 未检测到活跃委托单，但available=0")
+                            logger.warning(f"   可能原因: 1)委托单刚成交 2)系统数据未同步 3)其他原因")
+                            # 采取保守策略：available=0时拒绝新信号，避免重复提交委托
+                            logger.error(f"错误 {stock_code} 可用数量为0（总持仓{volume}），拒绝新信号执行")
+                            logger.error(f"   原因：可能存在未成交委托单或数据同步延迟")
+                            logger.error(f"   建议：等待委托单处理完毕或手动确认持仓状态")
+                            logger.error(f"   修复说明：此为保守策略，避免在不确定情况下执行交易")
+                            return False
+            else:
+                # 全仓止盈信号: 强制执行,不检查活跃委托单
+                logger.warning(f"全仓止盈信号 {stock_code}: 跳过活跃委托单检查(风险兜底机制)")
 
             if signal_type == 'stop_loss':
                 current_price = signal_info.get('current_price', 0)
@@ -1888,9 +1899,115 @@ class PositionManager:
             logger.error(f"🚨 {stock_code} 信号验证失败: {e}")
             return False
 
+    def _get_real_order_id(self, returned_id):
+        """
+        将buy/sell返回的ID转换为真实order_id
+
+        说明:
+        - 同步模式(USE_SYNC_ORDER_API=True): buy/sell直接返回order_id
+        - 异步模式(USE_SYNC_ORDER_API=False): buy/sell返回seq号，需要通过回调建立的映射获取order_id
+
+        参数:
+            returned_id: buy/sell方法返回的ID (可能是seq或order_id)
+
+        返回:
+            真实的order_id，如果映射失败返回None
+        """
+        if config.USE_SYNC_ORDER_API:
+            # 同步模式直接返回order_id
+            logger.debug(f"同步模式，直接使用order_id: {returned_id}")
+            return returned_id
+        else:
+            # 异步模式需要从映射表获取
+            import time
+            logger.debug(f"异步模式，查找seq={returned_id}的映射")
+
+            # 等待最多2秒让回调建立映射
+            for i in range(20):
+                if returned_id in self.qmt_trader.order_id_map:
+                    real_order_id = self.qmt_trader.order_id_map[returned_id]
+                    logger.debug(f"映射成功: seq={returned_id} -> order_id={real_order_id}")
+                    return real_order_id
+                time.sleep(0.1)
+
+            logger.warning(f"seq={returned_id}未在order_id_map中找到映射，等待超时")
+            logger.debug(f"当前order_id_map内容: {self.qmt_trader.order_id_map}")
+            return None
+
     def _has_pending_orders(self, stock_code):
         """
         检查股票是否有未成交的委托单
+
+        优化说明:
+        - 主要方法: 使用 easy_qmt_trader.get_active_orders_by_stock() 直接查询活跃委托
+        - 后备方法: 如果主要方法失败,使用原始 query_stock_orders() 查询
+        - 优势: 更简洁、更准确、代码复用性更好
+
+        参数:
+        stock_code (str): 股票代码(可能带.SZ/.SH后缀)
+
+        返回:
+        bool: 是否有未成交委托单
+        """
+        logger.debug(f"查询 {stock_code} 的活跃委托单")
+
+        try:
+            # 在实盘模式下查询委托单
+            if not config.ENABLE_SIMULATION_MODE and self.qmt_trader:
+                logger.debug(f"实盘模式, QMT已连接: {self.qmt_connected}")
+
+                try:
+                    # 主要方法: 使用新增的活跃委托查询方法
+                    active_orders = self.qmt_trader.get_active_orders_by_stock(stock_code)
+
+                    logger.debug(f"主要查询方法: 查询到 {len(active_orders)} 个活跃委托")
+
+                    if active_orders:
+                        # 找到活跃委托
+                        for order in active_orders:
+                            logger.info(f"[OK] 发现活跃委托单: {stock_code}, "
+                                      f"订单号={order.order_id}, 状态={order.order_status}, "
+                                      f"委托量={order.order_volume}, 已成交={order.traded_volume}")
+                        return True
+                    else:
+                        logger.debug(f"未找到 {stock_code} 的活跃委托单")
+                        return False
+
+                except AttributeError as ae:
+                    # 如果 get_active_orders_by_stock 方法不存在,使用后备方法
+                    logger.warning(f"主要查询方法不可用: {str(ae)}, 切换到后备查询方法")
+
+                    # 后备方法: 使用原始 query_stock_orders 查询
+                    return self._has_pending_orders_fallback(stock_code)
+
+                except Exception as e:
+                    logger.warning(f"主要查询方法失败: {str(e)}, 尝试后备查询方法")
+                    logger.exception(e)
+
+                    # 尝试后备方法
+                    try:
+                        return self._has_pending_orders_fallback(stock_code)
+                    except Exception as fallback_error:
+                        logger.error(f"后备查询方法也失败: {str(fallback_error)}")
+                        # 查询完全失败时保守返回True,避免在不确定情况下执行交易
+                        logger.error(f"[X] {stock_code} 委托查询异常，采取保守策略拒绝新信号")
+                        return True
+            else:
+                logger.debug(f"跳过查询: 模拟模式={config.ENABLE_SIMULATION_MODE}, QMT连接={self.qmt_trader is not None}")
+                return False
+
+        except Exception as e:
+            logger.error(f"_has_pending_orders 异常: {str(e)}")
+            logger.exception(e)
+            # 保守策略
+            return True
+
+    def _has_pending_orders_fallback(self, stock_code):
+        """
+        后备方法: 使用原始 query_stock_orders 查询活跃委托
+
+        此方法作为 get_active_orders_by_stock() 的后备方案,
+        在主要方法不可用或失败时使用
 
         参数:
         stock_code (str): 股票代码
@@ -1898,36 +2015,41 @@ class PositionManager:
         返回:
         bool: 是否有未成交委托单
         """
+        # 标准化股票代码(去除市场后缀)
+        stock_code_base = stock_code.split('.')[0]
+
+        logger.debug(f"[后备方法] 查询 {stock_code} (标准化: {stock_code_base}) 的委托单")
+
         try:
-            # 在实盘模式下查询委托单
-            if not config.ENABLE_SIMULATION_MODE and self.qmt_trader:
-                try:
-                    # 查询活跃委托单（未成交和部分成交）
-                    orders = self.qmt_trader.xt_trader.query_stock_orders(self.qmt_trader.acc, cancelable_only=False)
+            # 查询活跃委托单（未成交和部分成交）
+            orders = self.qmt_trader.xt_trader.query_stock_orders(self.qmt_trader.acc, cancelable_only=False)
 
-                    if orders:
-                        for order in orders:
-                            # 检查是否是当前股票的委托单
-                            if order.stock_code == stock_code:
-                                # 委托状态：48=未报, 49=待报, 50=已报, 55=部成
-                                if order.order_status in [48, 49, 50, 55]:
-                                    logger.info(f"   发现未成交委托单: {stock_code}, 状态={order.order_status}, "
-                                              f"委托量={order.order_volume}, 已成交={order.traded_volume}")
-                                    return True
+            logger.debug(f"[后备方法] 查询到 {len(orders) if orders else 0} 条委托单")
 
-                    return False
+            if orders:
+                for order in orders:
+                    # 标准化订单中的股票代码
+                    order_code_base = order.stock_code.split('.')[0] if '.' in order.stock_code else order.stock_code
 
-                except Exception as e:
-                    logger.warning(f"查询 {stock_code} 委托单失败: {str(e)}")
-                    # 查询失败时保守处理，返回False允许信号执行
-                    return False
-            else:
-                # 模拟交易模式下不检查委托单
-                return False
+                    logger.debug(f"  订单: {order.stock_code} (标准化: {order_code_base}), "
+                               f"状态={order.order_status}, 委托量={order.order_volume}, 已成交={order.traded_volume}")
+
+                    # 使用标准化后的代码进行比对
+                    if order_code_base == stock_code_base:
+                        # 扩展活跃委托状态码范围
+                        # 48=未报, 49=待报, 50=已报, 51=已报待撤, 52=部分待撤, 55=部成
+                        if order.order_status in [48, 49, 50, 51, 52, 55]:
+                            logger.info(f"[后备方法][OK] 发现未成交委托单: {stock_code}, "
+                                      f"订单代码={order.stock_code}, 状态={order.order_status}, "
+                                      f"委托量={order.order_volume}, 已成交={order.traded_volume}")
+                            return True
+
+            logger.debug(f"[后备方法] 未找到 {stock_code} 的活跃委托单")
+            return False
 
         except Exception as e:
-            logger.error(f"检查 {stock_code} 委托单状态出错: {str(e)}")
-            return False
+            logger.error(f"[后备方法] 查询失败: {str(e)}")
+            raise  # 抛出异常让上层处理
 
     def _get_profit_level_info(self, cost_price, highest_price):
         """获取当前匹配的止盈级别信息"""

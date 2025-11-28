@@ -7,6 +7,7 @@ import random
 import math
 import json
 import math
+import config
 def conv_time(ct):
     '''
     conv_time(1476374400000) --> '20161014000000.000'
@@ -306,6 +307,7 @@ class easy_qmt_trader:
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
         '''
         单独独立股票买入函数
+        支持配置开关控制使用同步或异步接口
         '''
         # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
         subscribe_result = self.xt_trader.subscribe(self.acc)
@@ -314,20 +316,29 @@ class easy_qmt_trader:
         stock_code =self.adjust_stock(stock=security)
         price=self.select_slippage(stock=security,price=price,trader_type='buy')
         order_volume=amount
-        # 使用指定价下单，接口返回订单编号，后续可以用于撤单操作以及查询委托状态
+        # 根据配置选择同步或异步接口
         if order_volume>0:
-            seq = int(self.random_session_id())
-            fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
-                                                                order_volume=order_volume, price_type=price_type,
-                                                                price=price, strategy_name=strategy_name, order_remark=order_remark)
-            print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
-            return seq
+            if config.USE_SYNC_ORDER_API:
+                # 使用同步接口，直接返回order_id
+                fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
+                                                                    order_volume=order_volume, price_type=price_type,
+                                                                    price=price, strategy_name=strategy_name, order_remark=order_remark)
+                print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                return fix_result_order_id
+            else:
+                # 使用异步接口，返回seq号（需要通过回调映射到order_id）
+                fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
+                                                                    order_volume=order_volume, price_type=price_type,
+                                                                    price=price, strategy_name=strategy_name, order_remark=order_remark)
+                print('交易类型{} 代码{} 价格{} 数量{} 请求序号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
             print('买入 标的{} 价格{} 委托数量{}小于0有问题'.format(stock_code,price,order_volume))
     def sell(self,security='600031.SH', order_type=xtconstant.STOCK_SELL,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
         '''
         单独独立股票卖出函数
+        支持配置开关控制使用同步或异步接口
         '''
         # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
         subscribe_result = self.xt_trader.subscribe(self.acc)
@@ -336,14 +347,22 @@ class easy_qmt_trader:
         stock_code =self.adjust_stock(stock=security)
         price=self.select_slippage(stock=security,price=price,trader_type='sell')
         order_volume=amount
-        # 使用指定价下单，接口返回订单编号，后续可以用于撤单操作以及查询委托状态
+        # 根据配置选择同步或异步接口
         if order_volume>0:
-            seq = int(self.random_session_id())
-            fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
-                                                                order_volume=order_volume, price_type=price_type,
-                                                                price=price, strategy_name=strategy_name, order_remark=order_remark)
-            print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
-            return seq
+            if config.USE_SYNC_ORDER_API:
+                # 使用同步接口，直接返回order_id
+                fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
+                                                                    order_volume=order_volume, price_type=price_type,
+                                                                    price=price, strategy_name=strategy_name, order_remark=order_remark)
+                print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                return fix_result_order_id
+            else:
+                # 使用异步接口，返回seq号（需要通过回调映射到order_id）
+                fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
+                                                                    order_volume=order_volume, price_type=price_type,
+                                                                    price=price, strategy_name=strategy_name, order_remark=order_remark)
+                print('交易类型{} 代码{} 价格{} 数量{} 请求序号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
             print('卖出 标的{} 价格{} 委托数量{}小于0有问题'.format(stock_code,price,order_volume))
 
@@ -589,6 +608,88 @@ class easy_qmt_trader:
         else:
             print('今日没有成交')     
             return data
+    def get_active_orders_by_stock(self, stock_code):
+        """
+        根据股票代码查询活跃委托单
+
+        参数:
+            stock_code (str): 股票代码,如 '600031.SH' 或 '600031'
+
+        返回:
+            list: 活跃委托单对象列表,每个对象包含委托详细信息
+                  如果没有活跃委托则返回空列表
+
+        活跃委托状态码:
+            48: 未报
+            49: 待报
+            50: 已报
+            51: 已报待撤
+            52: 部分待撤
+            55: 部成
+        """
+        # 调整股票代码格式(如果需要)
+        stock_code = self.adjust_stock(stock=stock_code)
+
+        # 查询所有委托单
+        orders = self.xt_trader.query_stock_orders(self.acc, cancelable_only=False)
+
+        # 活跃委托状态码
+        active_status = [48, 49, 50, 51, 52, 55]
+
+        # 筛选指定股票的活跃委托
+        active_orders = []
+        for order in orders:
+            # 匹配股票代码(考虑可能的格式差异)
+            order_stock = str(order.stock_code)
+            if order_stock == stock_code or order_stock[:6] == stock_code[:6]:
+                # 检查是否为活跃状态
+                if order.order_status in active_status:
+                    active_orders.append(order)
+
+        return active_orders
+
+    def get_active_order_info_by_stock(self, stock_code):
+        """
+        根据股票代码查询活跃委托单的详细信息(字典格式)
+
+        参数:
+            stock_code (str): 股票代码
+
+        返回:
+            list[dict]: 活跃委托单信息字典列表,每个字典包含:
+                - order_id: 订单编号
+                - stock_code: 证券代码
+                - order_type: 委托类型(23=买入, 24=卖出)
+                - order_status: 委托状态
+                - order_volume: 委托数量
+                - traded_volume: 成交数量
+                - price: 委托价格
+                - order_time: 报单时间
+                - strategy_name: 策略名称
+                - order_remark: 委托备注
+        """
+        active_orders = self.get_active_orders_by_stock(stock_code)
+
+        # 转换为字典格式
+        order_info_list = []
+        for order in active_orders:
+            order_info = {
+                'order_id': order.order_id,
+                'stock_code': order.stock_code,
+                'order_type': order.order_type,
+                'order_status': order.order_status,
+                'status_msg': order.status_msg,
+                'order_volume': order.order_volume,
+                'traded_volume': order.traded_volume,
+                'price': order.price,
+                'order_time': order.order_time,
+                'strategy_name': order.strategy_name,
+                'order_remark': order.order_remark
+            }
+            order_info_list.append(order_info)
+
+        return order_info_list
+
     def today_trades(self):
         '''
         对接同花顺

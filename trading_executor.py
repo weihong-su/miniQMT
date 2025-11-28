@@ -929,15 +929,26 @@ class TradingExecutor:
                 while retry_count < max_retries:
                     try:
                         # 使用position_manager中的easy_qmt_trader进行买入
-                        order_id = self.position_manager.qmt_trader.buy(
+                        returned_id = self.position_manager.qmt_trader.buy(
                             security=formatted_stock_code,
                             price=price,
-                            amount=volume, 
+                            amount=volume,
                             price_type=price_type,
-                            strategy_name=strategy, 
+                            strategy_name=strategy,
                             order_remark=f"auto_{strategy}"
                         )
-                        
+
+                        # 关键修复: 转换 seq 号为真实 order_id
+                        if returned_id:
+                            order_id = self.position_manager._get_real_order_id(returned_id)
+                            if not order_id:
+                                logger.error(f"买入 {formatted_stock_code} 获取真实order_id失败，returned_id={returned_id}")
+                                retry_count += 1
+                                time.sleep(1)
+                                continue
+                        else:
+                            order_id = None
+
                         if order_id:
                             # 添加：实盘下单成功后也立即保存交易记录
                             trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1156,15 +1167,26 @@ class TradingExecutor:
                 while retry_count < max_retries:
                     try:
                         # 参考buy_stock：使用easy_qmt_trader进行卖出
-                        order_id = self.position_manager.qmt_trader.sell(
+                        returned_id = self.position_manager.qmt_trader.sell(
                             security=formatted_stock_code,
                             price=price,
-                            amount=volume, 
+                            amount=volume,
                             price_type=price_type,
-                            strategy_name=strategy, 
+                            strategy_name=strategy,
                             order_remark=f"auto_{strategy}"
                         )
-                        
+
+                        # 关键修复: 转换 seq 号为真实 order_id
+                        if returned_id:
+                            order_id = self.position_manager._get_real_order_id(returned_id)
+                            if not order_id:
+                                logger.error(f"卖出 {formatted_stock_code} 获取真实order_id失败，returned_id={returned_id}")
+                                retry_count += 1
+                                time.sleep(1)
+                                continue
+                        else:
+                            order_id = None
+
                         if order_id:
                             # 参考buy_stock：立即保存交易记录到数据库
                             trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
