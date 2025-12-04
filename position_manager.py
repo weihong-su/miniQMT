@@ -807,13 +807,51 @@ class PositionManager:
             p_volume = int(float(volume)) if volume is not None else 0
 
             if p_volume <= 0:
-                # 持仓量为0时，如果成本价为0就保持为0（不强制设为0.01）
-                final_cost_price = float(cost_price) if cost_price is not None and cost_price > 0 else 0.0
+                # 修复: 当持仓量为0时,优先使用base_cost_price保留历史成本,避免成本价变为0
+                if base_cost_price is not None and base_cost_price > 0:
+                    # 优先使用base_cost_price(初次建仓成本)
+                    final_cost_price = float(base_cost_price)
+                    logger.debug(f"{stock_code} 持仓已清空,使用base_cost_price保留历史成本: {final_cost_price}")
+                elif cost_price is not None and cost_price > 0:
+                    # 其次使用QMT返回的cost_price
+                    final_cost_price = float(cost_price)
+                    logger.debug(f"{stock_code} 持仓已清空,使用QMT返回的cost_price: {final_cost_price}")
+                else:
+                    # 从数据库获取最后的有效成本价
+                    try:
+                        db_cursor = self.memory_conn.cursor()
+                        db_cursor.execute("SELECT cost_price, base_cost_price FROM positions WHERE stock_code=?", (stock_code,))
+                        db_row = db_cursor.fetchone()
+                        if db_row:
+                            db_cost = db_row[0]
+                            db_base_cost = db_row[1]
+                            if db_base_cost is not None and db_base_cost > 0:
+                                final_cost_price = float(db_base_cost)
+                                logger.info(f"{stock_code} 持仓已清空,从数据库保留base_cost: {final_cost_price}")
+                            elif db_cost is not None and db_cost > 0:
+                                final_cost_price = float(db_cost)
+                                logger.info(f"{stock_code} 持仓已清空,从数据库保留cost_price: {final_cost_price}")
+                            else:
+                                final_cost_price = 0.0
+                                logger.warning(f"{stock_code} 持仓已清空且无有效成本价,设为0(建议删除此持仓记录)")
+                        else:
+                            final_cost_price = 0.0
+                            logger.warning(f"{stock_code} 持仓已清空且数据库无记录,成本价设为0")
+                    except Exception as e:
+                        logger.error(f"{stock_code} 查询数据库历史成本时出错: {e}")
+                        final_cost_price = 0.0
             else:
                 # 有持仓时，成本价不能为0，设最小值0.01
                 final_cost_price = float(cost_price) if cost_price is not None and cost_price > 0 else 0.01
 
-            p_base_cost_price = float(base_cost_price) if base_cost_price is not None else None
+            # 同时确保base_cost_price始终保留
+            if base_cost_price is not None and base_cost_price > 0:
+                p_base_cost_price = float(base_cost_price)
+            elif p_base_cost_price is None or p_base_cost_price <= 0:
+                # 如果base_cost_price无效,尝试使用final_cost_price
+                p_base_cost_price = final_cost_price if final_cost_price > 0 else None
+            else:
+                p_base_cost_price = float(base_cost_price) if base_cost_price is not None else None
             # if p_volume <= 0 or final_cost_price <= 0:
             #     logger.error(f"跳过 {stock_code} 无效数据: volume={volume}, cost_price={cost_price}")
             #     return False
@@ -3064,7 +3102,7 @@ class PositionManager:
 
         参数:
         stock_code (str): 股票代码
-        order_id (str): 委托单ID
+        order_id (str or int): 委托单ID (会自动转换为int类型)
 
         返回:
         int: 委托单状态码，查询失败返回None
@@ -3073,7 +3111,20 @@ class PositionManager:
             if not self.qmt_trader or not self.qmt_connected:
                 return None
 
-            # 查询单个委托单
+            # 修复: 确保order_id是int类型
+            if isinstance(order_id, str):
+                try:
+                    order_id_int = int(order_id)
+                    logger.debug(f"{stock_code} 委托单ID从str转换为int: '{order_id}' -> {order_id_int}")
+                    order_id = order_id_int
+                except ValueError:
+                    logger.error(f"{stock_code} 委托单ID无法转换为int: '{order_id}'")
+                    return None
+            elif not isinstance(order_id, int):
+                logger.error(f"{stock_code} 委托单ID类型不支持: {type(order_id)}")
+                return None
+
+            # 查询单个委托单 (order_id已确保是int类型)
             order = self.qmt_trader.xt_trader.query_stock_order(
                 self.qmt_trader.acc, order_id
             )
@@ -3093,7 +3144,7 @@ class PositionManager:
 
         参数:
         stock_code (str): 股票代码
-        order_id (str): 委托单ID
+        order_id (str or int): 委托单ID (会自动转换为int类型)
 
         返回:
         bool: 是否撤单成功
@@ -3103,7 +3154,20 @@ class PositionManager:
                 logger.error("QMT未连接，无法撤单")
                 return False
 
-            # 调用QMT撤单接口
+            # 修复: 确保order_id是int类型
+            if isinstance(order_id, str):
+                try:
+                    order_id_int = int(order_id)
+                    logger.debug(f"{stock_code} 撤单ID从str转换为int: '{order_id}' -> {order_id_int}")
+                    order_id = order_id_int
+                except ValueError:
+                    logger.error(f"{stock_code} 撤单ID无法转换为int: '{order_id}'")
+                    return False
+            elif not isinstance(order_id, int):
+                logger.error(f"{stock_code} 撤单ID类型不支持: {type(order_id)}")
+                return False
+
+            # 调用QMT撤单接口 (order_id已确保是int类型)
             result = self.qmt_trader.xt_trader.cancel_order_stock(
                 self.qmt_trader.acc, order_id
             )
