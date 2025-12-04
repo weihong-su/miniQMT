@@ -847,11 +847,9 @@ class PositionManager:
             # 同时确保base_cost_price始终保留
             if base_cost_price is not None and base_cost_price > 0:
                 p_base_cost_price = float(base_cost_price)
-            elif p_base_cost_price is None or p_base_cost_price <= 0:
+            else:
                 # 如果base_cost_price无效,尝试使用final_cost_price
                 p_base_cost_price = final_cost_price if final_cost_price > 0 else None
-            else:
-                p_base_cost_price = float(base_cost_price) if base_cost_price is not None else None
             # if p_volume <= 0 or final_cost_price <= 0:
             #     logger.error(f"跳过 {stock_code} 无效数据: volume={volume}, cost_price={cost_price}")
             #     return False
