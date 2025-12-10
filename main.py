@@ -77,7 +77,17 @@ def start_position_thread(position_manager):
     if config.ENABLE_POSITION_MONITOR:
         logger.info("启动持仓监控线程")
         position_manager.start_position_monitor_thread()
+
+        # 🔑 新增: 验证线程启动
+        time.sleep(0.5)  # 等待线程启动
+        if position_manager.position_monitor_thread and position_manager.position_monitor_thread.is_alive():
+            logger.info("✅ 持仓监控线程启动成功")
+        else:
+            logger.error("❌ 持仓监控线程启动失败!")
+
         threads.append(("position_thread", position_manager.stop_position_monitor_thread))
+    else:
+        logger.warning("⚠️  持仓监控线程未启用 (ENABLE_POSITION_MONITOR=False)")
 
 def start_strategy_thread(trading_strategy):
     """启动策略线程"""

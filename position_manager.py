@@ -2888,6 +2888,7 @@ class PositionManager:
 
     def _position_monitor_loop(self):
         """持仓监控循环 - 优化版本，使用统一的信号检查"""
+        logger.info("🚀 持仓监控循环已启动")
         while not self.stop_flag:
             try:
                 # 判断是否在交易时间
@@ -2918,7 +2919,7 @@ class PositionManager:
                                     'info': signal_info,
                                     'timestamp': datetime.now()
                                 }
-                                logger.debug(f"{stock_code} 检测到信号: {signal_type}，等待策略处理")
+                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
                             else:
                                 # 清除已不存在的信号
                                 self.latest_signals.pop(stock_code, None)
