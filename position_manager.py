@@ -1784,8 +1784,8 @@ class PositionManager:
                         if pullback_ratio >= config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO:
                             logger.info(f"{stock_code} 触发回撤止盈，突破后最高价: {breakout_highest_price:.2f}, "
                                     f"当前价格: {current_price:.2f}, 回撤: {pullback_ratio:.2%}")
-                            
-                            return 'take_profit_half', {
+
+                            signal_info = {
                                 'current_price': current_price,
                                 'cost_price': cost_price,
                                 'profit_ratio': profit_ratio,
@@ -1794,6 +1794,10 @@ class PositionManager:
                                 'breakout_highest_price': breakout_highest_price,
                                 'pullback_ratio': pullback_ratio
                             }
+                            # 🔍 调试日志：确认返回信号
+                            logger.info(f"[SIGNAL_RETURN] {stock_code} 准备返回take_profit_half信号, "
+                                       f"available={position['available']}, volume={position.get('volume', 0)}")
+                            return 'take_profit_half', signal_info
             
             # 7. 动态止盈检查（已触发首次止盈后）
             if profit_triggered and highest_price > 0:
@@ -2889,16 +2893,40 @@ class PositionManager:
     def _position_monitor_loop(self):
         """持仓监控循环 - 优化版本，使用统一的信号检查"""
         logger.info("🚀 持仓监控循环已启动")
+
+        # 🔍 线程异常监控（只在出问题时告警）
+        loop_count = 0
+        last_loop_time = time.time()
+        consecutive_errors = 0  # 连续错误计数
+
         while not self.stop_flag:
             try:
+                loop_start = time.time()
+                loop_count += 1
+
+                # 🔍 检测循环间隔异常（超过30秒未执行）
+                gap = loop_start - last_loop_time
+                if gap > 30:  # 只在异常时告警
+                    logger.warning(f"⚠️ [MONITOR_GAP] 监控线程空档 {gap:.1f}秒，可能被阻塞！"
+                                 f"（已执行{loop_count}次循环）")
+
                 # 判断是否在交易时间
                 if config.is_trade_time():
 
                     # 首先更新所有持仓的最高价
                     self.update_all_positions_highest_price()
 
-                    # 一次性获取所有持仓数据
-                    positions_df = self.get_all_positions()
+                    # 一次性获取所有持仓数据（增加超时保护）
+                    try:
+                        positions_df = self.get_all_positions()
+                        consecutive_errors = 0  # 重置错误计数
+                    except Exception as e:
+                        consecutive_errors += 1
+                        logger.error(f"[MONITOR_ERROR] 获取持仓失败（连续{consecutive_errors}次）: {e}")
+                        if consecutive_errors >= 3:
+                            logger.error(f"🚨 [MONITOR_CRITICAL] 连续{consecutive_errors}次获取持仓失败，请检查数据库！")
+                        time.sleep(5)
+                        continue
                     
                     if positions_df.empty:
                         logger.debug("当前没有持仓，无需监控")
@@ -2908,10 +2936,17 @@ class PositionManager:
                     # 处理所有持仓
                     for _, position_row in positions_df.iterrows():
                         stock_code = position_row['stock_code']
-                        
+
+                        # 🔍 调试日志：确认进入循环
+                        logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号")
+
                         # 使用统一的信号检查函数
                         signal_type, signal_info = self.check_trading_signals(stock_code)
-                        
+
+                        # 🔍 调试日志：确认返回值
+                        logger.info(f"[MONITOR_RETURN] {stock_code} 返回 signal_type={repr(signal_type)}, "
+                                   f"type={type(signal_type).__name__}, bool={bool(signal_type)}")
+
                         with self.signal_lock:
                             if signal_type:
                                 self.latest_signals[stock_code] = {
@@ -2953,14 +2988,22 @@ class PositionManager:
                     # 🔑 新增：检查委托单超时
                     self.check_pending_orders_timeout()
 
+                    # 🔍 记录本次循环耗时（只在异常时告警）
+                    loop_end = time.time()
+                    loop_duration = loop_end - loop_start
+                    if loop_duration > 5:  # 循环超过5秒告警
+                        logger.warning(f"⚠️ [MONITOR_SLOW] 本次监控循环耗时 {loop_duration:.2f}秒（超过5秒），"
+                                     f"已处理{len(positions_df)}只股票")
+                    last_loop_time = loop_end
+
                     # 等待下一次监控
                     for _ in range(5):  # 每5s检查一次
                         if self.stop_flag:
                             break
                         time.sleep(2)
-                        
+
             except Exception as e:
-                logger.error(f"持仓监控循环出错: {str(e)}")
+                logger.error(f"🚨 [MONITOR_FATAL] 持仓监控循环出错: {str(e)}", exc_info=True)
                 time.sleep(60)  # 出错后等待一分钟再继续
 
     # ========== 委托单超时管理功能 ==========

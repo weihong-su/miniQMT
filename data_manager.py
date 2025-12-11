@@ -81,7 +81,14 @@ class DataManager:
     def _connect_db(self):
         """连接SQLite数据库"""
         try:
-            conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+            # ⭐ 超时优化：添加30秒超时和WAL模式
+            conn = sqlite3.connect(
+                config.DB_PATH,
+                timeout=30.0,  # 30秒超时（默认5秒）
+                check_same_thread=False
+            )
+            # 启用WAL模式，允许读写并发（减少锁冲突）
+            conn.execute('PRAGMA journal_mode=WAL')
             logger.info(f"已连接数据库: {config.DB_PATH}")
             return conn
         except Exception as e:
@@ -643,18 +650,26 @@ class DataManager:
         stock_code = self._adjust_stock(stock_code)
 
         try:
-            # 测试已证明get_full_tick方法可用
-            latest_quote = xt.get_full_tick([stock_code])
-            
+            # ⭐ 超时优化：添加超时保护
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(xt.get_full_tick, [stock_code])
+                try:
+                    latest_quote = future.result(timeout=3.0)  # 3秒超时
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
+                    return {}  # 返回空字典，与原逻辑一致
+
             if not latest_quote or stock_code not in latest_quote:
                 logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
                 return {}  # 返回空字典而不是None
-            
+
             quote_data = latest_quote[stock_code]
             logger.debug(f"xtdata: {stock_code} 最新行情: {quote_data}")
-            
+
             return quote_data
-            
+
         except Exception as e:
             logger.error(f"xtdata: 获取 {stock_code} 的最新行情时出错: {str(e)}", exc_info=True)
             return {}  # 返回空字典而不是None
