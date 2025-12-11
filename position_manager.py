@@ -2956,6 +2956,13 @@ class PositionManager:
                         import traceback
                         logger.error(f"堆栈追踪:\n{''.join(traceback.format_stack())}")
 
+                # ⭐ 修复：盘后时间快速跳过,避免不必要的API调用导致阻塞
+                if not config.is_trade_time():
+                    logger.debug("非交易时间, 监控线程休眠60秒")
+                    time.sleep(60)
+                    last_loop_time = time.time()  # 🔑 关键:更新时间避免GAP累积
+                    continue
+
                 # 判断是否在交易时间
                 if config.is_trade_time():
 
