@@ -2959,19 +2959,41 @@ class PositionManager:
                 # 判断是否在交易时间
                 if config.is_trade_time():
 
-                    # 首先更新所有持仓的最高价
-                    self.update_all_positions_highest_price()
-
-                    # 一次性获取所有持仓数据（增加超时保护）
+                    # ⭐ 强化: 更新最高价也需要超时保护
                     try:
-                        positions_df = self.get_all_positions()
-                        consecutive_errors = 0  # 重置错误计数
+                        import concurrent.futures
+
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(self.update_all_positions_highest_price)
+                            try:
+                                future.result(timeout=10.0)  # 10秒超时
+                            except concurrent.futures.TimeoutError:
+                                logger.error(f"🚨 [MONITOR_TIMEOUT] 更新最高价超时(10秒)！")
+                    except Exception as e:
+                        logger.error(f"[MONITOR_ERROR] 更新最高价失败: {e}")
+
+                    # ⭐ 强化: 使用超时保护获取持仓数据
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(self.get_all_positions)
+                            try:
+                                positions_df = future.result(timeout=10.0)  # 10秒超时
+                                consecutive_errors = 0  # 重置错误计数
+                            except concurrent.futures.TimeoutError:
+                                consecutive_errors += 1
+                                logger.error(f"🚨 [MONITOR_TIMEOUT] 获取持仓超时(10秒)！连续{consecutive_errors}次")
+                                if consecutive_errors >= 3:
+                                    logger.error(f"🚨 [MONITOR_CRITICAL] 连续{consecutive_errors}次超时，数据库可能死锁！")
+                                time.sleep(5)
+                                last_loop_time = time.time()  # 更新时间避免重复告警
+                                continue
                     except Exception as e:
                         consecutive_errors += 1
                         logger.error(f"[MONITOR_ERROR] 获取持仓失败（连续{consecutive_errors}次）: {e}")
                         if consecutive_errors >= 3:
                             logger.error(f"🚨 [MONITOR_CRITICAL] 连续{consecutive_errors}次获取持仓失败，请检查数据库！")
                         time.sleep(5)
+                        last_loop_time = time.time()
                         continue
                     
                     if positions_df.empty:
