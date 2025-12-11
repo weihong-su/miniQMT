@@ -1670,28 +1670,35 @@ class PositionManager:
             if not position:
                 logger.debug(f"未持有 {stock_code}，无需检查信号")
                 return None, None
-            
+
+            # ⭐ 优化: 持仓已清空，跳过信号检测
+            volume = int(position.get('volume', 0))
+            available = int(position.get('available', 0))
+            if volume == 0 and available == 0:
+                logger.debug(f"{stock_code} 持仓已清空(volume=0, available=0)，跳过信号检测")
+                return None, None
+
             # 2. 获取最新行情数据
             latest_quote = self.data_manager.get_latest_data(stock_code)
             if not latest_quote:
                 latest_quote = {'lastPrice': position.get('current_price', 0)}
-            
+
             # 3. 🔑 安全的数据类型转换和验证
             try:
                 current_price = float(latest_quote.get('lastPrice', 0)) if latest_quote else 0
                 if current_price <= 0:
                     current_price = float(position.get('current_price', 0))
-                
+
                 cost_price = float(position.get('cost_price', 0))
                 profit_triggered = bool(position.get('profit_triggered', False))
                 highest_price = float(position.get('highest_price', 0))
                 stop_loss_price = float(position.get('stop_loss_price', 0))
-                
+
                 # 🔑 基础数据验证
                 if cost_price <= 0:
                     logger.error(f"{stock_code} 成本价无效: {cost_price}")
                     return None, None
-                    
+
                 if current_price <= 0:
                     logger.warning(f"{stock_code} 当前价格无效: {current_price}，使用成本价")
                     current_price = cost_price
@@ -1920,18 +1927,36 @@ class PositionManager:
 
             elif signal_type in ['take_profit_half', 'take_profit_full']:
                 current_price = signal_info.get('current_price', 0)
-                cost_price = signal_info.get('cost_price', 0)
+                signal_cost_price = signal_info.get('cost_price', 0)
 
-                if current_price <= 0 or cost_price <= 0:
+                if current_price <= 0 or signal_cost_price <= 0:
                     logger.error(f"🚨 {stock_code} 止盈信号数据无效，拒绝执行")
                     return False
 
+                # ⭐ 修复: 验证时重新获取实时成本价,避免使用历史base_cost
+                position = self.get_position(stock_code)
+                if position:
+                    real_time_cost_price = float(position.get('cost_price', 0))
+                    if real_time_cost_price > 0:
+                        # 使用实时成本价进行验证
+                        cost_price = real_time_cost_price
+                        logger.debug(f"{stock_code} 使用实时成本价验证: {cost_price:.2f} (信号中成本价: {signal_cost_price:.2f})")
+                    else:
+                        # 如果实时成本价无效,使用信号中的成本价
+                        cost_price = signal_cost_price
+                        logger.warning(f"{stock_code} 实时成本价无效,使用信号成本价: {cost_price:.2f}")
+                else:
+                    cost_price = signal_cost_price
+                    logger.warning(f"{stock_code} 未找到持仓,使用信号成本价: {cost_price:.2f}")
+
                 # 确保是盈利状态
+                profit_ratio = (current_price - cost_price) / cost_price if cost_price > 0 else 0
                 if current_price <= cost_price:
-                    logger.error(f"🚨 {stock_code} 止盈信号但当前亏损，拒绝执行")
+                    logger.error(f"🚨 {stock_code} 止盈信号但当前亏损 {profit_ratio:.2%}，拒绝执行")
+                    logger.error(f"   成本价: {cost_price:.2f}, 当前价: {current_price:.2f}")
                     return False
 
-                logger.info(f"✅ {stock_code} 止盈信号验证通过")
+                logger.info(f"✅ {stock_code} 止盈信号验证通过，盈利 {profit_ratio:.2%}")
 
             return True
 
@@ -2894,21 +2919,42 @@ class PositionManager:
         """持仓监控循环 - 优化版本，使用统一的信号检查"""
         logger.info("🚀 持仓监控循环已启动")
 
-        # 🔍 线程异常监控（只在出问题时告警）
+        # 🔍 线程异常监控（智能告警机制）
         loop_count = 0
         last_loop_time = time.time()
         consecutive_errors = 0  # 连续错误计数
+        last_gap_warning_time = 0  # ⭐ 最后一次GAP告警时间(去重机制)
+        max_gap = 0  # ⭐ 最大空档时间记录
+        gap_count = 0  # ⭐ 空档次数统计
 
         while not self.stop_flag:
             try:
                 loop_start = time.time()
                 loop_count += 1
 
-                # 🔍 检测循环间隔异常（超过30秒未执行）
+                # ⭐ 优化: 检测循环间隔异常
                 gap = loop_start - last_loop_time
-                if gap > 30:  # 只在异常时告警
-                    logger.warning(f"⚠️ [MONITOR_GAP] 监控线程空档 {gap:.1f}秒，可能被阻塞！"
-                                 f"（已执行{loop_count}次循环）")
+
+                # 1. 降低阈值到5秒(原30秒)
+                if gap > 5:
+                    gap_count += 1
+                    if gap > max_gap:
+                        max_gap = gap
+
+                    # 2. 去重机制：60秒内只告警一次
+                    if loop_start - last_gap_warning_time > 60:
+                        logger.warning(
+                            f"⚠️ [MONITOR_GAP] 监控线程空档 {gap:.1f}秒"
+                            f"（累计{gap_count}次，最大{max_gap:.1f}秒，已执行{loop_count}次循环）"
+                        )
+                        last_gap_warning_time = loop_start
+
+                    # 3. 严重阻塞(>60秒)触发ERROR级别告警
+                    if gap > 60:
+                        logger.error(f"🚨 [MONITOR_CRITICAL] 严重阻塞 {gap:.1f}秒！线程可能卡死")
+                        # 记录完整堆栈信息帮助诊断
+                        import traceback
+                        logger.error(f"堆栈追踪:\n{''.join(traceback.format_stack())}")
 
                 # 判断是否在交易时间
                 if config.is_trade_time():
