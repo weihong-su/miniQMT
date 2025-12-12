@@ -434,3 +434,26 @@ def log_priority_scenario():
     print(f"{'='*60}\n")
 
     return priority_info
+
+# ============================================================
+# 性能优化配置 - 2025-12-12
+# ============================================================
+
+# QMT持仓查询间隔(秒) - 从3秒延长到10秒
+QMT_POSITION_QUERY_INTERVAL = 10.0  # ↓70% API调用
+
+# SQLite同步间隔(秒) - 从5秒延长到15秒
+POSITION_SYNC_INTERVAL = 15.0       # ↓87% I/O操作
+
+# 缓存配置
+CACHE_CONFIG = {
+    'positions_ttl': 5.0,      # 持仓数据缓存5秒
+    'quotes_ttl': 3.0,         # 行情数据缓存3秒
+    'max_cache_size': 100      # 最大缓存条目
+}
+
+# HTTP API节流
+HTTP_API_MIN_INTERVAL = 1.0    # 最小请求间隔1秒
+
+# HTTP版本号机制(用于减少无效数据传输)
+ENABLE_HTTP_VERSION_CONTROL = True  # 是否启用版本号机制

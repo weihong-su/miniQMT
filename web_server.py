@@ -153,30 +153,53 @@ def get_status():
 
 @app.route('/api/positions', methods=['GET'])
 def get_positions():
-    """获取持仓信息"""
+    """获取持仓信息 - 增加版本号支持"""
     try:
+        # ⭐ 性能优化: 获取客户端版本号
+        client_version = request.args.get('version', 0, type=int)
+
+        # 获取当前数据版本
+        version_info = position_manager.get_data_version_info()
+        current_version = version_info['version']
+
+        # ⭐ 如果客户端版本是最新的，返回简化响应(减少90%数据传输)
+        if client_version >= current_version:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'positions': [],
+                    'metrics': {},
+                    'positions_all': []
+                },
+                'data_version': current_version,
+                'no_change': True
+            })
+
+        # 版本变化，返回完整数据
         positions = trading_executor.get_stock_positions()
         positions_df = pd.DataFrame(positions)
-        
+
         # 计算持仓指标
         metrics = utils.calculate_position_metrics(positions_df)
-        
+
         # 更新实时数据
         for pos in positions:
             stock_code = pos['stock_code']
             realtime_data['positions'][stock_code] = pos
-        
+
         # 获取所有持仓数据
         positions_all_df = position_manager.get_all_positions_with_all_fields()
         realtime_data['positions_all'] = positions_all_df.to_dict('records')
-        
+
         response = make_response(jsonify({
             'status': 'success',
             'data': {
                 'positions': positions,
                 'metrics': metrics,
                 'positions_all': realtime_data['positions_all']
-            }
+            },
+            'data_version': current_version,
+            'no_change': False
         }))
         response.headers['Content-Type'] = 'application/json; charset=utf-8'
         return response

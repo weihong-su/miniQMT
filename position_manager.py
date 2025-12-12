@@ -64,7 +64,7 @@ class PositionManager:
 
         # 添加缓存机制
         self.last_position_update_time = 0
-        self.position_update_interval = 3  # 3秒更新间隔
+        self.position_update_interval = config.QMT_POSITION_QUERY_INTERVAL  # ⭐ 优化: 使用配置10秒
         self.positions_cache = None        
 
         # 新增，持仓数据版本控制
@@ -488,10 +488,8 @@ class PositionManager:
                         self.update_all_positions_price()  # 更新价格
                         self._increment_data_version()      # 触发版本更新
                 
-                # 调整休眠时间
-                sleep_time = 3 if (hasattr(config, 'ENABLE_SIMULATION_MODE') and 
-                                config.ENABLE_SIMULATION_MODE and 
-                                config.is_trade_time()) else 5
+                # ⭐ 优化: 使用配置文件中的同步间隔(15秒)
+                sleep_time = int(config.POSITION_SYNC_INTERVAL)
                 
                 for _ in range(sleep_time):
                     if self.sync_stop_flag:
@@ -3019,8 +3017,8 @@ class PositionManager:
                         signal_type, signal_info = self.check_trading_signals(stock_code)
 
                         # 🔍 调试日志：确认返回值
-                        logger.info(f"[MONITOR_RETURN] {stock_code} 返回 signal_type={repr(signal_type)}, "
-                                   f"type={type(signal_type).__name__}, bool={bool(signal_type)}")
+                        # logger.info(f"[MONITOR_RETURN] {stock_code} 返回 signal={repr(signal_type)}, "
+                        #    f"type={type(signal_type).__name__}, {bool(signal_type)}")
 
                         with self.signal_lock:
                             if signal_type:
