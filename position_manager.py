@@ -90,7 +90,11 @@ class PositionManager:
         self.pending_orders_lock = threading.Lock()
         self.pending_orders = {}  # 存储待处理的委托单: {stock_code: {'order_id', 'submit_time', 'signal_type', ...}}
         self.order_check_interval = 30  # 委托单检查间隔（秒）
-        self.last_order_check_time = 0      
+        self.last_order_check_time = 0
+
+        # 🔴 P0修复：添加同步操作线程锁，防止并发调用导致递归异常
+        self.sync_lock = threading.RLock()  # 可重入锁
+        self._deleting_stocks = set()  # 正在删除的股票代码集合      
 
 
     def _increment_data_version(self):
@@ -128,162 +132,177 @@ class PositionManager:
 
     def _sync_real_positions_to_memory(self, real_positions_df):
         """将实盘持仓数据同步到内存数据库"""
-        try:
-            # 首先检查输入数据
-            if real_positions_df is None or not isinstance(real_positions_df, pd.DataFrame) or real_positions_df.empty:
-                logger.warning("传入的实盘持仓数据无效，跳过同步")
-                return
-                
-            # 确保必要的列存在
-            required_columns = ['证券代码', '股票余额', '可用余额', '成本价', '市值']
-            missing_columns = [col for col in required_columns if col not in real_positions_df.columns]
-            if missing_columns:
-                logger.warning(f"实盘持仓数据缺少必要列: {missing_columns}，无法同步")
-                return
+        # 🔴 P0修复：添加线程锁保护，防止并发调用
+        with self.sync_lock:
+            try:
+                # 首先检查输入数据
+                if real_positions_df is None or not isinstance(real_positions_df, pd.DataFrame) or real_positions_df.empty:
+                    logger.warning("传入的实盘持仓数据无效，跳过同步")
+                    return
 
-            # 获取内存数据库中所有持仓的股票代码
-            cursor = self.memory_conn.cursor()
-            cursor.execute("SELECT stock_code FROM positions")
-            memory_stock_codes = {row[0] for row in cursor.fetchall() if row[0] is not None}
-            current_positions = set()
+                # 确保必要的列存在
+                required_columns = ['证券代码', '股票余额', '可用余额', '成本价', '市值']
+                missing_columns = [col for col in required_columns if col not in real_positions_df.columns]
+                if missing_columns:
+                    logger.warning(f"实盘持仓数据缺少必要列: {missing_columns}，无法同步")
+                    return
 
-            # 新增：记录更新过程中的错误
-            update_errors = []
+                # 获取内存数据库中所有持仓的股票代码
+                cursor = self.memory_conn.cursor()
+                cursor.execute("SELECT stock_code FROM positions")
+                memory_stock_codes = {row[0] for row in cursor.fetchall() if row[0] is not None}
+                current_positions = set()
 
-            # 遍历实盘持仓数据
-            for _, row in real_positions_df.iterrows():
-                try:
-                    # 安全提取并转换数据
-                    stock_code = str(row['证券代码']) if row['证券代码'] is not None else None
-                    if not stock_code:
-                        continue  # 跳过无效数据
-                        
-                    # 安全提取并转换数值
+                # 新增：记录更新过程中的错误
+                update_errors = []
+
+                # 遍历实盘持仓数据
+                for _, row in real_positions_df.iterrows():
                     try:
-                        volume = int(float(row['股票余额'])) if row['股票余额'] is not None else 0
-                    except (ValueError, TypeError):
-                        volume = 0
-                        
-                    try:
-                        available = int(float(row['可用余额'])) if row['可用余额'] is not None else 0
-                    except (ValueError, TypeError):
-                        available = 0
-                        
-                    try:
-                        cost_price = float(row['成本价']) if row['成本价'] is not None else 0.0
-                    except (ValueError, TypeError):
-                        cost_price = 0.0
-                        
-                    try:
-                        market_value = float(row['市值']) if row['市值'] is not None else 0.0
-                    except (ValueError, TypeError):
-                        market_value = 0.0
-                    
-                    # 获取当前价格
-                    current_price = cost_price  # 默认使用成本价
-                    try:
-                        latest_quote = self.data_manager.get_latest_data(stock_code)
-                        if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
-                            current_price = float(latest_quote['lastPrice'])
+                        # 安全提取并转换数据
+                        stock_code = str(row['证券代码']) if row['证券代码'] is not None else None
+                        if not stock_code:
+                            continue  # 跳过无效数据
+
+                        # 安全提取并转换数值
+                        try:
+                            volume = int(float(row['股票余额'])) if row['股票余额'] is not None else 0
+                        except (ValueError, TypeError):
+                            volume = 0
+
+                        try:
+                            available = int(float(row['可用余额'])) if row['可用余额'] is not None else 0
+                        except (ValueError, TypeError):
+                            available = 0
+
+                        try:
+                            cost_price = float(row['成本价']) if row['成本价'] is not None else 0.0
+                        except (ValueError, TypeError):
+                            cost_price = 0.0
+
+                        try:
+                            market_value = float(row['市值']) if row['市值'] is not None else 0.0
+                        except (ValueError, TypeError):
+                            market_value = 0.0
+
+                        # 获取当前价格
+                        current_price = cost_price  # 默认使用成本价
+                        try:
+                            latest_quote = self.data_manager.get_latest_data(stock_code)
+                            if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
+                                current_price = float(latest_quote['lastPrice'])
+                        except Exception as e:
+                            logger.warning(f"获取 {stock_code} 的最新价格失败: {str(e)}，使用成本价")
+
+                        # 查询内存数据库中是否已存在该股票的持仓记录
+                        cursor.execute("SELECT profit_triggered, open_date, highest_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
+                        result = cursor.fetchone()
+
+                        if result:
+                            # 如果存在，则更新持仓信息，但不修改open_date
+                            profit_triggered = result[0] if result[0] is not None else False
+                            open_date = result[1] if result[1] is not None else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            highest_price = result[2] if result[2] is not None else 0.0
+                            stop_loss_price = result[3] if result[3] is not None else 0.0
+
+                            # 所有参数都确保有有效值
+                            self.update_position(
+                                stock_code=stock_code,
+                                volume=volume,
+                                cost_price=cost_price,
+                                available=available,
+                                market_value=market_value,
+                                current_price=current_price,
+                                profit_triggered=profit_triggered,
+                                highest_price=highest_price,
+                                open_date=open_date,
+                                stop_loss_price=stop_loss_price
+                            )
+                        else:
+                            # 如果不存在，则新增持仓记录
+                            self.update_position(
+                                stock_code=stock_code,
+                                volume=volume,
+                                cost_price=cost_price,
+                                available=available,
+                                market_value=market_value,
+                                current_price=current_price,
+                                open_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            )
+
+                        # 添加到当前持仓集合
+                        current_positions.add(stock_code)
+                        memory_stock_codes.discard(stock_code)
+
                     except Exception as e:
-                        logger.warning(f"获取 {stock_code} 的最新价格失败: {str(e)}，使用成本价")
-                    
-                    # 查询内存数据库中是否已存在该股票的持仓记录
-                    cursor.execute("SELECT profit_triggered, open_date, highest_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
-                    result = cursor.fetchone()
-                    
-                    if result:
-                        # 如果存在，则更新持仓信息，但不修改open_date
-                        profit_triggered = result[0] if result[0] is not None else False
-                        open_date = result[1] if result[1] is not None else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        highest_price = result[2] if result[2] is not None else 0.0
-                        stop_loss_price = result[3] if result[3] is not None else 0.0
-                        
-                        # 所有参数都确保有有效值
-                        self.update_position(
-                            stock_code=stock_code, 
-                            volume=volume, 
-                            cost_price=cost_price, 
-                            available=available, 
-                            market_value=market_value, 
-                            current_price=current_price, 
-                            profit_triggered=profit_triggered, 
-                            highest_price=highest_price, 
-                            open_date=open_date, 
-                            stop_loss_price=stop_loss_price
-                        )
-                    else:
-                        # 如果不存在，则新增持仓记录
-                        self.update_position(
-                            stock_code=stock_code, 
-                            volume=volume, 
-                            cost_price=cost_price, 
-                            available=available, 
-                            market_value=market_value, 
-                            current_price=current_price, 
-                            open_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        )
-                    
-                    # 添加到当前持仓集合
-                    current_positions.add(stock_code)
-                    memory_stock_codes.discard(stock_code)
-                
-                except Exception as e:
-                    logger.error(f"处理持仓行数据时出错: {str(e)}")
-                    update_errors.append(f"处理 {stock_code if 'stock_code' in locals() else '未知'} 时出错: {str(e)}")
-                    continue  # 跳过这一行，继续处理其他行
+                        logger.error(f"处理持仓行数据时出错: {str(e)}")
+                        update_errors.append(f"处理 {stock_code if 'stock_code' in locals() else '未知'} 时出错: {str(e)}")
+                        continue  # 跳过这一行，继续处理其他行
 
-            # 关键修改：只有在没有更新错误且数据完整时才执行删除
-            if update_errors:
-                logger.error(f"数据更新过程中出现 {len(update_errors)} 个错误，跳过删除操作以保护数据")
-                for error in update_errors:
-                    logger.error(f"  - {error}")
-                return
+                # 关键修改：只有在没有更新错误且数据完整时才执行删除
+                if update_errors:
+                    logger.error(f"数据更新过程中出现 {len(update_errors)} 个错误，跳过删除操作以保护数据")
+                    for error in update_errors:
+                        logger.error(f"  - {error}")
+                    return
 
-            # 数据完整性检查
-            if len(current_positions) == 0:
-                logger.warning("外部持仓数据为空，可能是接口异常，跳过删除操作")
-                return
-                
-            # 数据量合理性检查
-            if len(memory_stock_codes) > 0 and len(current_positions) < len(memory_stock_codes) * 0.3:
-                logger.warning(f"外部持仓数据过少 ({len(current_positions)}) 相比内存数据 ({len(memory_stock_codes)})，可能是接口异常，跳过删除操作")
-                return
+                # 数据完整性检查
+                if len(current_positions) == 0:
+                    logger.warning("外部持仓数据为空，可能是接口异常，跳过删除操作")
+                    return
 
-            # 修改：在模拟交易模式下，不删除内存中存在但实盘中不存在的持仓记录
-            if not hasattr(config, 'ENABLE_SIMULATION_MODE') or not config.ENABLE_SIMULATION_MODE:
-                # 只有通过所有检查后才执行删除
-                if memory_stock_codes:  # 有需要删除的记录
-                    logger.info(f"准备删除 {len(memory_stock_codes)} 个不在外部数据中的持仓: {list(memory_stock_codes)}")
-                    
-                    # 逐个删除并记录结果
-                    successfully_deleted = []
-                    failed_deletions = []
-                    
-                    for stock_code in memory_stock_codes:
-                        if stock_code:
-                            try:
-                                if self.remove_position(stock_code):
-                                    successfully_deleted.append(stock_code)
-                                else:
-                                    failed_deletions.append(stock_code)
-                            except Exception as e:
-                                logger.error(f"删除 {stock_code} 时出错: {str(e)}")
-                                failed_deletions.append(stock_code)
-                    
-                    if successfully_deleted:
-                        logger.info(f"成功删除持仓: {successfully_deleted}")
-                    if failed_deletions:
-                        logger.error(f"删除失败的持仓: {failed_deletions}")
-            else:
-                logger.info(f"模拟交易模式：保留内存中的模拟持仓记录，不与实盘同步删除")
+                # 数据量合理性检查
+                if len(memory_stock_codes) > 0 and len(current_positions) < len(memory_stock_codes) * 0.3:
+                    logger.warning(f"外部持仓数据过少 ({len(current_positions)}) 相比内存数据 ({len(memory_stock_codes)})，可能是接口异常，跳过删除操作")
+                    return
 
-            # 更新 stock_positions.json
-            self._update_stock_positions_file(current_positions)
+                # 修改：在模拟交易模式下，不删除内存中存在但实盘中不存在的持仓记录
+                if not hasattr(config, 'ENABLE_SIMULATION_MODE') or not config.ENABLE_SIMULATION_MODE:
+                    # 🔴 P0修复：优化删除逻辑，添加去重和中断机制
+                    if memory_stock_codes:  # 有需要删除的记录
+                        # 检查是否已在删除中（去重机制）
+                        stocks_to_delete = memory_stock_codes - self._deleting_stocks
+                        if not stocks_to_delete:
+                            logger.debug(f"所有待删除股票 {list(memory_stock_codes)} 正在处理中，跳过重复删除")
+                            return
 
-        except Exception as e:
-            logger.error(f"同步实盘持仓数据到内存数据库时出错: {str(e)}")
-            self.memory_conn.rollback()
+                        # 标记正在删除
+                        self._deleting_stocks.update(stocks_to_delete)
+
+                        try:
+                            logger.info(f"准备删除 {len(stocks_to_delete)} 个不在外部数据中的持仓: {list(stocks_to_delete)}")
+
+                            # 逐个删除并记录结果
+                            successfully_deleted = []
+                            failed_deletions = []
+
+                            for stock_code in stocks_to_delete:
+                                if stock_code:
+                                    try:
+                                        if self.remove_position(stock_code):
+                                            successfully_deleted.append(stock_code)
+                                        else:
+                                            failed_deletions.append(stock_code)
+                                    except Exception as e:
+                                        logger.error(f"删除 {stock_code} 时出错: {str(e)}")
+                                        failed_deletions.append(stock_code)
+
+                            if successfully_deleted:
+                                logger.info(f"成功删除持仓: {successfully_deleted}")
+                            if failed_deletions:
+                                logger.error(f"删除失败的持仓: {failed_deletions}")
+                        finally:
+                            # 删除完成后清除标记
+                            self._deleting_stocks -= stocks_to_delete
+                else:
+                    logger.info(f"模拟交易模式：保留内存中的模拟持仓记录，不与实盘同步删除")
+
+                # 更新 stock_positions.json
+                self._update_stock_positions_file(current_positions)
+
+            except Exception as e:
+                logger.error(f"同步实盘持仓数据到内存数据库时出错: {str(e)}")
+                self.memory_conn.rollback()
 
     def _sync_db_to_memory(self):
         """将数据库数据同步到内存数据库"""
