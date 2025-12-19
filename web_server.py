@@ -1199,8 +1199,40 @@ def start_push_thread():
     else:
         logger.warning("实时推送线程已在运行")
 
+def sync_auto_trading_status():
+    """🟢 20251219修复: Web服务器启动时同步ENABLE_AUTO_TRADING状态
+
+    问题: ENABLE_AUTO_TRADING不持久化导致重启后数据库和内存不一致
+    - 数据库: 保存Web界面设置的值(可能是True)
+    - 内存: 程序启动时从config.py加载默认值(False)
+
+    解决: Web启动时将内存状态同步到数据库,确保显示与实际一致
+    """
+    try:
+        memory_value = config.ENABLE_AUTO_TRADING
+        db_value = config_manager.load_config('ENABLE_AUTO_TRADING', None)
+
+        if db_value is None:
+            # 数据库中没有记录,写入当前内存值
+            config_manager.save_config('ENABLE_AUTO_TRADING', memory_value)
+            logger.info(f"🔄 初始化配置同步: ENABLE_AUTO_TRADING = {memory_value} (内存 → 数据库)")
+        elif db_value != memory_value:
+            # 数据库和内存不一致,以内存为准(因为不持久化设计)
+            config_manager.save_config('ENABLE_AUTO_TRADING', memory_value)
+            logger.warning(f"🔄 配置不一致修复: ENABLE_AUTO_TRADING 数据库={db_value} → 内存={memory_value}")
+            logger.warning(f"⚠️  Web界面现在将显示实际运行状态: {memory_value}")
+        else:
+            logger.info(f"✅ 配置一致性验证通过: ENABLE_AUTO_TRADING = {memory_value}")
+    except Exception as e:
+        logger.error(f"❌ 同步ENABLE_AUTO_TRADING状态失败: {str(e)}")
+
 def start_web_server():
     """启动Web服务器"""
+    logger.info("正在启动Web服务器...")
+
+    # 🟢 20251219新增: 启动时同步配置状态
+    sync_auto_trading_status()
+
     start_push_thread()
     app.run(host=config.WEB_SERVER_HOST, port=config.WEB_SERVER_PORT, debug=config.WEB_SERVER_DEBUG, use_reloader=False)
 
