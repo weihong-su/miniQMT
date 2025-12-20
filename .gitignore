@@ -59,8 +59,19 @@ test/
 # 注意：account_config.json.example 应该被跟踪，作为配置模板
 !account_config.json.example
 stock_pool.json
-data/trading.db
-data/trading.db
+data/
 stock_pool.json
-logs/qmt_trading.log
+logs/
+docs/*.md
 
+
+__pycache__/config.cpython-38.pyc
+__pycache__/data_manager.cpython-38.pyc
+__pycache__/data_manager.cpython-310.pyc
+__pycache__/logger.cpython-38.pyc
+__pycache__/logger.cpython-310.pyc
+__pycache__/position_manager.cpython-38.pyc
+__pycache__/position_manager.cpython-310.pyc
+xtquant/__pycache__/xtconn.cpython-38.pyc
+xtquant/__pycache__/xtdatacenter.cpython-38.pyc
+xtquant/__pycache__/xtutil.cpython-38.pyc
