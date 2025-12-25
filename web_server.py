@@ -156,7 +156,8 @@ def get_positions():
     """获取持仓信息 - 增加版本号支持"""
     try:
         # ⭐ 性能优化: 获取客户端版本号
-        client_version = request.args.get('version', 0, type=int)
+        # 🔧 修复: 默认值改为-1,确保首次请求返回完整数据
+        client_version = request.args.get('version', -1, type=int)
 
         # 获取当前数据版本
         version_info = position_manager.get_data_version_info()
