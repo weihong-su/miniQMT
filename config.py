@@ -333,6 +333,13 @@ TRADE_TIME = {
     "trade_days": [1, 2, 3, 4, 5]  # 周一至周五
 }
 
+# ============ 新增: 盘前同步配置 ============
+PREMARKET_SYNC_TIME = {
+    "hour": 9,                          # 同步时间: 9点
+    "minute": 25,                       # 25分(9:30开盘前5分钟)
+    "compensation_window_minutes": 5    # 补偿窗口: 9:25-9:30
+}
+
 def is_trade_time():
     """判断当前是否为交易时间"""
     if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:

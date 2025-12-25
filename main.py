@@ -192,7 +192,12 @@ def main():
         start_position_thread(position_manager)
         start_strategy_thread(trading_strategy)
         start_log_cleanup_thread()
-        
+
+        # ============ 新增: 启动盘前同步调度器 ============
+        from premarket_sync import start_premarket_sync_scheduler
+        start_premarket_sync_scheduler()
+        logger.info("盘前同步调度器已启动")
+
         # 最后启动Web服务器
         start_web_server_thread()
         

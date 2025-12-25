@@ -819,6 +819,70 @@ class easy_qmt_trader:
         self.xt_trader.run_forever()
     def stop(self):
         self.xt_trader.stop()
+
+    # ============ 新增: xtquant统一管理接口 ============
+    def connect_xtdata(self):
+        """连接xtdata行情接口"""
+        try:
+            import xtquant.xtdata as xt
+            self.xtdata = xt
+            if xt.connect():
+                self.xtdata_connected = True
+                print("xtdata行情接口连接成功")
+                return True
+            else:
+                print("xtdata行情接口连接失败")
+                self.xtdata_connected = False
+                return False
+        except Exception as e:
+            print(f"连接xtdata失败: {e}")
+            self.xtdata_connected = False
+            return False
+
+    def reconnect_xtdata(self):
+        """重新连接xtdata行情接口"""
+        try:
+            if not hasattr(self, 'xtdata') or not self.xtdata:
+                import xtquant.xtdata as xt
+                self.xtdata = xt
+            if self.xtdata.reconnect():
+                self.xtdata_connected = True
+                print("xtdata行情接口重连成功")
+                return True
+            else:
+                print("xtdata行情接口重连失败")
+                self.xtdata_connected = False
+                return False
+        except Exception as e:
+            print(f"重连xtdata失败: {e}")
+            self.xtdata_connected = False
+            return False
+
+    def verify_xtdata_connection(self):
+        """验证xtdata连接状态"""
+        try:
+            if not hasattr(self, 'xtdata') or not hasattr(self, 'xtdata_connected'):
+                return False
+            if not self.xtdata or not self.xtdata_connected:
+                return False
+            test_codes = ['000001.SZ']
+            test_data = self.xtdata.get_full_tick(test_codes)
+            if test_data:
+                print("xtdata连接验证成功")
+                return True
+            else:
+                print("xtdata连接验证失败")
+                return False
+        except Exception as e:
+            print(f"xtdata连接验证异常: {e}")
+            return False
+
+    def get_full_tick(self, stock_codes):
+        """获取全推行情数据(通过xtdata)"""
+        if hasattr(self, 'xtdata') and self.xtdata:
+            return self.xtdata.get_full_tick(stock_codes)
+        return {}
+
 if __name__=='__main__':
     models=easy_qmt_trader()
     models.connect()
