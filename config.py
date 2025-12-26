@@ -340,6 +340,12 @@ PREMARKET_SYNC_TIME = {
     "compensation_window_minutes": 5    # 补偿窗口: 9:25-9:30
 }
 
+# 盘前同步功能开关
+ENABLE_PREMARKET_XTQUANT_REINIT = True  # 是否在盘前重新初始化xtquant接口
+PREMARKET_REINIT_XTDATA = True          # 是否重新初始化xtdata行情接口
+PREMARKET_REINIT_XTTRADER = True        # 是否重新初始化xttrader交易接口
+ENABLE_WEB_REFRESH_AFTER_REINIT = True  # 接口初始化成功后是否触发Web数据刷新
+
 def is_trade_time():
     """判断当前是否为交易时间"""
     if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:

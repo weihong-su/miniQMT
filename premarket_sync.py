@@ -204,35 +204,43 @@ def perform_premarket_sync():
         results['switches_synced'] = switch_count
         logger.info(f"  ✓ 特殊开关已同步: {switch_count}个")
 
-        # 步骤3: 重新初始化xtquant行情接口
-        logger.info("[步骤3/7] 重新初始化xtquant行情接口...")
-        xtdata_result = reinit_xtquant_data()
-        results['xtdata_reconnected'] = xtdata_result
-        if xtdata_result:
-            logger.info("  ✓ 行情接口重新初始化成功")
+        # 步骤3: 重新初始化xtquant行情接口 (可配置)
+        logger.info("[步骤3/8] 重新初始化xtquant行情接口...")
+        if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTDATA:
+            xtdata_result = reinit_xtquant_data()
+            results['xtdata_reconnected'] = xtdata_result
+            if xtdata_result:
+                logger.info("  ✓ 行情接口重新初始化成功")
+            else:
+                logger.warning("  ⚠ 行情接口初始化失败(不阻止继续)")
+                results['errors'].append("xtdata初始化失败")
         else:
-            logger.warning("  ⚠ 行情接口初始化失败(不阻止继续)")
-            results['errors'].append("xtdata初始化失败")
+            logger.info("  ○ 跳过xtdata重新初始化(配置已禁用)")
+            results['xtdata_reconnected'] = None
 
-        # 步骤4: 重新初始化xtquant交易接口
-        logger.info("[步骤4/7] 重新初始化xtquant交易接口...")
-        xttrader_result = reinit_xtquant_trader()
-        results['xttrader_reconnected'] = xttrader_result
-        if xttrader_result:
-            logger.info("  ✓ 交易接口重新初始化成功")
+        # 步骤4: 重新初始化xtquant交易接口 (可配置)
+        logger.info("[步骤4/8] 重新初始化xtquant交易接口...")
+        if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTTRADER:
+            xttrader_result = reinit_xtquant_trader()
+            results['xttrader_reconnected'] = xttrader_result
+            if xttrader_result:
+                logger.info("  ✓ 交易接口重新初始化成功")
+            else:
+                logger.warning("  ⚠ 交易接口初始化失败(不阻止继续)")
+                results['errors'].append("xttrader初始化失败")
         else:
-            logger.warning("  ⚠ 交易接口初始化失败(不阻止继续)")
-            results['errors'].append("xttrader初始化失败")
+            logger.info("  ○ 跳过xttrader重新初始化(配置已禁用)")
+            results['xttrader_reconnected'] = None
 
         # 步骤5: 验证xtquant连接状态
-        logger.info("[步骤5/7] 验证xtquant连接状态...")
+        logger.info("[步骤5/8] 验证xtquant连接状态...")
         connection_status = verify_xtquant_connections()
         results['connection_status'] = connection_status
         logger.info(f"  ✓ xtdata状态: {connection_status.get('xtdata', '未知')}")
         logger.info(f"  ✓ xttrader状态: {connection_status.get('xttrader', '未知')}")
 
         # 步骤6: 同步持仓数据(仅模拟模式)
-        logger.info("[步骤6/7] 同步持仓数据...")
+        logger.info("[步骤6/8] 同步持仓数据...")
         if config.ENABLE_SIMULATION_MODE:
             from position_manager import get_position_manager
             position_manager = get_position_manager()
@@ -242,8 +250,21 @@ def perform_premarket_sync():
         else:
             logger.info("  ○ 跳过持仓同步(实盘模式)")
 
-        # 步骤7: 记录同步历史
-        logger.info("[步骤7/7] 记录同步历史...")
+        # 步骤7: 触发Web数据全量刷新 (可配置)
+        logger.info("[步骤7/8] 触发Web数据全量刷新...")
+        if config.ENABLE_WEB_REFRESH_AFTER_REINIT:
+            refresh_result = trigger_web_data_refresh(results)
+            results['web_refresh'] = refresh_result
+            if refresh_result['success']:
+                logger.info(f"  ✓ Web数据刷新成功 (刷新{refresh_result['refreshed_stocks']}只股票)")
+            else:
+                logger.warning(f"  ⚠ Web数据刷新失败: {refresh_result.get('error')}")
+        else:
+            logger.info("  ○ 跳过Web数据刷新(配置已禁用)")
+            results['web_refresh'] = None
+
+        # 步骤8: 记录同步历史
+        logger.info("[步骤8/8] 记录同步历史...")
         execution_time = int((time.time() - start_time) * 1000)
         results['execution_time_ms'] = execution_time
         record_sync_history(results)
@@ -330,7 +351,7 @@ def reinit_xtquant_data():
         qmt_trader = position_manager.qmt_trader
 
         # 步骤1: 检查现有连接状态
-        current_status = "已连接" if qmt_trader.xtdata_connected else "未连接"
+        current_status = "已连接" if getattr(qmt_trader, 'xtdata_connected', False) else "未连接"
         logger.info(f"  → 当前状态: {current_status}")
 
         # 步骤2: 执行reconnect (通过qmt_trader)
@@ -485,6 +506,70 @@ def verify_xtquant_connections():
         status['xttrader'] = '异常'
 
     return status
+
+
+def trigger_web_data_refresh(sync_results):
+    """
+    触发Web界面数据全量刷新
+
+    策略:
+    1. 检查接口初始化是否成功
+    2. 调用position_manager全量刷新
+    3. 更新data_version触发前端更新
+    4. 返回刷新结果
+
+    参数:
+        sync_results: 同步结果字典
+
+    返回: dict包含success, refreshed_stocks, error等信息
+    """
+    result = {
+        'success': False,
+        'refreshed_stocks': 0,
+        'error': None
+    }
+
+    try:
+        # 步骤1: 检查接口初始化状态
+        xtdata_ok = sync_results.get('xtdata_reconnected')
+        xttrader_ok = sync_results.get('xttrader_reconnected')
+
+        if xtdata_ok is False and xttrader_ok is False:
+            result['error'] = "xtquant接口初始化失败,跳过刷新"
+            logger.warning(f"  → {result['error']}")
+            return result
+
+        # 步骤2: 获取position_manager
+        from position_manager import get_position_manager
+        position_manager = get_position_manager()
+
+        # 步骤3: 执行全量数据刷新
+        logger.info("  → 执行全量持仓数据刷新...")
+
+        if config.ENABLE_SIMULATION_MODE:
+            # 模拟模式: 全量刷新模拟数据
+            position_manager._full_refresh_simulation_data()
+            logger.info("  → 模拟模式全量刷新完成")
+        else:
+            # 实盘模式: 从QMT获取最新持仓
+            positions = position_manager.get_all_positions_with_all_fields()
+            result['refreshed_stocks'] = len(positions)
+            logger.info(f"  → 实盘模式刷新了{len(positions)}只股票")
+
+        # 步骤4: 更新data_version
+        position_manager.increment_data_version()
+        logger.info("  → data_version已更新,前端将获取最新数据")
+
+        result['success'] = True
+        result['refreshed_stocks'] = len(position_manager.get_all_positions_with_all_fields())
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Web数据刷新异常: {str(e)}"
+        result['error'] = error_msg
+        logger.error(error_msg, exc_info=True)
+        return result
 
 
 def record_sync_history(results):
