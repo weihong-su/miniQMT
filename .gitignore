@@ -54,15 +54,23 @@ ENV/
 # 测试文件和临时数据
 test_*.py.bak
 data/stock2buy.json.bak
-test/
 
 # 注意：account_config.json.example 应该被跟踪，作为配置模板
 !account_config.json.example
+
+# 运行时数据文件
 stock_pool.json
 data/
-stock_pool.json
 logs/
-docs/*.md
+
+# 临时测试报告(根目录)
+/*_REPORT.md
+/*_TEST_REPORT.md
+/test_*.py
+
+# 中间过程的临时文档和测试脚本(不纳入版本管理)
+docs/
+test/
 
 
 __pycache__/config.cpython-38.pyc
@@ -75,3 +83,5 @@ __pycache__/position_manager.cpython-310.pyc
 xtquant/__pycache__/xtconn.cpython-38.pyc
 xtquant/__pycache__/xtdatacenter.cpython-38.pyc
 xtquant/__pycache__/xtutil.cpython-38.pyc
+data/trading.db
+data/trading.db
