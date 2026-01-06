@@ -12,6 +12,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, make_response, Response, stream_with_context
 from flask_cors import CORS
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import Methods as Methods
 import config
 from logger import get_logger
@@ -51,6 +52,9 @@ realtime_data = {
     'positions_all': []  # Add new field for all positions data
 }
 
+# 创建线程池用于超时调用(最大2个工作线程,避免资源消耗)
+api_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api_timeout")
+
 # 实时推送线程
 push_thread = None
 stop_push_flag = False
@@ -67,21 +71,18 @@ def serve_static(filename):
 
 @app.route('/api/connection/status', methods=['GET'])
 def connection_status():
-    """返回API连接状态"""
+    """返回API连接状态 - 简化版本,避免阻塞"""
     try:
-        # 检查 qmt_trader 的连接状态
+        # 直接检查对象存在性,不调用任何QMT API避免阻塞
         is_connected = False
         if hasattr(position_manager, 'qmt_trader') and position_manager.qmt_trader:
             if hasattr(position_manager.qmt_trader, 'xt_trader') and position_manager.qmt_trader.xt_trader:
-                if hasattr(position_manager.qmt_trader.xt_trader, 'is_connected'):
-                    is_connected = position_manager.qmt_trader.xt_trader.is_connected()
-                else:
-                    # 尝试其他检查方式
-                    is_connected = True  # 假设已连接，实际应根据具体情况修改
-        
+                # xt_trader对象存在即认为已连接,不调用任何方法
+                is_connected = True
+
         return jsonify({
             'status': 'success',
-            'connected': bool(is_connected),  # 确保返回布尔值
+            'connected': bool(is_connected),
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
@@ -95,10 +96,20 @@ def connection_status():
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
-    """获取系统状态"""
+    """获取系统状态 - 增加超时保护"""
     try:
-        # 从 position_manager 获取账户信息
-        account_info = position_manager.get_account_info() or {}
+        # 从 position_manager 获取账户信息(使用超时保护)
+        def get_account_data():
+            return position_manager.get_account_info() or {}
+
+        timeout_seconds = config.MONITOR_CALL_TIMEOUT if hasattr(config, 'MONITOR_CALL_TIMEOUT') else 5.0
+        future = api_executor.submit(get_account_data)
+
+        try:
+            account_info = future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            logger.warning(f"获取账户信息超时({timeout_seconds}秒),使用默认值")
+            account_info = {}
         
         # 如果没有账户信息，使用默认值
         if not account_info:
@@ -190,6 +201,8 @@ def get_positions():
 
         # 获取所有持仓数据
         positions_all_df = position_manager.get_all_positions_with_all_fields()
+        # 修复NaN序列化问题: 将NaN替换为None以生成有效的JSON
+        positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
         realtime_data['positions_all'] = positions_all_df.to_dict('records')
 
         response = make_response(jsonify({
@@ -1226,6 +1239,29 @@ def sync_auto_trading_status():
             logger.info(f"✅ 配置一致性验证通过: ENABLE_AUTO_TRADING = {memory_value}")
     except Exception as e:
         logger.error(f"❌ 同步ENABLE_AUTO_TRADING状态失败: {str(e)}")
+
+def shutdown_web_server():
+    """关闭Web服务器并清理资源"""
+    global stop_push_flag, api_executor
+
+    logger.info("正在关闭Web服务器...")
+
+    try:
+        # 停止推送线程
+        stop_push_flag = True
+        logger.info("已停止推送线程")
+    except Exception as e:
+        logger.error(f"停止推送线程失败: {str(e)}")
+
+    try:
+        # 关闭线程池
+        if api_executor:
+            api_executor.shutdown(wait=True, cancel_futures=True)
+            logger.info("已关闭API线程池")
+    except Exception as e:
+        logger.error(f"关闭API线程池失败: {str(e)}")
+
+    logger.info("Web服务器已关闭")
 
 def start_web_server():
     """启动Web服务器"""

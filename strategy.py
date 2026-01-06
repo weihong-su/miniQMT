@@ -1055,6 +1055,19 @@ class TradingStrategy:
             logger.error(f"手动卖出 {stock_code} 时出错: {str(e)}")
             return None
 
+    def close(self):
+        """关闭策略，释放资源"""
+        try:
+            logger.info("正在关闭交易策略...")
+            # 策略线程已经通过stop_strategy_thread()停止
+            # 这里只需要清理资源
+            self.processed_signals.clear()
+            self.last_trade_time.clear()
+            self.retry_counts.clear()
+            logger.info("交易策略已关闭")
+        except Exception as e:
+            logger.error(f"关闭交易策略时出错: {str(e)}")
+
 
 # 单例模式
 _instance = None

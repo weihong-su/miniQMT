@@ -793,13 +793,10 @@ class DataManager:
         if self.conn:
             self.conn.close()
             logger.info("数据库连接已关闭")
-            
-        # 断开行情连接
-        try:
-            xt.disconnect()
-            logger.info("已断开行情连接")
-        except Exception as e:
-            logger.error(f"断开行情连接出错: {str(e)}")
+
+        # xtquant的xtdata模块不需要显式断开连接
+        # 连接会在进程退出时自动释放
+        logger.info("数据管理器已关闭")
 
 
 # 单例模式

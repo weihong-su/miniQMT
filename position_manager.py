@@ -98,11 +98,15 @@ class PositionManager:
 
 
     def _increment_data_version(self):
-        """递增数据版本号"""
+        """递增数据版本号（内部方法）"""
         with self.version_lock:
             self.data_version += 1
             self.data_changed = True
             logger.debug(f"持仓数据版本更新: v{self.data_version}")
+
+    def increment_data_version(self):
+        """递增数据版本号（公开方法，供外部模块调用）"""
+        self._increment_data_version()
 
     def _create_memory_table(self):
         """创建内存数据库表结构"""
@@ -2933,166 +2937,157 @@ class PositionManager:
                 logger.debug(f"{stock_code} 信号已不存在，无需处理")
 
     def _position_monitor_loop(self):
-        """持仓监控循环 - 优化版本，使用统一的信号检查"""
+        """持仓监控循环 - 鲁棒性优化版本,支持无人值守运行"""
         logger.info("🚀 持仓监控循环已启动")
 
-        # 🔍 线程异常监控（智能告警机制）
+        # 线程异常监控（智能告警机制）
         loop_count = 0
         last_loop_time = time.time()
         consecutive_errors = 0  # 连续错误计数
-        last_gap_warning_time = 0  # ⭐ 最后一次GAP告警时间(去重机制)
-        max_gap = 0  # ⭐ 最大空档时间记录
-        gap_count = 0  # ⭐ 空档次数统计
+        last_gap_warning_time = 0  # 最后一次GAP告警时间(去重机制)
+        max_gap = 0  # 最大空档时间记录
+        gap_count = 0  # 空档次数统计
 
         while not self.stop_flag:
             try:
                 loop_start = time.time()
                 loop_count += 1
 
-                # ⭐ 优化: 检测循环间隔异常
-                gap = loop_start - last_loop_time
+                # ⭐ 关键优化1: 非交易时段立即跳过,避免无效API调用
+                if not config.is_trade_time():
+                    logger.debug(f"非交易时间(第{loop_count}次循环), 休眠{config.MONITOR_NON_TRADE_SLEEP}秒")
+                    time.sleep(config.MONITOR_NON_TRADE_SLEEP)
+                    last_loop_time = time.time()
+                    continue
 
-                # 1. 降低阈值到5秒(原30秒)
-                if gap > 5:
+                # 检测循环间隔异常(仅交易时段)
+                gap = loop_start - last_loop_time
+                if gap > 10:
                     gap_count += 1
                     if gap > max_gap:
                         max_gap = gap
 
-                    # 2. 去重机制：60秒内只告警一次
+                    # 去重机制：60秒内只告警一次
                     if loop_start - last_gap_warning_time > 60:
                         logger.warning(
-                            f"⚠️ [MONITOR_GAP] 监控线程空档 {gap:.1f}秒"
-                            f"（累计{gap_count}次，最大{max_gap:.1f}秒，已执行{loop_count}次循环）"
+                            f"⚠ [MONITOR_GAP] 监控线程空档 {gap:.1f}秒"
+                            f"（累计{gap_count}次,最大{max_gap:.1f}秒,已执行{loop_count}次循环）"
                         )
                         last_gap_warning_time = loop_start
 
-                    # 3. 严重阻塞(>60秒)触发ERROR级别告警
+                    # 严重阻塞(>60秒)触发ERROR级别告警
                     if gap > 60:
-                        logger.error(f"🚨 [MONITOR_CRITICAL] 严重阻塞 {gap:.1f}秒！线程可能卡死")
-                        # 记录完整堆栈信息帮助诊断
-                        import traceback
-                        logger.error(f"堆栈追踪:\n{''.join(traceback.format_stack())}")
+                        logger.error(f"❌ [MONITOR_CRITICAL] 严重阻塞 {gap:.1f}秒！")
 
-                # ⭐ 修复：盘后时间快速跳过,避免不必要的API调用导致阻塞
-                if not config.is_trade_time():
-                    logger.debug("非交易时间, 监控线程休眠60秒")
-                    time.sleep(60)
-                    last_loop_time = time.time()  # 🔑 关键:更新时间避免GAP累积
+                # ⭐ 关键优化2: 更新最高价使用短超时,失败不阻塞
+                try:
+                    import concurrent.futures
+                    timeout = config.MONITOR_CALL_TIMEOUT
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(self.update_all_positions_highest_price)
+                        try:
+                            future.result(timeout=timeout)
+                        except concurrent.futures.TimeoutError:
+                            logger.warning(f"[MONITOR_TIMEOUT] 更新最高价超时({timeout}秒),跳过")
+                            # 不阻塞,继续执行
+                except Exception as e:
+                    logger.error(f"[MONITOR_ERROR] 更新最高价异常: {e}")
+                    # 同样不阻塞
+
+                # ⭐ 关键优化3: 获取持仓使用短超时
+                try:
+                    timeout = config.MONITOR_CALL_TIMEOUT
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(self.get_all_positions)
+                        try:
+                            positions_df = future.result(timeout=timeout)
+                            consecutive_errors = 0  # 重置错误计数
+                        except concurrent.futures.TimeoutError:
+                            consecutive_errors += 1
+                            logger.warning(f"[MONITOR_TIMEOUT] 获取持仓超时,连续{consecutive_errors}次")
+                            if consecutive_errors >= 3:
+                                logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次超时!")
+                            time.sleep(5)
+                            last_loop_time = time.time()
+                            continue
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"[MONITOR_ERROR] 获取持仓失败: {e}")
+                    if consecutive_errors >= 3:
+                        logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次失败!")
+                    time.sleep(5)
+                    last_loop_time = time.time()
                     continue
 
-                # 判断是否在交易时间
-                if config.is_trade_time():
+                if positions_df.empty:
+                    logger.debug("当前没有持仓，无需监控")
+                    time.sleep(60)
+                    last_loop_time = time.time()
+                    continue
 
-                    # ⭐ 强化: 更新最高价也需要超时保护
+                # 处理所有持仓
+                for _, position_row in positions_df.iterrows():
+                    stock_code = position_row['stock_code']
+
+                    # 调试日志
+                    logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号")
+
+                    # 使用统一的信号检查函数
+                    signal_type, signal_info = self.check_trading_signals(stock_code)
+
+                    with self.signal_lock:
+                        if signal_type:
+                            self.latest_signals[stock_code] = {
+                                'type': signal_type,
+                                'info': signal_info,
+                                'timestamp': datetime.now()
+                            }
+                            logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
+                        else:
+                            # 清除已不存在的信号
+                            self.latest_signals.pop(stock_code, None)
+
+                    # 更新最高价（如果当前价格更高）
                     try:
-                        import concurrent.futures
+                        latest_quote = self.data_manager.get_latest_data(stock_code)
+                        if latest_quote:
+                            current_price = float(latest_quote.get('lastPrice', 0))
+                            highest_price = float(position_row.get('highest_price', 0))
 
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(self.update_all_positions_highest_price)
-                            try:
-                                future.result(timeout=10.0)  # 10秒超时
-                            except concurrent.futures.TimeoutError:
-                                logger.error(f"🚨 [MONITOR_TIMEOUT] 更新最高价超时(10秒)！")
-                    except Exception as e:
-                        logger.error(f"[MONITOR_ERROR] 更新最高价失败: {e}")
+                            if current_price > highest_price:
+                                new_highest_price = current_price
+                                new_stop_loss_price = self.calculate_stop_loss_price(
+                                    float(position_row.get('cost_price', 0)),
+                                    new_highest_price,
+                                    bool(position_row.get('profit_triggered', False))
+                                )
+                                self.update_position(
+                                    stock_code=stock_code,
+                                    volume=int(position_row.get('volume', 0)),
+                                    cost_price=float(position_row.get('cost_price', 0)),
+                                    highest_price=new_highest_price,
+                                    profit_triggered=bool(position_row.get('profit_triggered', False)),
+                                    open_date=position_row.get('open_date'),
+                                    stop_loss_price=new_stop_loss_price
+                                )
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"更新最高价时类型转换错误 - {stock_code}: {e}")
 
-                    # ⭐ 强化: 使用超时保护获取持仓数据
-                    try:
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(self.get_all_positions)
-                            try:
-                                positions_df = future.result(timeout=10.0)  # 10秒超时
-                                consecutive_errors = 0  # 重置错误计数
-                            except concurrent.futures.TimeoutError:
-                                consecutive_errors += 1
-                                logger.error(f"🚨 [MONITOR_TIMEOUT] 获取持仓超时(10秒)！连续{consecutive_errors}次")
-                                if consecutive_errors >= 3:
-                                    logger.error(f"🚨 [MONITOR_CRITICAL] 连续{consecutive_errors}次超时，数据库可能死锁！")
-                                time.sleep(5)
-                                last_loop_time = time.time()  # 更新时间避免重复告警
-                                continue
-                    except Exception as e:
-                        consecutive_errors += 1
-                        logger.error(f"[MONITOR_ERROR] 获取持仓失败（连续{consecutive_errors}次）: {e}")
-                        if consecutive_errors >= 3:
-                            logger.error(f"🚨 [MONITOR_CRITICAL] 连续{consecutive_errors}次获取持仓失败，请检查数据库！")
-                        time.sleep(5)
-                        last_loop_time = time.time()
-                        continue
-                    
-                    if positions_df.empty:
-                        logger.debug("当前没有持仓，无需监控")
-                        time.sleep(60)
-                        continue
-                    
-                    # 处理所有持仓
-                    for _, position_row in positions_df.iterrows():
-                        stock_code = position_row['stock_code']
+                # 检查委托单超时
+                self.check_pending_orders_timeout()
 
-                        # 🔍 调试日志：确认进入循环
-                        logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号")
+                # 记录本次循环耗时（只在异常时告警）
+                loop_end = time.time()
+                loop_duration = loop_end - loop_start
+                if loop_duration > 5:  # 循环超过5秒告警
+                    logger.warning(f"⚠ [MONITOR_SLOW] 本次监控循环耗时 {loop_duration:.2f}秒（超过5秒），"
+                                 f"已处理{len(positions_df)}只股票")
+                last_loop_time = loop_end
 
-                        # 使用统一的信号检查函数
-                        signal_type, signal_info = self.check_trading_signals(stock_code)
-
-                        # 🔍 调试日志：确认返回值
-                        # logger.info(f"[MONITOR_RETURN] {stock_code} 返回 signal={repr(signal_type)}, "
-                        #    f"type={type(signal_type).__name__}, {bool(signal_type)}")
-
-                        with self.signal_lock:
-                            if signal_type:
-                                self.latest_signals[stock_code] = {
-                                    'type': signal_type,
-                                    'info': signal_info,
-                                    'timestamp': datetime.now()
-                                }
-                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
-                            else:
-                                # 清除已不存在的信号
-                                self.latest_signals.pop(stock_code, None)
-                        
-                        # 更新最高价（如果当前价格更高）
-                        try:
-                            latest_quote = self.data_manager.get_latest_data(stock_code)
-                            if latest_quote:
-                                current_price = float(latest_quote.get('lastPrice', 0))
-                                highest_price = float(position_row.get('highest_price', 0))
-                                
-                                if current_price > highest_price:
-                                    new_highest_price = current_price
-                                    new_stop_loss_price = self.calculate_stop_loss_price(
-                                        float(position_row.get('cost_price', 0)), 
-                                        new_highest_price,
-                                        bool(position_row.get('profit_triggered', False))
-                                    )
-                                    self.update_position(
-                                        stock_code=stock_code,
-                                        volume=int(position_row.get('volume', 0)),
-                                        cost_price=float(position_row.get('cost_price', 0)),
-                                        highest_price=new_highest_price,
-                                        profit_triggered=bool(position_row.get('profit_triggered', False)),
-                                        open_date=position_row.get('open_date'),
-                                        stop_loss_price=new_stop_loss_price
-                                    )
-                        except (TypeError, ValueError) as e:
-                            logger.error(f"更新最高价时类型转换错误 - {stock_code}: {e}")
-
-                    # 🔑 新增：检查委托单超时
-                    self.check_pending_orders_timeout()
-
-                    # 🔍 记录本次循环耗时（只在异常时告警）
-                    loop_end = time.time()
-                    loop_duration = loop_end - loop_start
-                    if loop_duration > 5:  # 循环超过5秒告警
-                        logger.warning(f"⚠️ [MONITOR_SLOW] 本次监控循环耗时 {loop_duration:.2f}秒（超过5秒），"
-                                     f"已处理{len(positions_df)}只股票")
-                    last_loop_time = loop_end
-
-                    # 等待下一次监控
-                    for _ in range(5):  # 每5s检查一次
-                        if self.stop_flag:
-                            break
-                        time.sleep(2)
+                # 等待下一次监控
+                time.sleep(config.MONITOR_LOOP_INTERVAL)
 
             except Exception as e:
                 logger.error(f"🚨 [MONITOR_FATAL] 持仓监控循环出错: {str(e)}", exc_info=True)

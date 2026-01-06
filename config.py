@@ -346,6 +346,21 @@ PREMARKET_REINIT_XTDATA = True          # 是否重新初始化xtdata行情接�
 PREMARKET_REINIT_XTTRADER = True        # 是否重新初始化xttrader交易接口
 ENABLE_WEB_REFRESH_AFTER_REINIT = True  # 接口初始化成功后是否触发Web数据刷新
 
+# ============ xtquant接口鲁棒性配置 ============
+XTQUANT_RECONNECT_INTERVAL = 300  # xtquant重连间隔(秒)
+XTQUANT_CALL_TIMEOUT = 3.0  # xtquant默认调用超时(秒)
+XTQUANT_NON_TRADE_TIMEOUT = 1.0  # 非交易时段超时(秒)
+
+# ============ 线程监控配置 ============
+ENABLE_THREAD_MONITOR = True  # 启用线程健康监控
+THREAD_CHECK_INTERVAL = 60  # 线程检查间隔(秒)
+THREAD_RESTART_COOLDOWN = 60  # 重启冷却时间(秒)
+
+# ============ 持仓监控优化配置 ============
+MONITOR_LOOP_INTERVAL = 3  # 监控循环间隔(秒)
+MONITOR_CALL_TIMEOUT = 8.0  # 监控调用超时(秒) - 增加到8秒,避免QMT API调用超时
+MONITOR_NON_TRADE_SLEEP = 60  # 非交易时段休眠(秒)
+
 def is_trade_time():
     """判断当前是否为交易时间"""
     if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:

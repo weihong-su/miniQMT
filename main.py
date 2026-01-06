@@ -17,6 +17,7 @@ from trading_executor import get_trading_executor
 from strategy import get_trading_strategy
 from web_server import start_web_server
 from config_manager import get_config_manager
+from thread_monitor import get_thread_monitor
 
 # 获取logger
 logger = get_logger("main")
@@ -111,7 +112,9 @@ def start_web_server_thread():
     web_thread = threading.Thread(target=start_web_server)
     web_thread.daemon = True
     web_thread.start()
-    threads.append(("web_thread", lambda: None))  # 没有停止函数，依赖于daemon=True
+    # 使用shutdown_web_server进行资源清理
+    from web_server import shutdown_web_server
+    threads.append(("web_thread", shutdown_web_server))
 
 def download_initial_data(data_manager):
     """下载初始数据"""
@@ -135,36 +138,57 @@ def calculate_initial_indicators(indicator_calculator):
     logger.info("初始指标计算完成")
 
 def cleanup():
-    """清理资源"""
+    """清理资源 - 优雅关闭版本"""
     logger.info("开始清理资源...")
-    
-    # 停止所有线程
+
+    # 第1步: 先停止Web服务器(避免在关闭数据库后仍有请求)
     for thread_name, stop_func in threads:
+        if thread_name == "web_thread":
+            try:
+                logger.info(f"停止 {thread_name}...")
+                stop_func()
+            except Exception as e:
+                logger.error(f"停止 {thread_name} 时出错: {str(e)}")
+            break
+
+    # 第2步: 停止线程监控器(如果启用)
+    if config.ENABLE_THREAD_MONITOR:
+        try:
+            logger.info("停止线程健康监控...")
+            thread_monitor = get_thread_monitor()
+            thread_monitor.stop()
+        except Exception as e:
+            logger.error(f"停止线程监控时出错: {str(e)}")
+
+    # 第3步: 停止其他业务线程
+    for thread_name, stop_func in threads:
+        if thread_name == "web_thread":
+            continue  # 已经停止
         try:
             logger.info(f"停止 {thread_name}...")
             stop_func()
         except Exception as e:
             logger.error(f"停止 {thread_name} 时出错: {str(e)}")
-    
-    # 关闭各个模块
+
+    # 第4步: 关闭各个模块(按依赖顺序)
     try:
         trading_strategy = get_trading_strategy()
         trading_strategy.close()
     except Exception as e:
         logger.error(f"关闭交易策略时出错: {str(e)}")
-    
+
     try:
         trading_executor = get_trading_executor()
         trading_executor.close()
     except Exception as e:
         logger.error(f"关闭交易执行器时出错: {str(e)}")
-    
+
     try:
         data_manager = get_data_manager()
         data_manager.close()
     except Exception as e:
         logger.error(f"关闭数据管理器时出错: {str(e)}")
-    
+
     logger.info("资源清理完成")
 
 def main():
@@ -197,6 +221,35 @@ def main():
         from premarket_sync import start_premarket_sync_scheduler
         start_premarket_sync_scheduler()
         logger.info("盘前同步调度器已启动")
+
+        # ============ 新增: 启动线程健康监控 ============
+        if config.ENABLE_THREAD_MONITOR:
+            thread_monitor = get_thread_monitor()
+
+            # 注册持仓监控线程
+            thread_monitor.register_thread(
+                "持仓监控线程",
+                lambda: position_manager.monitor_thread,
+                position_manager.start_position_monitor_thread
+            )
+
+            # 注册数据更新线程
+            thread_monitor.register_thread(
+                "数据更新线程",
+                lambda: data_manager.update_thread,
+                data_manager.start_data_update_thread
+            )
+
+            # 注册策略线程
+            thread_monitor.register_thread(
+                "策略线程",
+                lambda: trading_strategy.strategy_thread,
+                trading_strategy.start_strategy_thread
+            )
+
+            # 启动监控
+            thread_monitor.start()
+            logger.info("✅ 线程健康监控已启动")
 
         # 最后启动Web服务器
         start_web_server_thread()

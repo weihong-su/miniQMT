@@ -103,6 +103,8 @@ class easy_qmt_trader:
         else:
             self.slippage=0
         self.order_id_map = {}  # 新增：用于存储下单请求序号和qmt订单编号的映射关系
+        self.xtdata = None  # 初始化xtdata属性
+        self.xtdata_connected = False  # 初始化连接状态
         print('操作方式,登录qmt,选择行情加交易选,择极简模式')
         
     def random_session_id(self):

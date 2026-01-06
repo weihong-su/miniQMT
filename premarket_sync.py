@@ -361,22 +361,25 @@ def reinit_xtquant_data():
             if qmt_trader.xtdata:
                 original_hello = getattr(qmt_trader.xtdata, 'enable_hello', True)
                 qmt_trader.xtdata.enable_hello = False
+            else:
+                original_hello = None
 
             reconnect_result = qmt_trader.reconnect_xtdata()
 
             # 恢复设置
-            if qmt_trader.xtdata:
+            if original_hello is not None and qmt_trader.xtdata:
                 qmt_trader.xtdata.enable_hello = original_hello
+
+            if not reconnect_result:
+                logger.warning("  ⚠ 行情接口reconnect返回失败(不阻止继续)")
+                return True  # 不阻止流程
+
+            logger.info("  ✓ reconnect执行成功")
 
         except Exception as e:
             logger.error(f"  ✗ reconnect调用异常: {e}")
-            return False
-
-        if not reconnect_result:
-            logger.error("  ✗ 行情接口reconnect失败")
-            return False
-
-        logger.info("  ✓ reconnect执行成功")
+            logger.warning("  ⚠ 行情接口初始化失败(不阻止继续)")
+            return True  # 不阻止流程
 
         # 步骤3: 验证连接可用性
         logger.info("  → 验证连接可用性...")
