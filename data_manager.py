@@ -335,18 +335,18 @@ class DataManager:
     def download_history_xtdata(self, stock_code, period=None, start_date=None, end_date=None):
         """
         下载股票历史数据
-        
+
         参数:
         stock_code (str): 股票代码
-        period (str): 周期，默认为日线 'day'
+        period (str): 周期，默认为日线 '1d'
         start_date (str): 开始日期，格式为'20220101'
         end_date (str): 结束日期，格式为'20220101'
-        
+
         返回:
         pandas.DataFrame: 历史数据，若失败则返回None
         """
         if not period:
-            period = 'day'
+            period = '1d'  # 修复bug: xtquant API要求使用'1d'而非'day'
             
         if not start_date:
             start_date = '20200101'  # 默认从2020年开始
@@ -548,23 +548,24 @@ class DataManager:
             # 数据处理
             work_df['stock_code'] = stock_code
             work_df['close'] = pd.to_numeric(work_df['close'], errors='coerce')
-            
-            # Delete existing data for the stock_code
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM stock_daily_data WHERE stock_code=?", (stock_code,))
-            self.conn.commit()
-            # logger.info(f"已清除 {stock_code} 在 stock_daily_data 表中的原有数据")
 
-            # 保存到数据库
-            work_df[['stock_code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].to_sql(
-                'stock_daily_data', 
-                self.conn, 
-                if_exists='append', 
-                index=False,
-                method='multi'  # 使用批量插入提高性能
-            )
-            
+            # 方案A优化：使用逐行REPLACE避免主键冲突
+            # 相比DELETE+INSERT，REPLACE在并发场景下更安全
+            cursor = self.conn.cursor()
+
+            # 准备数据
+            data_to_insert = work_df[['stock_code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
+
+            # 使用REPLACE INTO语句（SQLite特性，自动处理主键冲突）
+            cursor.executemany('''
+                REPLACE INTO stock_daily_data
+                (stock_code, date, open, high, low, close, volume, amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', data_to_insert)
+
             self.conn.commit()
+
+            logger.debug(f"已保存 {stock_code} 的历史数据到数据库, 共 {len(data_to_insert)} 条记录（使用REPLACE模式避免主键冲突）")
 
             # logger.info(f"已保存 {stock_code} 的历史数据到数据库, 共 {len(data_df)} 条记录")
             
