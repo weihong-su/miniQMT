@@ -752,16 +752,32 @@ class PositionManager:
                 # 验证最高价
                 highest_price = position_dict.get('highest_price', 0)
                 current_price = position_dict.get('current_price', cost_price)
-                
+
                 if highest_price <= 0 or highest_price > cost_price * 20 or highest_price < cost_price * 0.1:
                     logger.warning(f"{stock_code} 最高价数据异常: {highest_price}，修正为当前价格")
                     position_dict['highest_price'] = max(cost_price, current_price)
-                
-                # 验证止损价
+
+                # 🔧 修复：验证止损价 - 区分固定止损和动态止盈
                 stop_loss_price = position_dict.get('stop_loss_price', 0)
-                if stop_loss_price > cost_price * 2 or stop_loss_price < cost_price * 0.3:
-                    logger.warning(f"{stock_code} 止损价数据异常: {stop_loss_price}，重置为0")
-                    position_dict['stop_loss_price'] = 0.0
+                profit_triggered = position_dict.get('profit_triggered', False)
+
+                if profit_triggered:
+                    # 动态止盈场景：止损价应该在最高价的0.75-1.0倍之间（允许15%-25%回撤）
+                    if stop_loss_price > highest_price:
+                        logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price} > 最高价 {highest_price}，重置为0")
+                        position_dict['stop_loss_price'] = 0.0
+                    elif stop_loss_price < highest_price * 0.7:
+                        logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price} < 最高价*0.7 ({highest_price * 0.7:.2f})，重置为0")
+                        position_dict['stop_loss_price'] = 0.0
+                    # else: 动态止盈价正常，不警告
+                else:
+                    # 固定止损场景：止损价应该在成本价的0.85-1.0倍之间（0-15%止损）
+                    if stop_loss_price > cost_price:
+                        logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price} > 成本价 {cost_price}，重置为0")
+                        position_dict['stop_loss_price'] = 0.0
+                    elif stop_loss_price < cost_price * 0.85:
+                        logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price} < 成本价*0.85 ({cost_price * 0.85:.2f})，重置为0")
+                        position_dict['stop_loss_price'] = 0.0
             
             logger.debug(f"获取 {stock_code} 持仓成功: 数量={position_dict.get('volume', 0)}, 成本价={position_dict.get('cost_price', 0):.2f}")
             return position_dict
