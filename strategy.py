@@ -15,6 +15,15 @@ from indicator_calculator import get_indicator_calculator
 from position_manager import get_position_manager
 from trading_executor import get_trading_executor
 
+# 导入卖出监控器 (容错处理)
+try:
+    from sell_monitor import record_sell_attempt
+    SELL_MONITOR_ENABLED = True
+except ImportError:
+    SELL_MONITOR_ENABLED = False
+    def record_sell_attempt(*args, **kwargs):
+        pass  # 空函数
+
 # 获取logger
 logger = get_logger("strategy")
 

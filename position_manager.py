@@ -45,12 +45,12 @@ class PositionManager:
         connect_result = self.qmt_trader.connect()
 
         if connect_result is None:
-            logger.error("❌ QMT连接失败！请确保QMT客户端已启动")
-            logger.warning("⚠️  系统将以离线模式运行，部分功能可能受限")
+            logger.error("❌ QMT未连接")
+            logger.warning("⚠️ 离线模式")
             # 🔧 设置标志位，标记QMT未连接
             self.qmt_connected = False
         else:
-            logger.info("✅ QMT连接成功")
+            logger.info("✅ QMT已连接")
             self.qmt_connected = True
 
         # 创建内存数据库
@@ -60,7 +60,7 @@ class PositionManager:
 
         # 添加模拟交易模式的提示日志
         if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
-            logger.warning("系统以模拟交易模式运行 - 持仓变更只在内存中进行，不会写入数据库")
+            logger.warning("模拟模式:仅内存持仓")
 
         # 添加缓存机制
         self.last_position_update_time = 0
@@ -132,7 +132,7 @@ class PositionManager:
         )
         ''')
         self.memory_conn.commit()
-        logger.info("内存数据库表结构已创建")
+        logger.info("内存表已创建")
 
     def _sync_real_positions_to_memory(self, real_positions_df):
         """将实盘持仓数据同步到内存数据库"""
@@ -141,14 +141,14 @@ class PositionManager:
             try:
                 # 首先检查输入数据
                 if real_positions_df is None or not isinstance(real_positions_df, pd.DataFrame) or real_positions_df.empty:
-                    logger.warning("传入的实盘持仓数据无效，跳过同步")
+                    logger.warning("实盘数据无效,跳过")
                     return
 
                 # 确保必要的列存在
                 required_columns = ['证券代码', '股票余额', '可用余额', '成本价', '市值']
                 missing_columns = [col for col in required_columns if col not in real_positions_df.columns]
                 if missing_columns:
-                    logger.warning(f"实盘持仓数据缺少必要列: {missing_columns}，无法同步")
+                    logger.warning(f"缺少列:{missing_columns}")
                     return
 
                 # 获取内存数据库中所有持仓的股票代码
@@ -196,7 +196,7 @@ class PositionManager:
                             if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
                                 current_price = float(latest_quote['lastPrice'])
                         except Exception as e:
-                            logger.warning(f"获取 {stock_code} 的最新价格失败: {str(e)}，使用成本价")
+                            logger.warning(f"{stock_code[:6]} 价格失败→成本价")
 
                         # 查询内存数据库中是否已存在该股票的持仓记录
                         cursor.execute("SELECT profit_triggered, open_date, highest_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
@@ -325,7 +325,7 @@ class PositionManager:
 
                 db_positions.to_sql("positions", self.memory_conn, if_exists="replace", index=False)
                 self.memory_conn.commit()
-                logger.info("数据库数据已同步到内存数据库")
+                logger.info("DB→内存同步完成")
         except Exception as e:
             logger.error(f"数据库数据同步到内存数据库时出错: {str(e)}")
 
@@ -438,7 +438,7 @@ class PositionManager:
 
                     sync_db_conn.commit()
                     if update_count > 0 or insert_count > 0:
-                        logger.info(f"SQLite同步完成: 更新{update_count}条, 插入{insert_count}条记录")
+                        logger.info(f"SQLite:更{update_count}插{insert_count}")
 
             except Exception as e:
                 logger.error(f"独立连接同步失败: {str(e)}")
@@ -478,14 +478,14 @@ class PositionManager:
         self.sync_thread = threading.Thread(target=self._sync_loop)
         self.sync_thread.daemon = True
         self.sync_thread.start()
-        logger.info("定时同步线程已启动")
+        logger.info("同步线程启动")
 
     def stop_sync_thread(self):
         """停止定时同步线程"""
         if self.sync_thread and self.sync_thread.is_alive():
             self.sync_stop_flag = True
             self.sync_thread.join(timeout=5)
-            logger.info("定时同步线程已停止")
+            logger.info("同步线程停止")
 
     # position_manager.py:_sync_loop() 方法修改
     def _sync_loop(self):

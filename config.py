@@ -485,3 +485,15 @@ HTTP_API_MIN_INTERVAL = 1.0    # 最小请求间隔1秒
 
 # HTTP版本号机制(用于减少无效数据传输)
 ENABLE_HTTP_VERSION_CONTROL = True  # 是否启用版本号机制
+
+# ======================= 卖出监控配置 (2026-01-12) =======================
+# 卖出监控功能开关
+ENABLE_SELL_MONITOR = True                    # 监控总开关
+ENABLE_SELL_ALERT_NOTIFICATION = False         # 告警通知开关（微信/企微）
+
+# 告警配置
+SELL_ALERT_CONFIG = {
+    'P0_notification': True,    # P0级别告警推送通知（极高风险）
+    'P1_notification': True,   # P1级别告警推送通知（高风险）
+    'P2_notification': True    # P2级别告警推送通知（中等风险）
+}

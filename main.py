@@ -28,30 +28,30 @@ stop_event = threading.Event()
 
 def signal_handler(sig, frame):
     """信号处理函数，用于捕获退出信号"""
-    logger.info("接收到退出信号，开始清理...")
+    logger.info("收到退出信号")
     stop_event.set()
     sys.exit(0)
 
 def load_persisted_configs():
     """从数据库加载持久化配置"""
-    logger.info("开始加载持久化配置...")
+    logger.info("加载持久化配置")
     try:
         config_manager = get_config_manager()
         applied_count = config_manager.apply_configs_to_runtime()
-        logger.info(f"成功加载并应用 {applied_count} 个持久化配置")
+        logger.info(f"✓ 配置{applied_count}项")
         return applied_count
     except Exception as e:
-        logger.error(f"加载持久化配置失败: {str(e)}")
+        logger.error(f"配置加载失败:{str(e)[:30]}")
         return 0
 
 def init_system():
     """初始化系统"""
-    logger.info("开始初始化系统...")
+    logger.info("系统初始化")
 
     # 创建数据目录
     if not os.path.exists(config.DATA_DIR):
         os.makedirs(config.DATA_DIR)
-        logger.info(f"创建数据目录: {config.DATA_DIR}")
+        logger.info(f"✓ 创建目录:{config.DATA_DIR}")
 
     # 加载持久化配置（在初始化其他模块之前）
     load_persisted_configs()
@@ -63,7 +63,7 @@ def init_system():
     trading_executor = get_trading_executor()
     trading_strategy = get_trading_strategy()
 
-    logger.info("系统初始化完成")
+    logger.info("✓ 系统初始化完成")
     return data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy
 
 def start_data_thread(data_manager):
@@ -76,19 +76,19 @@ def start_data_thread(data_manager):
 def start_position_thread(position_manager):
     """启动持仓监控线程"""
     if config.ENABLE_POSITION_MONITOR:
-        logger.info("启动持仓监控线程")
+        logger.info("启动持仓监控")
         position_manager.start_position_monitor_thread()
 
         # 🔑 验证线程启动
         time.sleep(0.5)  # 等待线程启动
         if position_manager.monitor_thread and position_manager.monitor_thread.is_alive():
-            logger.info("✅ 持仓监控线程启动成功")
+            logger.info("✅ 持仓监控已启动")
         else:
-            logger.error("❌ 持仓监控线程启动失败!")
+            logger.error("❌ 持仓监控启动失败")
 
         threads.append(("position_thread", position_manager.stop_position_monitor_thread))
     else:
-        logger.warning("⚠️  持仓监控线程未启用 (ENABLE_POSITION_MONITOR=False)")
+        logger.warning("⚠️ 持仓监控未启用")
 
 def start_strategy_thread(trading_strategy):
     """启动策略线程"""
@@ -118,99 +118,99 @@ def start_web_server_thread():
 
 def download_initial_data(data_manager):
     """下载初始数据"""
-    logger.info("开始下载初始数据...")
+    logger.info("下载初始数据")
     for stock_code in config.STOCK_POOL:
         try:
-            logger.info(f"下载 {stock_code} 的历史数据")
+            logger.info(f"下载 {stock_code[:6]} 历史数据")
             data_df = data_manager.download_history_data(stock_code)
             if data_df is not None and not data_df.empty:
                 data_manager.save_history_data(stock_code, data_df)
             # 避免请求过于频繁
             time.sleep(1)
         except Exception as e:
-            logger.error(f"下载 {stock_code} 的历史数据时出错: {str(e)}")
+            logger.error(f"下载 {stock_code[:6]} 失败:{str(e)[:30]}")
     logger.info("初始数据下载完成")
 
 def calculate_initial_indicators(indicator_calculator):
     """计算初始指标"""
-    logger.info("开始计算初始指标...")
+    logger.info("计算初始指标")
     indicator_calculator.update_all_stock_indicators()
     logger.info("初始指标计算完成")
 
 def cleanup():
     """清理资源 - 优雅关闭版本"""
-    logger.info("开始清理资源...")
+    logger.info("清理资源")
 
     # 第1步: 先停止Web服务器(避免在关闭数据库后仍有请求)
     for thread_name, stop_func in threads:
         if thread_name == "web_thread":
             try:
-                logger.info(f"停止 {thread_name}...")
+                logger.info("停止Web服务器")
                 stop_func()
             except Exception as e:
-                logger.error(f"停止 {thread_name} 时出错: {str(e)}")
+                logger.error(f"Web服务器停止失败:{str(e)[:30]}")
             break
 
     # 第2步: 停止线程监控器(如果启用)
     if config.ENABLE_THREAD_MONITOR:
         try:
-            logger.info("停止线程健康监控...")
+            logger.info("停止线程监控")
             thread_monitor = get_thread_monitor()
             thread_monitor.stop()
         except Exception as e:
-            logger.error(f"停止线程监控时出错: {str(e)}")
+            logger.error(f"线程监控停止失败:{str(e)[:30]}")
 
     # 第3步: 停止其他业务线程
     for thread_name, stop_func in threads:
         if thread_name == "web_thread":
             continue  # 已经停止
         try:
-            logger.info(f"停止 {thread_name}...")
+            logger.info(f"停止{thread_name}")
             stop_func()
         except Exception as e:
-            logger.error(f"停止 {thread_name} 时出错: {str(e)}")
+            logger.error(f"{thread_name}停止失败:{str(e)[:30]}")
 
     # 第4步: 关闭各个模块(按依赖顺序)
     try:
         trading_strategy = get_trading_strategy()
         trading_strategy.close()
     except Exception as e:
-        logger.error(f"关闭交易策略时出错: {str(e)}")
+        logger.error(f"策略关闭失败:{str(e)[:30]}")
 
     try:
         trading_executor = get_trading_executor()
         trading_executor.close()
     except Exception as e:
-        logger.error(f"关闭交易执行器时出错: {str(e)}")
+        logger.error(f"执行器关闭失败:{str(e)[:30]}")
 
     try:
         data_manager = get_data_manager()
         data_manager.close()
     except Exception as e:
-        logger.error(f"关闭数据管理器时出错: {str(e)}")
+        logger.error(f"数据管理器关闭失败:{str(e)[:30]}")
 
-    logger.info("资源清理完成")
+    logger.info("✓ 资源清理完成")
 
 def main():
     """主函数"""
     try:
         logger.info("=" * 50)
-        logger.info(f"= QMT量化交易系统启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ")
+        logger.info(f"QMT系统启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 50)
-        
+
         # 设置信号处理
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
+
         # 初始化系统
         data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy = init_system()
-        
+
         # 下载初始数据
         download_initial_data(data_manager)
-        
+
         # 计算初始指标
         calculate_initial_indicators(indicator_calculator)
-        
+
         # 启动各个线程
         start_data_thread(data_manager)
         start_position_thread(position_manager)
@@ -220,7 +220,7 @@ def main():
         # ============ 新增: 启动盘前同步调度器 ============
         from premarket_sync import start_premarket_sync_scheduler
         start_premarket_sync_scheduler()
-        logger.info("盘前同步调度器已启动")
+        logger.info("✓ 盘前同步调度器已启动")
 
         # ============ 新增: 启动线程健康监控 ============
         if config.ENABLE_THREAD_MONITOR:
@@ -249,18 +249,30 @@ def main():
 
             # 启动监控
             thread_monitor.start()
-            logger.info("✅ 线程健康监控已启动")
+            logger.info("✅ 线程监控已启动")
+
+        # ============ 新增: 启动卖出监控器 ============
+        if hasattr(config, 'ENABLE_SELL_MONITOR') and config.ENABLE_SELL_MONITOR:
+            try:
+                from sell_monitor import get_sell_monitor
+                sell_monitor = get_sell_monitor()
+                logger.info("✅ 卖出监控器已启动")
+                logger.info(f"   监控:{'启用' if sell_monitor.monitoring_enabled else '禁用'}")
+                logger.info(f"   告警:{'启用' if config.ENABLE_SELL_ALERT_NOTIFICATION else '禁用'}")
+            except Exception as e:
+                logger.warning(f"⚠️ 卖出监控器失败:{str(e)[:30]}")
+                logger.info("系统继续运行")
 
         # 最后启动Web服务器
         start_web_server_thread()
-        
+
         # 等待退出信号
-        logger.info("系统启动完成，按 Ctrl+C 退出")
+        logger.info("✅ 系统启动完成")
         while not stop_event.is_set():
             time.sleep(1)
-            
+
     except Exception as e:
-        logger.error(f"系统运行时出错: {str(e)}")
+        logger.error(f"系统运行出错:{str(e)[:30]}")
     finally:
         cleanup()
         logger.info("系统已退出")

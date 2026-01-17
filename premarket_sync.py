@@ -174,9 +174,9 @@ def perform_premarket_sync():
 
     返回: dict包含同步结果
     """
-    logger.info("=" * 60)
-    logger.info(f"开始执行盘前配置同步与初始化 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 60)
+    logger.info("=" * 50)
+    logger.info("盘前同步开始")
+    logger.info("=" * 50)
 
     start_time = time.time()
     results = {
@@ -192,87 +192,87 @@ def perform_premarket_sync():
 
     try:
         # 步骤1: 同步持久化配置
-        logger.info("[步骤1/7] 同步持久化配置...")
+        logger.info("[1/8] 配置同步")
         config_manager = get_config_manager()
         count = config_manager.apply_configs_to_runtime()
         results['configs_synced'] = count
-        logger.info(f"  ✓ 持久化配置已同步: {count}个配置项")
+        logger.info(f"✓ 配置{count}项")
 
         # 步骤2: 同步特殊开关
-        logger.info("[步骤2/7] 同步特殊开关...")
+        logger.info("[2/8] 开关同步")
         switch_count = sync_special_switches()
         results['switches_synced'] = switch_count
-        logger.info(f"  ✓ 特殊开关已同步: {switch_count}个")
+        logger.info(f"✓ 开关{switch_count}个")
 
         # 步骤3: 重新初始化xtquant行情接口 (可配置)
-        logger.info("[步骤3/8] 重新初始化xtquant行情接口...")
+        logger.info("[3/8] xtdata重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTDATA:
             xtdata_result = reinit_xtquant_data()
             results['xtdata_reconnected'] = xtdata_result
             if xtdata_result:
-                logger.info("  ✓ 行情接口重新初始化成功")
+                logger.info("✓ xtdata已连")
             else:
-                logger.warning("  ⚠ 行情接口初始化失败(不阻止继续)")
+                logger.warning("⚠ xtdata失败(继续)")
                 results['errors'].append("xtdata初始化失败")
         else:
-            logger.info("  ○ 跳过xtdata重新初始化(配置已禁用)")
+            logger.info("○ 跳过xtdata(已禁用)")
             results['xtdata_reconnected'] = None
 
         # 步骤4: 重新初始化xtquant交易接口 (可配置)
-        logger.info("[步骤4/8] 重新初始化xtquant交易接口...")
+        logger.info("[4/8] xttrader重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTTRADER:
             xttrader_result = reinit_xtquant_trader()
             results['xttrader_reconnected'] = xttrader_result
             if xttrader_result:
-                logger.info("  ✓ 交易接口重新初始化成功")
+                logger.info("✓ xttrader已连")
             else:
-                logger.warning("  ⚠ 交易接口初始化失败(不阻止继续)")
+                logger.warning("⚠ xttrader失败(继续)")
                 results['errors'].append("xttrader初始化失败")
         else:
-            logger.info("  ○ 跳过xttrader重新初始化(配置已禁用)")
+            logger.info("○ 跳过xttrader(已禁用)")
             results['xttrader_reconnected'] = None
 
         # 步骤5: 验证xtquant连接状态
-        logger.info("[步骤5/8] 验证xtquant连接状态...")
+        logger.info("[5/8] 验证连接")
         connection_status = verify_xtquant_connections()
         results['connection_status'] = connection_status
-        logger.info(f"  ✓ xtdata状态: {connection_status.get('xtdata', '未知')}")
-        logger.info(f"  ✓ xttrader状态: {connection_status.get('xttrader', '未知')}")
+        logger.info(f"✓ xtdata:{connection_status.get('xtdata', '未知')}")
+        logger.info(f"✓ xttrader:{connection_status.get('xttrader', '未知')}")
 
         # 步骤6: 同步持仓数据(仅模拟模式)
-        logger.info("[步骤6/8] 同步持仓数据...")
+        logger.info("[6/8] 持仓同步")
         if config.ENABLE_SIMULATION_MODE:
             from position_manager import get_position_manager
             position_manager = get_position_manager()
             position_manager._sync_db_to_memory()
             results['positions_synced'] = True
-            logger.info("  ✓ 持仓数据已同步(模拟模式)")
+            logger.info("✓ 持仓已同步(模拟)")
         else:
-            logger.info("  ○ 跳过持仓同步(实盘模式)")
+            logger.info("○ 跳过持仓(实盘)")
 
         # 步骤7: 触发Web数据全量刷新 (可配置)
-        logger.info("[步骤7/8] 触发Web数据全量刷新...")
+        logger.info("[7/8] Web刷新")
         if config.ENABLE_WEB_REFRESH_AFTER_REINIT:
             refresh_result = trigger_web_data_refresh(results)
             results['web_refresh'] = refresh_result
             if refresh_result['success']:
-                logger.info(f"  ✓ Web数据刷新成功 (刷新{refresh_result['refreshed_stocks']}只股票)")
+                logger.info(f"✓ Web刷新成功({refresh_result['refreshed_stocks']}只)")
             else:
-                logger.warning(f"  ⚠ Web数据刷新失败: {refresh_result.get('error')}")
+                logger.warning(f"⚠ Web刷新失败:{refresh_result.get('error', '')[:30]}")
         else:
-            logger.info("  ○ 跳过Web数据刷新(配置已禁用)")
+            logger.info("○ 跳过Web(已禁用)")
             results['web_refresh'] = None
 
         # 步骤8: 记录同步历史
-        logger.info("[步骤8/8] 记录同步历史...")
+        logger.info("[8/8] 记录历史")
         execution_time = int((time.time() - start_time) * 1000)
         results['execution_time_ms'] = execution_time
         record_sync_history(results)
-        logger.info("  ✓ 写入数据库")
+        logger.info("✓ 已记录")
 
-        logger.info("=" * 60)
-        logger.info(f"盘前同步成功完成 (耗时{execution_time}ms)")
-        logger.info("=" * 60)
+        logger.info("=" * 50)
+        logger.info(f"盘前同步完成({execution_time}ms)")
+        logger.info("=" * 50)
 
         return results
 
