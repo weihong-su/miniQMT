@@ -46,8 +46,18 @@ file_handler = RotatingFileHandler(
 )
 file_handler.setFormatter(log_formatter)
 
-# 控制台处理器
-console_handler = logging.StreamHandler()
+# 控制台处理器 - 添加错误处理,避免程序退出时的I/O错误
+class SafeStreamHandler(logging.StreamHandler):
+    """安全的StreamHandler,捕获I/O错误"""
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except (ValueError, OSError):
+            # 忽略"I/O operation on closed file"错误
+            # 这种错误通常发生在程序退出时
+            pass
+
+console_handler = SafeStreamHandler()
 console_handler.setFormatter(log_formatter)
 
 # 创建logger
