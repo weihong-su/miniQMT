@@ -81,6 +81,29 @@ logger.addHandler(console_handler)
 # 设置调试模式下的详细日志
 if config.DEBUG:
     logger.setLevel(logging.DEBUG)
+
+# 🔧 修复: 为werkzeug等第三方库的logger也配置SafeStreamHandler
+# 这样可以避免Flask Web服务器退出时的I/O错误
+def _configure_third_party_loggers():
+    """为第三方库配置安全的日志处理器"""
+    third_party_loggers = [
+        'werkzeug',  # Flask的WSGI服务器
+        'flask',     # Flask框架
+        'flask.app', # Flask应用
+    ]
+
+    for logger_name in third_party_loggers:
+        third_party_logger = logging.getLogger(logger_name)
+        # 移除所有现有的StreamHandler
+        for handler in third_party_logger.handlers[:]:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, SafeStreamHandler):
+                third_party_logger.removeHandler(handler)
+        # 添加我们的SafeStreamHandler
+        if not any(isinstance(h, SafeStreamHandler) for h in third_party_logger.handlers):
+            third_party_logger.addHandler(console_handler)
+
+# 配置第三方库的logger
+_configure_third_party_loggers()
     
 def get_logger(name=None):
     """获取指定名称的logger,自动应用模块名称映射"""
