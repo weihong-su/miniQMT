@@ -48,13 +48,25 @@ file_handler.setFormatter(log_formatter)
 
 # 控制台处理器 - 添加错误处理,避免程序退出时的I/O错误
 class SafeStreamHandler(logging.StreamHandler):
-    """安全的StreamHandler,捕获I/O错误"""
+    """安全的StreamHandler,捕获I/O错误
+
+    主要解决两个问题:
+    1. 程序退出时colorama关闭wrapped stdout导致的I/O错误
+    2. 多线程环境下(如Flask Web服务器)的日志竞态条件
+    """
     def emit(self, record):
         try:
             super().emit(record)
-        except (ValueError, OSError):
-            # 忽略"I/O operation on closed file"错误
-            # 这种错误通常发生在程序退出时
+        except (ValueError, OSError, AttributeError):
+            # 忽略以下错误:
+            # - ValueError: I/O operation on closed file (colorama关闭stdout)
+            # - OSError: 文件描述符无效
+            # - AttributeError: 对象属性不存在(极少见)
+            # 这些错误通常发生在程序退出或线程清理时,不影响功能
+            pass
+        except Exception:
+            # 捕获其他所有异常,避免日志错误导致程序崩溃
+            # 注意: 这里不能使用logger记录(会导致递归),所以静默处理
             pass
 
 console_handler = SafeStreamHandler()
