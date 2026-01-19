@@ -2,11 +2,14 @@
 日志管理模块，提供日志记录和清理功能
 """
 import os
+import sys
 import logging
 from logging.handlers import RotatingFileHandler
 import time
 from datetime import datetime, timedelta
 import glob
+import threading
+from contextlib import contextmanager
 import config
 
 # 创建日志目录
@@ -100,12 +103,12 @@ def schedule_log_cleanup():
     """定时清理日志"""
     if not config.ENABLE_LOG_CLEANUP:
         return
-    
+
     while True:
         # 获取当前时间
         now = datetime.now()
         cleanup_time = datetime.strptime(config.LOG_CLEANUP_TIME, "%H:%M:%S").time()
-        
+
         # 如果当前时间是清理时间，执行清理
         if now.time().hour == cleanup_time.hour and now.time().minute == cleanup_time.minute:
             clean_old_logs()
@@ -114,3 +117,40 @@ def schedule_log_cleanup():
         else:
             # 等待10分钟检查一次
             time.sleep(600)
+
+# ============ 第三方库输出抑制工具 ============
+
+_stdout_lock = threading.Lock()
+
+@contextmanager
+def suppress_stdout_stderr():
+    """
+    优雅地抑制标准输出和标准错误输出
+
+    用途：某些第三方库（如baostock）会直接打印到stdout，
+         使用此上下文管理器可以临时抑制这些输出。
+
+    特性：
+    - 线程安全（使用锁保护）
+    - 异常安全（确保stdout/stderr一定恢复）
+    - 跨平台兼容
+
+    示例：
+        with suppress_stdout_stderr():
+            lg = bs.login()  # 不会打印 "login success!"
+    """
+    with _stdout_lock:
+        # 保存原始的 stdout 和 stderr
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+
+        try:
+            # 重定向到 devnull
+            with open(os.devnull, 'w') as devnull:
+                sys.stdout = devnull
+                sys.stderr = devnull
+                yield
+        finally:
+            # 恢复原始的 stdout 和 stderr
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr

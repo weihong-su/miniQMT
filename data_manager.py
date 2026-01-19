@@ -10,7 +10,7 @@ import threading
 import xtquant.xtdata as xt
 import Methods
 import config
-from logger import get_logger
+from logger import get_logger, suppress_stdout_stderr
 # from realtime_data_manager import get_realtime_data_manager
 
 # 获取logger
@@ -457,11 +457,12 @@ class DataManager:
                             return stock_name
             except Exception as e:
                 logger.debug(f"通过qmt_trader获取股票名称出错: {str(e)}")
-            
+
             # 尝试使用baostock查询
             try:
                 import baostock as bs
-                lg = bs.login()
+                with suppress_stdout_stderr():
+                    lg = bs.login()
                 if lg.error_code != '0':
                     logger.warning(f"baostock登录失败: {lg.error_msg}")
                     return stock_code

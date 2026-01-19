@@ -9,6 +9,7 @@ import requests
 import json
 from MyTT import *
 from mootdx.quotes import Quotes
+from logger import suppress_stdout_stderr
 
 def backInDays(nday):
     """用来获得n天前的日期，用于从数据接口请求股票数据，避免一次要求过多数据影响程序效率"""
@@ -74,10 +75,11 @@ def getStockData(code,
     # 长周期K线数据如日线、周线、月线用Baostock接口，有换手率，PE等数据
     # 日k线；d=日k线、w=周、m=月、5=5分钟、15=15分钟、30=30分钟、60=60分钟k线数据，不区分大小写；
     # 指数没有分钟线数据；周线每周最后一个交易日才可以获取，月线每月最后一个交易日才可以获取
-    if freq=='d' or freq=='w' or freq=='m': 
+    if freq=='d' or freq=='w' or freq=='m':
         code = add_bs_prefix(code)
 
-        lg = bs.login()
+        with suppress_stdout_stderr():
+            lg = bs.login()
         result = bs.query_history_k_data_plus(code, fields, start_date, end_date, freq, adjustflag)
         df = pd.DataFrame(result.get_data(), columns=result.fields)
         return df
@@ -104,8 +106,9 @@ def IsMarketGoingUp():
         'sz.399005': '中小板指'    # 中小板指
     }
 
-    # 登录到Baostock
-    lg = bs.login()
+    # 登录到Baostock（抑制输出）
+    with suppress_stdout_stderr():
+        lg = bs.login()
 
     # 遍历每个指数
     for code, name in indices.items():
