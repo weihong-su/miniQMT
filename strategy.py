@@ -983,29 +983,39 @@ class TradingStrategy:
             logger.info("策略线程已停止")
     
     def _strategy_loop(self):
-        """策略运行循环"""
+        """策略运行循环 - 修复版本: 优先处理所有持仓股票"""
         while not self.stop_flag:
             try:
                 # 判断是否在交易时间
                 if config.is_trade_time():
                     logger.info("开始执行交易策略")
-                    
-                    # 遍历股票池中的每只股票
+
+                    # 🔑 修复: 优先处理所有持仓股票 (止盈止损信号优先级最高)
+                    positions = self.position_manager.get_all_positions()
+                    processed_stocks = set()
+
+                    if positions:
+                        logger.debug(f"处理 {len(positions)} 只持仓股票的信号")
+                        for position in positions:
+                            stock_code = position['stock_code']
+                            self.check_and_execute_strategies(stock_code)
+                            processed_stocks.add(stock_code)
+                            time.sleep(1)
+
+                    # 再处理STOCK_POOL中的其他股票 (买入信号等)
                     for stock_code in config.STOCK_POOL:
-                        # 检查并执行交易策略
-                        self.check_and_execute_strategies(stock_code)
-                        
-                        # 避免请求过于频繁
-                        time.sleep(1)
-                    
+                        if stock_code not in processed_stocks:
+                            self.check_and_execute_strategies(stock_code)
+                            time.sleep(1)
+
                     logger.info("交易策略执行完成")
-                
+
                 # 等待下一次策略执行
                 for _ in range(10):  # 每10s执行一次策略
                     if self.stop_flag:
                         break
                     time.sleep(1)
-                    
+
             except Exception as e:
                 logger.error(f"策略循环出错: {str(e)}")
                 time.sleep(60)  # 出错后等待一分钟再继续
