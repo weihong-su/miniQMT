@@ -50,140 +50,11 @@ class TradingStrategy:
         # 添加这行 - 重试计数器
         self.retry_counts = {}
     
-    def init_grid_trading(self, stock_code):
-        """
-        初始化网格交易
-        
-        参数:
-        stock_code (str): 股票代码
-        
-        返回:
-        bool: 是否初始化成功
-        """
-        try:
-            if not config.ENABLE_GRID_TRADING:
-                logger.info(f"网格交易功能未启用，跳过 {stock_code} 的网格初始化")
-                return False
-            
-            # 获取持仓信息
-            position = self.position_manager.get_position(stock_code)
-            if not position:
-                logger.warning(f"未持有 {stock_code}，无法初始化网格交易")
-                return False
-            
-            # 获取最新行情
-            latest_quote = self.data_manager.get_latest_data(stock_code)
-            if not latest_quote:
-                logger.error(f"未能获取 {stock_code} 的最新行情，无法初始化网格交易")
-                return False
-            
-            current_price = latest_quote.get('lastPrice')
-            position_volume = position['volume']
-            
-            # 清除旧的网格记录
-            # 这里需要在position_manager中添加一个清除网格交易的方法，暂时跳过
-            
-            # 创建网格
-            grid_count = min(config.GRID_MAX_LEVELS, 5)  # 最多创建5个网格
-            grid_volume = int(position_volume * config.GRID_POSITION_RATIO / grid_count)
-            
-            if grid_volume < 100:
-                logger.warning(f"{stock_code} 持仓量不足，无法创建有效的网格交易")
-                return False
-            
-            for i in range(grid_count):
-                # 买入价格递减，卖出价格递增
-                buy_price = current_price * (1 - config.GRID_STEP_RATIO * (i + 1))
-                sell_price = current_price * (1 + config.GRID_STEP_RATIO * (i + 1))
-                
-                # 创建网格交易
-                grid_id = self.position_manager.add_grid_trade(
-                    stock_code, i + 1, buy_price, sell_price, grid_volume
-                )
-                
-                if grid_id < 0:
-                    logger.error(f"创建 {stock_code} 的网格交易记录失败")
-                    return False
-            
-            logger.info(f"初始化 {stock_code} 的网格交易成功，创建了 {grid_count} 个网格")
-            return True
-            
-        except Exception as e:
-            logger.error(f"初始化 {stock_code} 的网格交易时出错: {str(e)}")
-            return False
+    # ===== 旧的网格交易方法已废弃，请使用GridTradingManager =====
+    # init_grid_trading(), execute_grid_trading()
+    # 已被grid_trading_manager.py中的GridTradingManager替代
+
     
-    def execute_grid_trading(self, stock_code):
-        """
-        执行网格交易策略
-        
-        参数:
-        stock_code (str): 股票代码
-        
-        返回:
-        bool: 是否执行成功
-        """
-        try:
-            if not config.ENABLE_GRID_TRADING:
-                return False
-            
-            # 检查是否有网格交易信号
-            grid_signals = self.position_manager.check_grid_trade_signals(stock_code)
-            
-            # 处理买入信号
-            for signal in grid_signals['buy_signals']:
-                grid_id = signal['grid_id']
-                price = signal['price']
-                volume = signal['volume']
-                
-                # 检查同一网格是否已经在冷却期
-                cool_key = f"grid_buy_{stock_code}_{grid_id}"
-                if cool_key in self.last_trade_time:
-                    last_time = self.last_trade_time[cool_key]
-                    if (datetime.now() - last_time).total_seconds() < 300:  # 5分钟冷却期
-                        logger.debug(f"{stock_code} 网格 {grid_id} 买入信号在冷却期内，跳过")
-                        continue
-                
-                # 执行买入
-                logger.info(f"执行 {stock_code} 网格 {grid_id} 买入，价格: {price}, 数量: {volume}")
-                order_id = self.trading_executor.buy_stock(stock_code, volume, price, strategy='grid')
-                
-                if order_id:
-                    # 更新网格状态为活跃
-                    self.position_manager.update_grid_trade_status(grid_id, 'ACTIVE')
-                    
-                    # 记录交易时间
-                    self.last_trade_time[cool_key] = datetime.now()
-            
-            # 处理卖出信号
-            for signal in grid_signals['sell_signals']:
-                grid_id = signal['grid_id']
-                price = signal['price']
-                volume = signal['volume']
-                
-                # 检查同一网格是否已经在冷却期
-                cool_key = f"grid_sell_{stock_code}_{grid_id}"
-                if cool_key in self.last_trade_time:
-                    last_time = self.last_trade_time[cool_key]
-                    if (datetime.now() - last_time).total_seconds() < 300:  # 5分钟冷却期
-                        logger.debug(f"{stock_code} 网格 {grid_id} 卖出信号在冷却期内，跳过")
-                        continue
-                
-                # 执行卖出
-                logger.info(f"执行 {stock_code} 网格 {grid_id} 卖出，价格: {price}, 数量: {volume}")
-                order_id = self.trading_executor.sell_stock(stock_code, volume, price, strategy='grid')
-                
-                if order_id:
-                    # 更新网格状态为完成
-                    self.position_manager.update_grid_trade_status(grid_id, 'COMPLETED')
-                    
-                    # 记录交易时间
-                    self.last_trade_time[cool_key] = datetime.now()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"执行 {stock_code} 的网格交易时出错: {str(e)}")
-            return False
 
     # ========== 新增：统一的止盈止损执行逻辑 ==========
     def execute_trading_signal_direct(self, stock_code, signal_type, signal_info):
@@ -688,14 +559,9 @@ class TradingStrategy:
                 if order_id:
                     # 记录已处理信号
                     self.processed_signals.add(signal_key)
-                    
-                    # 如果是新建仓，初始化网格交易
-                    if not position and config.ENABLE_GRID_TRADING:
-                        # 等待买入成交后再初始化网格
-                        # 实际应用中应该通过回调函数处理
-                        time.sleep(5)  # 简单等待一下
-                        self.init_grid_trading(stock_code)
-                    
+
+                    # 旧的网格交易初始化已废弃，请使用GridTradingManager
+
                     return True
             
             return False
@@ -812,30 +678,6 @@ class TradingStrategy:
                                 logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                                 self.position_manager.mark_signal_processed(stock_code)
 
-                        # 检查网格交易信号
-                        elif signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
-                            logger.info(f"{stock_code} 检测到网格交易信号: {signal_type}")
-
-                            # 只有在启用自动交易时才执行
-                            if config.ENABLE_AUTO_TRADING and config.ENABLE_GRID_TRADING:
-                                if self.position_manager.grid_manager:
-                                    try:
-                                        success = self.position_manager.grid_manager.execute_grid_trade(signal_info)
-                                        if success:
-                                            self.position_manager.mark_signal_processed(stock_code)
-                                            logger.info(f"{stock_code} 网格交易执行成功")
-                                            return
-                                        else:
-                                            logger.error(f"{stock_code} 网格交易执行失败")
-                                    except Exception as e:
-                                        logger.error(f"{stock_code} 网格交易执行异常: {str(e)}")
-                                else:
-                                    logger.warning(f"{stock_code} 网格管理器未初始化")
-                                    self.position_manager.mark_signal_processed(stock_code)
-                            else:
-                                logger.info(f"{stock_code} 检测到网格信号，但自动交易或网格交易已关闭")
-                                self.position_manager.mark_signal_processed(stock_code)
-
                 # 2️⃣ 补仓信号处理（第二优先级）
                 add_position_signal, add_position_info = self.position_manager.check_add_position_signal(stock_code)
                 if add_position_signal == 'add_position':
@@ -938,33 +780,38 @@ class TradingStrategy:
                                 logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                                 self.position_manager.mark_signal_processed(stock_code)
 
-                        # 检查网格交易信号
-                        elif signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
-                            logger.info(f"{stock_code} 检测到网格交易信号: {signal_type}")
-
-                            # 只有在启用自动交易时才执行
-                            if config.ENABLE_AUTO_TRADING and config.ENABLE_GRID_TRADING:
-                                if self.position_manager.grid_manager:
-                                    try:
-                                        success = self.position_manager.grid_manager.execute_grid_trade(signal_info)
-                                        if success:
-                                            self.position_manager.mark_signal_processed(stock_code)
-                                            logger.info(f"{stock_code} 网格交易执行成功")
-                                            return
-                                        else:
-                                            logger.error(f"{stock_code} 网格交易执行失败")
-                                    except Exception as e:
-                                        logger.error(f"{stock_code} 网格交易执行异常: {str(e)}")
-                                else:
-                                    logger.warning(f"{stock_code} 网格管理器未初始化")
-                                    self.position_manager.mark_signal_processed(stock_code)
-                            else:
-                                logger.info(f"{stock_code} 检测到网格信号，但自动交易或网格交易已关闭")
-                                self.position_manager.mark_signal_processed(stock_code)
-
                 # 3️⃣ 补仓信号 - 在场景B中永远不会触发
                 # check_add_position_signal() 已在 position_manager 中拒绝补仓
                 logger.debug(f"【场景{scenario}】补仓功能已禁用(止损优先策略)")
+
+            # 4. 检查网格交易信号（如果启用）
+            if config.ENABLE_GRID_TRADING and self.position_manager.grid_manager:
+                # 从信号队列中获取网格信号
+                pending_signals = self.position_manager.get_pending_signals()
+                if stock_code in pending_signals:
+                    signal_data = pending_signals[stock_code]
+                    signal_type = signal_data['type']
+                    signal_info = signal_data['info']
+
+                    # 检查是否为网格交易信号
+                    if signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
+                        logger.info(f"{stock_code} 检测到网格交易信号: {signal_type}")
+
+                        # 只有在启用自动交易时才执行
+                        if config.ENABLE_AUTO_TRADING:
+                            try:
+                                success = self.position_manager.grid_manager.execute_grid_trade(signal_info)
+                                if success:
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    logger.info(f"{stock_code} 网格交易执行成功")
+                                    return
+                                else:
+                                    logger.error(f"{stock_code} 网格交易执行失败")
+                            except Exception as e:
+                                logger.error(f"{stock_code} 网格交易执行异常: {str(e)}")
+                        else:
+                            logger.info(f"{stock_code} 检测到网格信号，但自动交易已关闭")
+                            self.position_manager.mark_signal_processed(stock_code)
 
             # 5. 检查技术指标买入信号
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)

@@ -96,20 +96,8 @@ class PositionManager:
         self.sync_lock = threading.RLock()  # 可重入锁
         self._deleting_stocks = set()  # 正在删除的股票代码集合
 
-        # 网格交易数据库管理器(用于网格交易会话和记录)
-        if config.ENABLE_GRID_TRADING:
-            try:
-                from grid_database import DatabaseManager
-                self.db_manager = DatabaseManager()
-                logger.info("网格交易数据库管理器初始化完成")
-            except Exception as e:
-                logger.error(f"网格交易数据库管理器初始化失败: {str(e)}")
-                self.db_manager = None
-        else:
-            self.db_manager = None
-
         # 网格交易管理器(延迟初始化)
-        self.grid_manager = None
+        self.grid_manager = None      
 
 
     def _increment_data_version(self):
@@ -1392,173 +1380,10 @@ class PositionManager:
             logger.error(f"获取账户信息时出错: {str(e)}")
             return None
     
-    def get_grid_trades(self, stock_code, status=None):
-        """
-        获取网格交易记录
-        
-        参数:
-        stock_code (str): 股票代码
-        status (str): 状态筛选，如 'PENDING', 'ACTIVE', 'COMPLETED'
-        
-        返回:
-        pandas.DataFrame: 网格交易记录
-        """
-        try:
-            query = "SELECT * FROM grid_trades WHERE stock_code=?"
-            params = [stock_code]
-            
-            if status:
-                query += " AND status=?"
-                params.append(status)
-                
-            query += " ORDER BY grid_level"
-            
-            df = pd.read_sql_query(query, self.conn, params=params)
-            logger.debug(f"获取到 {stock_code} 的 {len(df)} 条网格交易记录")
-            return df
-            
-        except Exception as e:
-            logger.error(f"获取 {stock_code} 的网格交易记录时出错: {str(e)}")
-            return pd.DataFrame()
-    
-    def add_grid_trade(self, stock_code, grid_level, buy_price, sell_price, volume):
-        """
-        添加网格交易记录
-        
-        参数:
-        stock_code (str): 股票代码
-        grid_level (int): 网格级别
-        buy_price (float): 买入价格
-        sell_price (float): 卖出价格
-        volume (int): 交易数量
-        
-        返回:
-        int: 新增网格记录的ID，失败返回-1
-        """
-        try:
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT INTO grid_trades 
-                (stock_code, grid_level, buy_price, sell_price, volume, status, create_time, update_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (stock_code, grid_level, buy_price, sell_price, volume, 'PENDING', now, now))
-            
-            self.conn.commit()
-            grid_id = cursor.lastrowid
-            
-            logger.info(f"添加 {stock_code} 的网格交易记录成功，ID: {grid_id}, 级别: {grid_level}, 买入价: {buy_price}, 卖出价: {sell_price}, 数量: {volume}")
-            return grid_id
-            
-        except Exception as e:
-            logger.error(f"添加 {stock_code} 的网格交易记录时出错: {str(e)}")
-            self.conn.rollback()
-            return -1
-    
-    def update_grid_trade_status(self, grid_id, status):
-        """
-        更新网格交易状态
-        
-        参数:
-        grid_id (int): 网格交易ID
-        status (str): 新状态，如 'PENDING', 'ACTIVE', 'COMPLETED'
-        
-        返回:
-        bool: 是否更新成功
-        """
-        try:
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                UPDATE grid_trades 
-                SET status=?, update_time=?
-                WHERE id=?
-            """, (status, now, grid_id))
-            
-            self.conn.commit()
-            
-            if cursor.rowcount > 0:
-                logger.info(f"更新网格交易 {grid_id} 的状态为 {status} 成功")
-                return True
-            else:
-                logger.warning(f"未找到网格交易 {grid_id}，无法更新状态")
-                return False
-                
-        except Exception as e:
-            logger.error(f"更新网格交易 {grid_id} 的状态时出错: {str(e)}")
-            self.conn.rollback()
-            return False
-    
-    def check_grid_trade_signals(self, stock_code):
-        """
-        检查网格交易信号
-        
-        参数:
-        stock_code (str): 股票代码
-        
-        返回:
-        dict: 网格交易信号，包含 'buy_signals' 和 'sell_signals'
-        """
-        try:
-            # 检查是否启用网格交易功能
-            if not config.ENABLE_GRID_TRADING:
-                logger.debug(f"{stock_code} 网格交易功能已关闭，跳过信号检查")
-                return {'buy_signals': [], 'sell_signals': []}
+    # ===== 旧的网格交易方法已废弃，请使用GridTradingManager =====
+    # get_grid_trades(), add_grid_trade(), update_grid_trade_status(), check_grid_trade_signals()
+    # 已被grid_trading_manager.py中的GridTradingManager替代
 
-
-            # 获取最新价格
-            latest_quote = self.data_manager.get_latest_data(stock_code)
-            if not latest_quote:
-                logger.warning(f"未能获取 {stock_code} 的最新行情，无法检查网格信号")
-                return {'buy_signals': [], 'sell_signals': []}
-            
-            current_price = latest_quote.get('lastPrice')
-            
-            # 获取网格交易记录
-            grid_trades = self.get_grid_trades(stock_code)
-            
-            buy_signals = []
-            sell_signals = []
-            
-            # 检查每个网格的买入/卖出信号
-            for _, grid in grid_trades.iterrows():
-                grid_id = grid['id']
-                status = grid['status']
-                buy_price = grid['buy_price']
-                sell_price = grid['sell_price']
-                volume = grid['volume']
-                
-                # 检查买入信号
-                if status == 'PENDING' and current_price <= buy_price:
-                    buy_signals.append({
-                        'grid_id': grid_id,
-                        'price': buy_price,
-                        'volume': volume
-                    })
-                
-                # 检查卖出信号
-                if status == 'ACTIVE' and current_price >= sell_price:
-                    sell_signals.append({
-                        'grid_id': grid_id,
-                        'price': sell_price,
-                        'volume': volume
-                    })
-            
-            signals = {
-                'buy_signals': buy_signals,
-                'sell_signals': sell_signals
-            }
-            
-            if buy_signals or sell_signals:
-                logger.info(f"{stock_code} 网格交易信号: 买入={len(buy_signals)}, 卖出={len(sell_signals)}")
-            
-            return signals
-            
-        except Exception as e:
-            logger.error(f"检查 {stock_code} 的网格交易信号时出错: {str(e)}")
-            return {'buy_signals': [], 'sell_signals': []}
 
     def calculate_stop_loss_price(self, cost_price, highest_price, profit_triggered):
         """
@@ -3484,10 +3309,6 @@ class PositionManager:
         """初始化网格交易管理器"""
         if not config.ENABLE_GRID_TRADING:
             logger.info("网格交易功能未启用")
-            return
-
-        if self.db_manager is None:
-            logger.error("网格交易数据库管理器未初始化,无法启动网格交易")
             return
 
         try:

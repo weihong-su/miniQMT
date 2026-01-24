@@ -1172,6 +1172,248 @@ def get_positions_all():
             'message': f"获取所有持仓信息时出错: {str(e)}"
         }), 500
 
+# ============ 网格交易API端点 ============
+
+@app.route('/api/grid/sessions', methods=['GET'])
+def get_grid_sessions():
+    """获取所有活跃的网格会话"""
+    try:
+        if not config.ENABLE_GRID_TRADING:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易功能未启用'
+            }), 400
+
+        if not position_manager.grid_manager:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易管理器未初始化'
+            }), 500
+
+        sessions = position_manager.grid_manager.db.get_active_grid_sessions()
+        sessions_list = [dict(row) for row in sessions]
+
+        return jsonify({
+            'status': 'success',
+            'data': sessions_list
+        })
+    except Exception as e:
+        logger.error(f"获取网格会话失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"获取网格会话失败: {str(e)}"
+        }), 500
+
+@app.route('/api/grid/start', methods=['POST'])
+def start_grid_session():
+    """启动网格交易会话"""
+    try:
+        if not config.ENABLE_GRID_TRADING:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易功能未启用'
+            }), 400
+
+        if not position_manager.grid_manager:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易管理器未初始化'
+            }), 500
+
+        data = request.get_json()
+        stock_code = data.get('stock_code')
+        center_price = data.get('center_price')
+        duration_days = data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS)
+        grid_config = data.get('config', {})
+
+        if not stock_code:
+            return jsonify({
+                'status': 'error',
+                'message': '缺少股票代码'
+            }), 400
+
+        # 获取持仓信息
+        position = position_manager.get_position(stock_code)
+        if not position:
+            return jsonify({
+                'status': 'error',
+                'message': f'未持有{stock_code}'
+            }), 400
+
+        # 如果未提供中心价,使用当前价格
+        if not center_price:
+            latest_quote = data_manager.get_latest_data(stock_code)
+            if not latest_quote:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'无法获取{stock_code}的最新价格'
+                }), 500
+            center_price = float(latest_quote.get('lastPrice', 0))
+
+        # 启动网格会话
+        session_id = position_manager.grid_manager.start_grid_session(
+            stock_code=stock_code,
+            center_price=center_price,
+            duration_days=duration_days,
+            **grid_config
+        )
+
+        if session_id:
+            return jsonify({
+                'status': 'success',
+                'message': f'网格交易会话启动成功',
+                'session_id': session_id
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易会话启动失败'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"启动网格会话失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"启动网格会话失败: {str(e)}"
+        }), 500
+
+@app.route('/api/grid/stop', methods=['POST'])
+def stop_grid_session():
+    """停止网格交易会话"""
+    try:
+        if not config.ENABLE_GRID_TRADING:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易功能未启用'
+            }), 400
+
+        if not position_manager.grid_manager:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易管理器未初始化'
+            }), 500
+
+        data = request.get_json()
+        stock_code = data.get('stock_code')
+        reason = data.get('reason', 'manual_stop')
+
+        if not stock_code:
+            return jsonify({
+                'status': 'error',
+                'message': '缺少股票代码'
+            }), 400
+
+        position_manager.grid_manager.stop_grid_session(stock_code, reason)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'{stock_code}网格交易已停止'
+        })
+
+    except Exception as e:
+        logger.error(f"停止网格会话失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"停止网格会话失败: {str(e)}"
+        }), 500
+
+@app.route('/api/grid/stats/<stock_code>', methods=['GET'])
+def get_grid_stats(stock_code):
+    """获取网格交易统计"""
+    try:
+        if not config.ENABLE_GRID_TRADING:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易功能未启用'
+            }), 400
+
+        if not position_manager.grid_manager:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易管理器未初始化'
+            }), 500
+
+        stats = position_manager.grid_manager.get_session_stats(stock_code)
+
+        if stats:
+            return jsonify({
+                'status': 'success',
+                'data': stats
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'{stock_code}没有活跃的网格会话'
+            }), 404
+
+    except Exception as e:
+        logger.error(f"获取网格统计失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"获取网格统计失败: {str(e)}"
+        }), 500
+
+@app.route('/api/grid/trades/<stock_code>', methods=['GET'])
+def get_grid_trades(stock_code):
+    """获取网格交易历史"""
+    try:
+        if not config.ENABLE_GRID_TRADING:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易功能未启用'
+            }), 400
+
+        if not position_manager.grid_manager:
+            return jsonify({
+                'status': 'error',
+                'message': '网格交易管理器未初始化'
+            }), 500
+
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+
+        trades = position_manager.grid_manager.get_trade_history(stock_code, limit, offset)
+
+        return jsonify({
+            'status': 'success',
+            'data': trades
+        })
+
+    except Exception as e:
+        logger.error(f"获取网格交易历史失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"获取网格交易历史失败: {str(e)}"
+        }), 500
+
+@app.route('/api/grid/config', methods=['GET'])
+def get_grid_config():
+    """获取网格交易默认配置"""
+    try:
+        # 获取持仓总市值
+        positions = position_manager.get_all_positions()
+        total_market_value = 0
+        if not positions.empty:
+            for _, pos in positions.iterrows():
+                market_value = pos.get('market_value', 0)
+                if market_value:
+                    total_market_value += float(market_value)
+
+        # 获取默认配置
+        default_config = config.get_grid_default_config(total_market_value)
+
+        return jsonify({
+            'status': 'success',
+            'data': default_config
+        })
+
+    except Exception as e:
+        logger.error(f"获取网格配置失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"获取网格配置失败: {str(e)}"
+        }), 500
+
 def push_realtime_data():
     """推送实时数据的线程函数"""
     global stop_push_flag

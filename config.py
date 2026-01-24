@@ -22,9 +22,9 @@ ENABLE_AUTO_TRADING = False     # 自动交易总开关：控制是否执行交�
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作
 ENABLE_ALLOW_SELL = True        # 是否允许卖出操作
 
-# 策略功能模块开关（独立控制）
+# 策略功能模块开关(独立控制)
 ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关
-ENABLE_GRID_TRADING = False         # 网格交易功能开关
+# ENABLE_GRID_TRADING 已移至第470行的新网格交易配置区域
 
 # 其他功能开关
 ENABLE_DATA_SYNC = True             # 是否启用数据同步
@@ -172,41 +172,9 @@ BUY_GRID_LEVELS = [1.0, 0.93, 0.88]  # 建仓价格网格（第一个是初次�
 BUY_AMOUNT_RATIO = [0.4, 0.3, 0.3]  # 每次买入金额占单元的比例（已废弃，保留向后兼容）
 
 # ======================= 网格交易策略配置（独立配置） =======================
-# 说明：网格交易策略使用独立的配置参数，与补仓策略配置互不影响
-# 网格交易功能开关
-ENABLE_GRID_TRADING = False  # 是否启用网格交易策略（默认关闭）
-
-# 网格价格档位（价格比例）
-GRID_PRICE_LEVELS = [1.0, 0.95, 0.90, 0.85]
-# 说明：
-# - GRID_PRICE_LEVELS[0] = 1.0：首次建仓价格比例（100%）
-# - GRID_PRICE_LEVELS[1] = 0.95：价格跌至成本价95%时补仓（下跌5%）
-# - GRID_PRICE_LEVELS[2] = 0.90：价格跌至成本价90%时补仓（下跌10%）
-# - GRID_PRICE_LEVELS[3] = 0.85：价格跌至成本价85%时补仓（下跌15%）
-
-# 网格交易金额比例（与GRID_PRICE_LEVELS一一对应）
-GRID_AMOUNT_RATIOS = [0.4, 0.2, 0.2, 0.2]
-# 说明：
-# - GRID_AMOUNT_RATIOS[0] = 0.4：首次建仓金额 = POSITION_UNIT × 0.4 = 35000 × 0.4 = 14000元
-# - GRID_AMOUNT_RATIOS[1] = 0.2：第一次补仓金额 = POSITION_UNIT × 0.2 = 35000 × 0.2 = 7000元
-# - GRID_AMOUNT_RATIOS[2] = 0.2：第二次补仓金额 = POSITION_UNIT × 0.2 = 35000 × 0.2 = 7000元
-# - GRID_AMOUNT_RATIOS[3] = 0.2：第三次补仓金额 = POSITION_UNIT × 0.2 = 35000 × 0.2 = 7000元
-#
-# 注意：GRID_PRICE_LEVELS 和 GRID_AMOUNT_RATIOS 必须长度相同
-
-# 向后兼容逻辑：如果未定义新配置，使用旧配置
-def get_grid_config():
-    """获取网格交易配置，支持向后兼容"""
-    try:
-        # 优先使用新配置
-        price_levels = GRID_PRICE_LEVELS
-        amount_ratios = GRID_AMOUNT_RATIOS
-    except NameError:
-        # 新配置不存在，使用旧配置
-        price_levels = BUY_GRID_LEVELS
-        amount_ratios = BUY_AMOUNT_RATIO
-
-    return price_levels, amount_ratios
+# ===== 旧的网格交易配置已废弃 =====
+# GRID_PRICE_LEVELS, GRID_AMOUNT_RATIOS, get_grid_config()
+# 已被config.py末尾的新网格交易配置替代(第504-547行)
 
 # ======================= 止盈止损策略配置 =======================
 # 补仓功能开关
@@ -256,12 +224,10 @@ DYNAMIC_TAKE_PROFIT = [
 # 3. 已触发首次止盈后：使用动态止盈位进行全仓止盈
 # 4. 止损价格计算：未触发首次止盈时为成本价×(1-7%)，已触发后为最高价×对应系数
 
-# ======================= 旧网格交易参数（已废弃，保留向后兼容） =======================
-# ⚠️ 以下参数已废弃，建议使用上方的 GRID_PRICE_LEVELS 和 GRID_AMOUNT_RATIOS
-GRID_TRADING_ENABLED = True  # 已废弃，使用 ENABLE_GRID_TRADING 替代
-GRID_STEP_RATIO = 0.03  # 网格步长（价格变动3%创建一个网格）
-GRID_POSITION_RATIO = 0.2  # 每个网格交易的仓位比例 10%
-GRID_MAX_LEVELS = 6  # 最大网格数量
+# ===== 旧的网格交易参数已废弃 =====
+# GRID_TRADING_ENABLED, GRID_STEP_RATIO, GRID_POSITION_RATIO, GRID_MAX_LEVELS
+# 已被config.py末尾的新网格交易配置替代(第504-547行)
+
 
 # ======================= 指标配置 =======================
 # MACD参数

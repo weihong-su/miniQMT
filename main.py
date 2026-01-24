@@ -63,16 +63,6 @@ def init_system():
     trading_executor = get_trading_executor()
     trading_strategy = get_trading_strategy()
 
-    # 初始化网格交易管理器
-    if config.ENABLE_GRID_TRADING:
-        try:
-            logger.info("初始化网格交易管理器")
-            position_manager.init_grid_manager(trading_executor)
-            logger.info("✓ 网格交易管理器初始化完成")
-        except Exception as e:
-            logger.error(f"网格交易管理器初始化失败: {str(e)}")
-            logger.info("系统继续运行(网格交易功能不可用)")
-
     logger.info("✓ 系统初始化完成")
     return data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy
 
@@ -214,6 +204,16 @@ def main():
 
         # 初始化系统
         data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy = init_system()
+
+        # 初始化网格交易管理器
+        if config.ENABLE_GRID_TRADING:
+            try:
+                logger.info("初始化网格交易管理器")
+                position_manager.init_grid_manager(trading_executor)
+                logger.info("✓ 网格交易管理器初始化完成")
+            except Exception as e:
+                logger.error(f"网格交易管理器初始化失败: {str(e)}")
+                logger.info("系统继续运行(网格交易功能不可用)")
 
         # 下载初始数据
         download_initial_data(data_manager)
