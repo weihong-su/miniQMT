@@ -875,7 +875,7 @@ class TradingStrategy:
                     positions = self.position_manager.get_all_positions()
                     processed_stocks = set()
 
-                    if positions:
+                    if positions is not None and len(positions) > 0:
                         logger.debug(f"处理 {len(positions)} 只持仓股票的信号")
                         for position in positions:
                             stock_code = position['stock_code']
