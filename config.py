@@ -497,3 +497,52 @@ SELL_ALERT_CONFIG = {
     'P1_notification': True,   # P1级别告警推送通知（高风险）
     'P2_notification': True    # P2级别告警推送通知（中等风险）
 }
+
+# ======================= 网格交易高级配置 (2026-01-24) =======================
+
+# 网格交易总开关
+ENABLE_GRID_TRADING = False  # 启用后才能使用网格交易功能
+
+# 回调触发机制
+GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易
+
+# 档位冷却时间(秒)
+GRID_LEVEL_COOLDOWN = 60  # 同一档位60秒内不重复触发
+
+# 混合退出机制 - 默认值
+GRID_MAX_DEVIATION_RATIO = 0.15    # 网格中心最大偏离±15%
+GRID_TARGET_PROFIT_RATIO = 0.10    # 目标盈利10%
+GRID_STOP_LOSS_RATIO = -0.10       # 止损-10%
+GRID_DEFAULT_DURATION_DAYS = 7     # 默认运行7天
+
+# Web界面默认值
+GRID_DEFAULT_PRICE_INTERVAL = 0.05           # 默认价格间隔5%
+GRID_DEFAULT_POSITION_RATIO = 0.25           # 默认每档交易25%
+GRID_DEFAULT_MAX_INVESTMENT_RATIO = 0.5      # 默认最大投入为持仓市值50%
+
+# 日志级别
+GRID_LOG_LEVEL = "INFO"  # DEBUG时输出详细价格追踪
+
+# 网格交易策略标识
+GRID_STRATEGY_NAME = "grid"  # 用于trade_records表的strategy字段
+
+def get_grid_default_config(position_market_value: float) -> dict:
+    """
+    获取网格交易默认配置
+
+    Args:
+        position_market_value: 当前持仓市值
+
+    Returns:
+        默认配置字典
+    """
+    return {
+        'price_interval': GRID_DEFAULT_PRICE_INTERVAL,
+        'position_ratio': GRID_DEFAULT_POSITION_RATIO,
+        'callback_ratio': GRID_CALLBACK_RATIO,
+        'max_investment': position_market_value * GRID_DEFAULT_MAX_INVESTMENT_RATIO,
+        'max_deviation': GRID_MAX_DEVIATION_RATIO,
+        'target_profit': GRID_TARGET_PROFIT_RATIO,
+        'stop_loss': GRID_STOP_LOSS_RATIO,
+        'duration_days': GRID_DEFAULT_DURATION_DAYS
+    }
