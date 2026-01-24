@@ -28,6 +28,9 @@ test_trading_executor.log
 *.swo
 *~
 
+# Git Worktrees
+.worktrees/
+
 # Claude Code 索引
 .claude/index.json
 .claude/
