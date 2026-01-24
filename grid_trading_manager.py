@@ -359,3 +359,144 @@ class GridTradingManager:
                        f"交易{session.trade_count}次, 盈亏{session.get_profit_ratio()*100:.2f}%")
 
             return final_stats
+
+    def _check_exit_conditions(self, session: GridSession, current_price: float) -> Optional[str]:
+        """检查退出条件,返回退出原因或None"""
+
+        # 1. 偏离度检测
+        if session.current_center_price and session.center_price:
+            deviation = session.get_deviation_ratio()
+            if deviation > session.max_deviation:
+                logger.warning(f"{session.stock_code} 偏离度{deviation*100:.2f}%超过限制")
+                return 'deviation'
+
+        # 2. 盈亏检测
+        if session.total_buy_amount > 0:
+            profit_ratio = session.get_profit_ratio()
+            if profit_ratio >= session.target_profit:
+                logger.info(f"{session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%")
+                return 'target_profit'
+            if profit_ratio <= session.stop_loss:
+                logger.warning(f"{session.stock_code} 触发止损{profit_ratio*100:.2f}%")
+                return 'stop_loss'
+
+        # 3. 时间限制
+        if session.end_time and datetime.now() > session.end_time:
+            logger.info(f"{session.stock_code} 达到运行时长限制")
+            return 'expired'
+
+        # 4. 持仓清空
+        position = self.position_manager.get_position(session.stock_code)
+        if not position or position.get('volume', 0) == 0:
+            logger.info(f"{session.stock_code} 持仓已清空")
+            return 'position_cleared'
+
+        return None
+
+    def _check_level_crossing(self, session: GridSession, tracker: PriceTracker, price: float):
+        """检查是否穿越档位"""
+        levels = session.get_grid_levels()
+
+        # 检查上穿(卖出档位)
+        if price > levels['upper'] and not tracker.waiting_callback:
+            # 检查冷却
+            if self._is_level_in_cooldown(session.id, levels['upper']):
+                return
+
+            tracker.crossed_level = levels['upper']
+            tracker.peak_price = price
+            tracker.direction = 'rising'
+            tracker.waiting_callback = True
+
+            if config.GRID_LOG_LEVEL == "DEBUG":
+                logger.debug(f"{session.stock_code} 穿越卖出档位{levels['upper']:.2f}, "
+                            f"等待回调{session.callback_ratio*100:.2f}%")
+
+        # 检查下穿(买入档位)
+        elif price < levels['lower'] and not tracker.waiting_callback:
+            # 检查冷却
+            if self._is_level_in_cooldown(session.id, levels['lower']):
+                return
+
+            tracker.crossed_level = levels['lower']
+            tracker.valley_price = price
+            tracker.direction = 'falling'
+            tracker.waiting_callback = True
+
+            if config.GRID_LOG_LEVEL == "DEBUG":
+                logger.debug(f"{session.stock_code} 穿越买入档位{levels['lower']:.2f}, "
+                            f"等待回升{session.callback_ratio*100:.2f}%")
+
+    def _is_level_in_cooldown(self, session_id: int, level_price: float) -> bool:
+        """检查档位是否在冷却期"""
+        key = (session_id, level_price)
+        if key not in self.level_cooldowns:
+            return False
+
+        elapsed = time.time() - self.level_cooldowns[key]
+        return elapsed < config.GRID_LEVEL_COOLDOWN
+
+    def check_grid_signals(self, stock_code: str, current_price: float) -> Optional[dict]:
+        """
+        检查网格交易信号(在持仓监控线程中调用)
+
+        Args:
+            stock_code: 股票代码
+            current_price: 当前价格
+
+        Returns:
+            网格交易信号字典或None
+        """
+        with self.lock:
+            session = self.sessions.get(stock_code)
+            if not session or session.status != 'active':
+                return None
+
+            # 1. 检查退出条件
+            exit_reason = self._check_exit_conditions(session, current_price)
+            if exit_reason:
+                self.stop_grid_session(session.id, exit_reason)
+                return None
+
+            # 2. 更新价格追踪器
+            tracker = self.trackers.get(session.id)
+            if not tracker:
+                return None
+
+            tracker.update_price(current_price)
+
+            # 3. 检查是否穿越新档位
+            self._check_level_crossing(session, tracker, current_price)
+
+            # 4. 检查回调触发
+            signal_type = tracker.check_callback(session.callback_ratio)
+            if signal_type:
+                return self._create_grid_signal(session, tracker, signal_type, current_price)
+
+            return None
+
+    def _create_grid_signal(self, session: GridSession, tracker: PriceTracker,
+                           signal_type: str, current_price: float) -> dict:
+        """创建网格交易信号"""
+        signal = {
+            'stock_code': session.stock_code,
+            'strategy': config.GRID_STRATEGY_NAME,
+            'signal_type': signal_type,
+            'grid_level': tracker.crossed_level,
+            'trigger_price': current_price,
+            'session_id': session.id,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        if signal_type == 'SELL':
+            signal['peak_price'] = tracker.peak_price
+            signal['callback_ratio'] = (tracker.peak_price - current_price) / tracker.peak_price
+        elif signal_type == 'BUY':
+            signal['valley_price'] = tracker.valley_price
+            signal['callback_ratio'] = (current_price - tracker.valley_price) / tracker.valley_price
+
+        logger.info(f"生成网格{signal_type}信号: {session.stock_code}, "
+                   f"档位={tracker.crossed_level:.2f}, 触发价={current_price:.2f}, "
+                   f"回调={signal.get('callback_ratio', 0)*100:.2f}%")
+
+        return signal
