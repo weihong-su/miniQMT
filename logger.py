@@ -31,6 +31,8 @@ MODULE_NAME_MAP = {
     'config_manager': 'cm',
     'indicator_calculator': 'ic',
     'sell_monitor': 'sm',
+    'grid_trading_manager': 'gtm',
+    'grid_database': 'gdb',
     'main': 'main',
 }
 
