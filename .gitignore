@@ -69,7 +69,8 @@ logs/
 /test_*.py
 
 # 中间过程的临时文档和测试脚本(不纳入版本管理)
-docs/
+docs/*
+!docs/plans/
 test/
 
 
@@ -84,4 +85,5 @@ xtquant/__pycache__/xtconn.cpython-38.pyc
 xtquant/__pycache__/xtdatacenter.cpython-38.pyc
 xtquant/__pycache__/xtutil.cpython-38.pyc
 data/trading.db
-data/trading.db
+stock_pool.json
+logs/qmt_trading.log
