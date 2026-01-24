@@ -96,8 +96,20 @@ class PositionManager:
         self.sync_lock = threading.RLock()  # 可重入锁
         self._deleting_stocks = set()  # 正在删除的股票代码集合
 
+        # 网格交易数据库管理器(用于网格交易会话和记录)
+        if config.ENABLE_GRID_TRADING:
+            try:
+                from grid_database import DatabaseManager
+                self.db_manager = DatabaseManager()
+                logger.info("网格交易数据库管理器初始化完成")
+            except Exception as e:
+                logger.error(f"网格交易数据库管理器初始化失败: {str(e)}")
+                self.db_manager = None
+        else:
+            self.db_manager = None
+
         # 网格交易管理器(延迟初始化)
-        self.grid_manager = None      
+        self.grid_manager = None
 
 
     def _increment_data_version(self):
