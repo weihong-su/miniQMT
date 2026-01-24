@@ -94,7 +94,22 @@ class PositionManager:
 
         # 🔴 P0修复：添加同步操作线程锁，防止并发调用导致递归异常
         self.sync_lock = threading.RLock()  # 可重入锁
-        self._deleting_stocks = set()  # 正在删除的股票代码集合      
+        self._deleting_stocks = set()  # 正在删除的股票代码集合
+
+        # 网格交易数据库管理器(用于网格交易会话和记录)
+        if config.ENABLE_GRID_TRADING:
+            try:
+                from grid_database import DatabaseManager
+                self.db_manager = DatabaseManager()
+                logger.info("网格交易数据库管理器初始化完成")
+            except Exception as e:
+                logger.error(f"网格交易数据库管理器初始化失败: {str(e)}")
+                self.db_manager = None
+        else:
+            self.db_manager = None
+
+        # 网格交易管理器(延迟初始化)
+        self.grid_manager = None
 
 
     def _increment_data_version(self):
@@ -1299,6 +1314,18 @@ class PositionManager:
                                     stop_loss_price=safe_numeric_values['stop_loss_price']
                                 )
                                 logger.debug(f"更新 {stock_code} 的最新价格为 {current_price:.2f}")
+
+                                # 检测网格交易信号
+                                if self.grid_manager and config.ENABLE_GRID_TRADING:
+                                    try:
+                                        grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
+                                        if grid_signal:
+                                            logger.info(f"检测到网格信号: {grid_signal}")
+                                            # 将信号添加到队列(由strategy线程处理)
+                                            with self.signal_lock:
+                                                self.latest_signals[stock_code] = grid_signal
+                                    except Exception as e:
+                                        logger.error(f"检测网格信号失败: {str(e)}")
                     except Exception as e:
                         logger.error(f"获取 {stock_code} 最新价格时出错: {str(e)}")
                         continue  # 跳过这只股票，继续处理其他股票
@@ -3452,6 +3479,27 @@ class PositionManager:
 
         except Exception as e:
             logger.error(f"重新挂单失败: {str(e)}")
+
+    def init_grid_manager(self, trading_executor):
+        """初始化网格交易管理器"""
+        if not config.ENABLE_GRID_TRADING:
+            logger.info("网格交易功能未启用")
+            return
+
+        if self.db_manager is None:
+            logger.error("网格交易数据库管理器未初始化,无法启动网格交易")
+            return
+
+        try:
+            from grid_trading_manager import GridTradingManager
+            self.grid_manager = GridTradingManager(
+                self.db_manager,
+                self,
+                trading_executor
+            )
+            logger.info("网格交易管理器初始化完成")
+        except Exception as e:
+            logger.error(f"网格交易管理器初始化失败: {str(e)}")
 
 
 # 单例模式
