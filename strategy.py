@@ -877,8 +877,9 @@ class TradingStrategy:
 
                     if positions is not None and len(positions) > 0:
                         logger.debug(f"处理 {len(positions)} 只持仓股票的信号")
-                        for position in positions:
-                            stock_code = position['stock_code']
+                        # ✅ 修复: 直接提取股票代码列表进行迭代
+                        stock_codes = positions['stock_code'].tolist()
+                        for stock_code in stock_codes:
                             self.check_and_execute_strategies(stock_code)
                             processed_stocks.add(stock_code)
                             time.sleep(1)

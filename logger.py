@@ -78,9 +78,24 @@ _original_stream_handler_emit = logging.StreamHandler.emit
 def _safe_emit(self, record):
     """安全的emit方法,捕获I/O异常"""
     try:
+        # 检查stream是否已关闭
+        if hasattr(self, 'stream'):
+            stream = self.stream
+            # 处理colorama包装的stream (stream.wrapped)
+            if hasattr(stream, 'wrapped'):
+                if hasattr(stream.wrapped, 'closed') and stream.wrapped.closed:
+                    return
+            # 处理普通stream
+            elif hasattr(stream, 'closed') and stream.closed:
+                return
+
         _original_stream_handler_emit(self, record)
-    except (ValueError, OSError, AttributeError):
-        # 静默处理I/O错误
+    except (ValueError, OSError, AttributeError, BrokenPipeError):
+        # 静默处理I/O错误:
+        # - ValueError: I/O operation on closed file
+        # - OSError: 文件描述符无效
+        # - AttributeError: 对象属性不存在
+        # - BrokenPipeError: 管道破裂
         pass
     except Exception:
         # 捕获所有其他异常

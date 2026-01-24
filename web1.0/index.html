@@ -407,6 +407,104 @@
         </div>
     </div>
 
+    <!-- 网格交易配置对话框 -->
+    <div id="gridConfigDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 w-[600px] max-w-2xl">
+            <h3 class="text-lg font-semibold mb-4">网格交易配置</h3>
+            <div class="mb-4">
+                <p class="text-sm text-gray-600">股票代码: <span id="gridStockCode" class="font-semibold"></span></p>
+                <p class="text-sm text-gray-600">当前价格: <span id="gridCurrentPrice" class="font-semibold"></span></p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <!-- 网格价格间隔 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        网格价格间隔 (%)
+                        <span class="text-gray-500 text-xs">每档价格差异</span>
+                    </label>
+                    <input type="number" id="gridPriceInterval" step="0.01" min="0.01" max="20"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 每档交易比例 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        每档交易比例 (%)
+                        <span class="text-gray-500 text-xs">单次交易占比</span>
+                    </label>
+                    <input type="number" id="gridPositionRatio" step="0.01" min="1" max="100"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 回调触发比例 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        回调触发比例 (%)
+                        <span class="text-gray-500 text-xs">确认回调幅度</span>
+                    </label>
+                    <input type="number" id="gridCallbackRatio" step="0.01" min="0.1" max="10"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 最大追加投入 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        最大追加投入 (元)
+                        <span class="text-gray-500 text-xs">网格总投入上限</span>
+                    </label>
+                    <input type="number" id="gridMaxInvestment" step="1000" min="0"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 运行时长限制 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        运行时长限制 (天)
+                        <span class="text-gray-500 text-xs">自动停止时间</span>
+                    </label>
+                    <input type="number" id="gridDurationDays" step="1" min="1" max="365"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 最大偏离度 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        最大偏离度 (%)
+                        <span class="text-gray-500 text-xs">中心价偏离上限</span>
+                    </label>
+                    <input type="number" id="gridMaxDeviation" step="1" min="5" max="50"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 目标盈利 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        目标盈利 (%)
+                        <span class="text-gray-500 text-xs">达到后自动停止</span>
+                    </label>
+                    <input type="number" id="gridTargetProfit" step="1" min="1" max="100"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 止损比例 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        止损比例 (%)
+                        <span class="text-gray-500 text-xs">亏损后自动停止</span>
+                    </label>
+                    <input type="number" id="gridStopLoss" step="1" min="-50" max="0"
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2">
+                <button id="gridDialogCancelBtn" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">取消</button>
+                <button id="gridDialogConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">启动网格交易</button>
+            </div>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

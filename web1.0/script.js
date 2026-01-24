@@ -975,7 +975,27 @@ document.addEventListener('DOMContentLoaded', () => {
         // 更新各个单元格的值
         const cells = row.querySelectorAll('td');
 
-        // 确保保留复选框
+        // 检查是否有活跃的网格会话
+        const hasActiveGrid = activeGridSessions.has(stock.stock_code);
+
+        // 更新行的边框样式
+        row.className = hasActiveGrid
+            ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
+            : 'hover:bg-gray-50 even:bg-gray-100';
+
+        // 更新checkbox和网格状态标识
+        const checkboxCell = cells[0];
+        const checkbox = checkboxCell.querySelector('.holding-checkbox');
+        if (checkbox) {
+            checkbox.checked = hasActiveGrid;
+        }
+        // 更新"运行中"标识
+        const existingLabel = checkboxCell.querySelector('span');
+        if (hasActiveGrid && !existingLabel) {
+            checkboxCell.innerHTML += '<span class="ml-1 text-green-600 text-xs">🟢</span>';
+        } else if (!hasActiveGrid && existingLabel) {
+            existingLabel.remove();
+        }
 
         // 更新基本信息
         cells[1].textContent = stock.stock_code || '--';
@@ -1018,7 +1038,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // 创建新的持仓行
     function createStockRow(stock) {
         const row = document.createElement('tr');
-        row.className = 'hover:bg-gray-50 even:bg-gray-100';
+        // 检查是否有活跃的网格会话
+        const hasActiveGrid = activeGridSessions.has(stock.stock_code);
+        // 如果有活跃网格，添加绿色边框
+        row.className = hasActiveGrid
+            ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
+            : 'hover:bg-gray-50 even:bg-gray-100';
         row.dataset.stockCode = stock.stock_code; // 添加标识属性
 
         // 计算关键值
@@ -1027,20 +1052,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 构建行内容
         row.innerHTML = `
-            <td class="border p-2"><input type="checkbox" class="holding-checkbox" data-id="${stock.id || stock.stock_code}"></td>
+            <td class="border p-2">
+                <input type="checkbox" class="holding-checkbox"
+                       data-id="${stock.id || stock.stock_code}"
+                       data-stock-code="${stock.stock_code}"
+                       ${hasActiveGrid ? 'checked' : ''}>
+                ${hasActiveGrid ? '<span class="ml-1 text-green-600 text-xs">🟢</span>' : ''}
+            </td>
             <td class="border p-2">${stock.stock_code || '--'}</td>
-            <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>                
+            <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>
             <td class="border p-2 ${changePercentage >= 0 ? 'text-red-600' : 'text-green-600'}">${changePercentage.toFixed(2)}%</td>
             <td class="border p-2">${parseFloat(stock.current_price || 0).toFixed(2)}</td>
             <td class="border p-2">${parseFloat(stock.cost_price || 0).toFixed(2)}</td>
             <td class="border p-2 ${profitRatio >= 0 ? 'text-red-600' : 'text-green-600'}">${profitRatio.toFixed(2)}%</td>
             <td class="border p-2">${parseFloat(stock.market_value || 0).toFixed(0)}</td>
-            <td class="border p-2">${parseFloat(stock.available || 0).toFixed(0)}</td>       
-            <td class="border p-2">${parseFloat(stock.volume || 0).toFixed(0)}</td>         
+            <td class="border p-2">${parseFloat(stock.available || 0).toFixed(0)}</td>
+            <td class="border p-2">${parseFloat(stock.volume || 0).toFixed(0)}</td>
             <td class="border p-2 text-center"><input type="checkbox" ${stock.profit_triggered ? 'checked' : ''} disabled></td>
-            <td class="border p-2">${parseFloat(stock.highest_price || 0).toFixed(2)}</td>                
-            <td class="border p-2">${parseFloat(stock.stop_loss_price || 0).toFixed(2)}</td> 
-            <td class="border p-2 whitespace-nowrap">${(stock.open_date || '').split(' ')[0]}</td>                               
+            <td class="border p-2">${parseFloat(stock.highest_price || 0).toFixed(2)}</td>
+            <td class="border p-2">${parseFloat(stock.stop_loss_price || 0).toFixed(2)}</td>
+            <td class="border p-2 whitespace-nowrap">${(stock.open_date || '').split(' ')[0]}</td>
             <td class="border p-2">${parseFloat(stock.base_cost_price || stock.cost_price || 0).toFixed(2)}</td>
         `;
 
@@ -1131,7 +1162,17 @@ document.addEventListener('DOMContentLoaded', () => {
     function addHoldingCheckboxListeners() {
         const checkboxes = elements.holdingsTableBody.querySelectorAll('.holding-checkbox');
         checkboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', () => {
+            checkbox.addEventListener('change', (e) => {
+                const stockCode = e.target.dataset.stockCode;
+
+                if (e.target.checked) {
+                    // 选中时弹出网格交易配置对话框
+                    showGridConfigDialog(stockCode);
+                } else {
+                    // 取消选中时停止网格交易
+                    stopGridSession(stockCode);
+                }
+
                 // 检查是否所有复选框都被选中
                 const allChecked = Array.from(checkboxes).every(cb => cb.checked);
                 elements.selectAllHoldings.checked = allChecked;
@@ -1267,6 +1308,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 添加版本号跟踪
     let currentHoldingsVersion = 0;
+    // 全局变量存储活跃网格会话
+    let activeGridSessions = new Set();
+
     // 修改数据获取函数
     async function fetchHoldings() {
         // 如果已经有请求在进行中，则跳过
@@ -1282,26 +1326,46 @@ document.addEventListener('DOMContentLoaded', () => {
             // 带版本号的请求
             const url = `${API_ENDPOINTS.getPositionsAll}?version=${currentHoldingsVersion}`;
             const data = await apiRequest(url);
-            
+
             // 检查是否有数据变化
             if (data.no_change) {
                 console.log('Holdings data unchanged, skipping update');
                 return;
             }
-            
+
             // 更新版本号
             if (data.data_version) {
                 currentHoldingsVersion = data.data_version;
                 console.log(`Holdings data updated to version: ${currentHoldingsVersion}`);
             }
-            
+
+            // 获取活跃的网格会话
+            try {
+                const gridResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
+                if (gridResponse.ok) {
+                    const gridData = await gridResponse.json();
+                    if (gridData.success && Array.isArray(gridData.sessions)) {
+                        // 更新活跃会话集合（只包含运行中的会话，状态为'active'）
+                        activeGridSessions = new Set(
+                            gridData.sessions
+                                .filter(s => s.status === 'active')
+                                .map(s => s.stock_code)
+                        );
+                        console.log(`Active grid sessions: ${Array.from(activeGridSessions).join(', ')}`);
+                    }
+                }
+            } catch (gridError) {
+                console.log('Failed to fetch grid sessions:', gridError);
+                // 不影响持仓数据的显示
+            }
+
             if (data.status === 'success' && Array.isArray(data.data)) {
                 updateHoldingsTable(data.data);
                 lastDataUpdateTimestamps.holdings = Date.now();
             } else {
                 throw new Error(data.message || '数据格式错误');
             }
-            
+
         } catch (error) {
             console.error('Error fetching holdings:', error);
         } finally {
@@ -1936,6 +2000,220 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 开始API连接检查
         setTimeout(throttledCheckApiConnection, 2000);
+    }
+
+    // ============ 网格交易相关函数 ============
+
+    /**
+     * 显示网格交易配置对话框
+     * @param {string} stockCode - 股票代码
+     */
+    async function showGridConfigDialog(stockCode) {
+        try {
+            // 从DOM中获取持仓信息
+            const row = document.querySelector(`tr[data-stock-code="${stockCode}"]`);
+            if (!row) {
+                showMessage('未找到该股票持仓信息', 'error');
+                // 取消checkbox选中状态
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                if (checkbox) checkbox.checked = false;
+                return;
+            }
+
+            // 从DOM中提取当前价格(第5列,索引4)
+            const cells = row.querySelectorAll('td');
+            const currentPrice = cells[4] ? parseFloat(cells[4].textContent) : 0;
+
+            if (currentPrice <= 0) {
+                showMessage('无法获取当前价格', 'error');
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                if (checkbox) checkbox.checked = false;
+                return;
+            }
+
+            // 获取默认配置
+            const response = await fetch(`${API_BASE_URL}/api/grid/config`);
+            if (!response.ok) {
+                throw new Error('获取网格配置失败');
+            }
+            const result = await response.json();
+            const defaultConfig = result.data;  // 从返回的data字段中获取配置
+
+            // 填充对话框信息
+            document.getElementById('gridStockCode').textContent = stockCode;
+            document.getElementById('gridCurrentPrice').textContent = `¥${currentPrice.toFixed(2)}`;
+
+            // 填充配置参数(转换为百分比显示)
+            document.getElementById('gridPriceInterval').value = (defaultConfig.price_interval * 100).toFixed(2);
+            document.getElementById('gridPositionRatio').value = (defaultConfig.position_ratio * 100).toFixed(2);
+            document.getElementById('gridCallbackRatio').value = (defaultConfig.callback_ratio * 100).toFixed(2);
+            document.getElementById('gridMaxInvestment').value = defaultConfig.max_investment;
+            document.getElementById('gridDurationDays').value = defaultConfig.duration_days;
+            document.getElementById('gridMaxDeviation').value = (defaultConfig.max_deviation * 100).toFixed(0);
+            document.getElementById('gridTargetProfit').value = (defaultConfig.target_profit * 100).toFixed(0);
+            document.getElementById('gridStopLoss').value = (defaultConfig.stop_loss * 100).toFixed(0);
+
+            // 显示对话框
+            const dialog = document.getElementById('gridConfigDialog');
+            dialog.classList.remove('hidden');
+
+            // 绑定按钮事件(移除旧事件监听器,避免重复绑定)
+            const confirmBtn = document.getElementById('gridDialogConfirmBtn');
+            const cancelBtn = document.getElementById('gridDialogCancelBtn');
+
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            const newCancelBtn = cancelBtn.cloneNode(true);
+
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+            newConfirmBtn.addEventListener('click', () => startGridSession(stockCode, currentPrice));
+            newCancelBtn.addEventListener('click', () => {
+                dialog.classList.add('hidden');
+                // 取消checkbox选中状态
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                if (checkbox) checkbox.checked = false;
+            });
+
+        } catch (error) {
+            console.error('显示网格配置对话框失败:', error);
+            showMessage('显示配置对话框失败: ' + error.message, 'error');
+            // 取消checkbox选中状态
+            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+            if (checkbox) checkbox.checked = false;
+        }
+    }
+
+    /**
+     * 启动网格交易会话
+     * @param {string} stockCode - 股票代码
+     * @param {number} centerPrice - 中心价格
+     */
+    async function startGridSession(stockCode, centerPrice) {
+        try {
+            // 收集配置参数(转换百分比为小数)
+            const config = {
+                price_interval: parseFloat(document.getElementById('gridPriceInterval').value) / 100,
+                position_ratio: parseFloat(document.getElementById('gridPositionRatio').value) / 100,
+                callback_ratio: parseFloat(document.getElementById('gridCallbackRatio').value) / 100,
+                max_investment: parseFloat(document.getElementById('gridMaxInvestment').value),
+                max_deviation: parseFloat(document.getElementById('gridMaxDeviation').value) / 100,
+                target_profit: parseFloat(document.getElementById('gridTargetProfit').value) / 100,
+                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100
+            };
+
+            const durationDays = parseInt(document.getElementById('gridDurationDays').value);
+
+            // 验证参数
+            if (config.price_interval <= 0 || config.price_interval > 0.2) {
+                showMessage('网格价格间隔必须在0.01%-20%之间', 'error');
+                return;
+            }
+            if (config.position_ratio <= 0 || config.position_ratio > 1) {
+                showMessage('每档交易比例必须在1%-100%之间', 'error');
+                return;
+            }
+            if (config.callback_ratio < 0.001 || config.callback_ratio > 0.1) {
+                showMessage('回调触发比例必须在0.1%-10%之间', 'error');
+                return;
+            }
+            if (config.max_investment < 0) {
+                showMessage('最大追加投入不能为负数', 'error');
+                return;
+            }
+            if (durationDays < 1 || durationDays > 365) {
+                showMessage('运行时长必须在1-365天之间', 'error');
+                return;
+            }
+
+            // 调用API启动网格交易
+            const response = await fetch(`${API_BASE_URL}/api/grid/start`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    stock_code: stockCode,
+                    center_price: centerPrice,
+                    duration_days: durationDays,
+                    config: config
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || '启动网格交易失败');
+            }
+
+            const result = await response.json();
+            showMessage(`网格交易启动成功! 会话ID: ${result.session_id}`, 'success');
+
+            // 关闭对话框
+            document.getElementById('gridConfigDialog').classList.add('hidden');
+
+            // 刷新持仓数据
+            await fetchHoldings();
+
+        } catch (error) {
+            console.error('启动网格交易失败:', error);
+            showMessage('启动网格交易失败: ' + error.message, 'error');
+            // 取消checkbox选中状态
+            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+            if (checkbox) checkbox.checked = false;
+        }
+    }
+
+    /**
+     * 停止网格交易会话
+     * @param {string} stockCode - 股票代码
+     */
+    async function stopGridSession(stockCode) {
+        try {
+            // 先获取该股票的会话ID
+            const sessionsResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
+            if (!sessionsResponse.ok) {
+                throw new Error('获取网格会话列表失败');
+            }
+
+            const sessionsData = await sessionsResponse.json();
+            if (!sessionsData.success || !Array.isArray(sessionsData.sessions)) {
+                throw new Error('网格会话数据格式错误');
+            }
+
+            // 查找该股票的运行中会话
+            const session = sessionsData.sessions.find(s => s.stock_code === stockCode && s.status === 'active');
+            if (!session) {
+                showMessage('未找到该股票的运行中网格会话', 'warning');
+                // 刷新持仓数据以同步状态
+                await fetchHoldings();
+                return;
+            }
+
+            // 调用停止API
+            const response = await fetch(`${API_BASE_URL}/api/grid/stop/${session.session_id}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || '停止网格交易失败');
+            }
+
+            const result = await response.json();
+            showMessage(`网格交易已停止 (会话ID: ${session.session_id})`, 'success');
+
+            // 刷新持仓数据
+            await fetchHoldings();
+
+        } catch (error) {
+            console.error('停止网格交易失败:', error);
+            showMessage('停止网格交易失败: ' + error.message, 'error');
+            // 刷新持仓数据以同步状态
+            await fetchHoldings();
+        }
     }
 
     console.log("Adding event listeners and fetching initial data...");

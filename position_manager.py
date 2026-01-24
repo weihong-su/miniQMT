@@ -101,6 +101,8 @@ class PositionManager:
             try:
                 from grid_database import DatabaseManager
                 self.db_manager = DatabaseManager()
+                # 自动初始化网格交易表
+                self.db_manager.init_grid_tables()
                 logger.info("网格交易数据库管理器初始化完成")
             except Exception as e:
                 logger.error(f"网格交易数据库管理器初始化失败: {str(e)}")

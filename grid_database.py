@@ -210,6 +210,31 @@ class DatabaseManager:
             ON grid_trades(trade_time)
         """)
 
+        # 创建grid_config_templates表(网格配置模板)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS grid_config_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_name TEXT NOT NULL UNIQUE,
+                price_interval REAL NOT NULL DEFAULT 0.05,
+                position_ratio REAL NOT NULL DEFAULT 0.25,
+                callback_ratio REAL NOT NULL DEFAULT 0.005,
+                max_deviation REAL DEFAULT 0.15,
+                target_profit REAL DEFAULT 0.10,
+                stop_loss REAL DEFAULT -0.10,
+                duration_days INTEGER DEFAULT 7,
+                max_investment_ratio REAL DEFAULT 0.5,
+                description TEXT,
+                is_default BOOLEAN DEFAULT FALSE,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_templates_name
+            ON grid_config_templates(template_name)
+        """)
+
         self.conn.commit()
         logger.info("网格交易表初始化完成")
 
@@ -339,6 +364,91 @@ class DatabaseManager:
                 SELECT COUNT(*) FROM grid_trades WHERE session_id=?
             """, (session_id,))
             return cursor.fetchone()[0]
+
+    # ======================= 网格配置模板管理 =======================
+
+    def save_grid_template(self, template_data: dict) -> int:
+        """保存网格配置模板"""
+        with self.lock:
+            cursor = self.conn.cursor()
+
+            # 如果设置为默认模板,先取消其他默认模板
+            if template_data.get('is_default'):
+                cursor.execute("""
+                    UPDATE grid_config_templates SET is_default=FALSE
+                """)
+
+            cursor.execute("""
+                INSERT INTO grid_config_templates
+                (template_name, price_interval, position_ratio, callback_ratio,
+                 max_deviation, target_profit, stop_loss, duration_days,
+                 max_investment_ratio, description, is_default)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(template_name) DO UPDATE SET
+                    price_interval=excluded.price_interval,
+                    position_ratio=excluded.position_ratio,
+                    callback_ratio=excluded.callback_ratio,
+                    max_deviation=excluded.max_deviation,
+                    target_profit=excluded.target_profit,
+                    stop_loss=excluded.stop_loss,
+                    duration_days=excluded.duration_days,
+                    max_investment_ratio=excluded.max_investment_ratio,
+                    description=excluded.description,
+                    is_default=excluded.is_default,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                template_data['template_name'],
+                template_data.get('price_interval', 0.05),
+                template_data.get('position_ratio', 0.25),
+                template_data.get('callback_ratio', 0.005),
+                template_data.get('max_deviation', 0.15),
+                template_data.get('target_profit', 0.10),
+                template_data.get('stop_loss', -0.10),
+                template_data.get('duration_days', 7),
+                template_data.get('max_investment_ratio', 0.5),
+                template_data.get('description', ''),
+                template_data.get('is_default', False)
+            ))
+            self.conn.commit()
+            return cursor.lastrowid
+
+    def get_grid_template(self, template_name: str):
+        """获取指定网格配置模板"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_config_templates WHERE template_name=?
+            """, (template_name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_grid_templates(self) -> list:
+        """获取所有网格配置模板"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_config_templates ORDER BY is_default DESC, created_at DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_default_grid_template(self):
+        """获取默认网格配置模板"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_config_templates WHERE is_default=TRUE LIMIT 1
+            """)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_grid_template(self, template_name: str):
+        """删除网格配置模板"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                DELETE FROM grid_config_templates WHERE template_name=?
+            """, (template_name,))
+            self.conn.commit()
 
     def close(self):
         """关闭数据库连接"""

@@ -206,6 +206,7 @@ def main():
         data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy = init_system()
 
         # 初始化网格交易管理器
+        logger.info(f"检查网格交易配置: ENABLE_GRID_TRADING = {config.ENABLE_GRID_TRADING}")
         if config.ENABLE_GRID_TRADING:
             try:
                 logger.info("初始化网格交易管理器")
@@ -214,6 +215,8 @@ def main():
             except Exception as e:
                 logger.error(f"网格交易管理器初始化失败: {str(e)}")
                 logger.info("系统继续运行(网格交易功能不可用)")
+        else:
+            logger.warning("网格交易功能未启用 (ENABLE_GRID_TRADING=False)")
 
         # 下载初始数据
         download_initial_data(data_manager)
