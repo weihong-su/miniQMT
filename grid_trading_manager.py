@@ -147,9 +147,7 @@ class GridTradingManager:
 
     def _load_active_sessions(self):
         """系统启动时从数据库加载活跃会话(保守恢复策略)"""
-        logger.info("=" * 60)
         logger.info("系统重启 - 开始恢复网格交易会话")
-        logger.info("=" * 60)
 
         active_sessions = self.db.get_active_grid_sessions()
         recovered_count = 0
@@ -235,9 +233,7 @@ class GridTradingManager:
 
             recovered_count += 1
 
-        logger.info("=" * 60)
         logger.info(f"网格会话恢复完成: 恢复{recovered_count}个, 自动停止{stopped_count}个")
-        logger.info("=" * 60)
 
         return recovered_count
 

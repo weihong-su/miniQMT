@@ -264,7 +264,7 @@ class DatabaseManager:
                 UPDATE grid_trading_sessions
                 SET status=?, stop_time=?, stop_reason=?, updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
-            """, (reason, datetime.now().isoformat(), reason, session_id))
+            """, ('stopped', datetime.now().isoformat(), reason, session_id))
             self.conn.commit()
 
     def get_active_grid_sessions(self) -> list:
