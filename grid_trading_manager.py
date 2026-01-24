@@ -500,3 +500,272 @@ class GridTradingManager:
                    f"回调={signal.get('callback_ratio', 0)*100:.2f}%")
 
         return signal
+
+    def _rebuild_grid(self, session: GridSession, trade_price: float):
+        """交易后重建网格,以成交价为新中心"""
+        old_center = session.current_center_price
+        session.current_center_price = trade_price
+
+        # 重置追踪器
+        tracker = self.trackers.get(session.id)
+        if tracker:
+            tracker.reset(trade_price)
+
+        # 更新数据库
+        self.db.update_grid_session(session.id, {
+            'current_center_price': trade_price
+        })
+
+        levels = session.get_grid_levels()
+        logger.info(f"网格重建: {session.stock_code}, "
+                   f"旧中心={old_center:.2f} → 新中心={trade_price:.2f}, "
+                   f"新档位=[{levels['lower']:.2f}, {levels['center']:.2f}, {levels['upper']:.2f}]")
+
+    def execute_grid_trade(self, signal: dict) -> bool:
+        """
+        执行网格交易
+
+        Args:
+            signal: 网格交易信号
+
+        Returns:
+            执行是否成功
+        """
+        try:
+            with self.lock:
+                stock_code = signal['stock_code']
+                session = self.sessions.get(stock_code)
+                if not session:
+                    logger.error(f"会话不存在: {stock_code}")
+                    return False
+
+                signal_type = signal['signal_type']
+                trigger_price = signal['trigger_price']
+
+                # 执行交易
+                if signal_type == 'BUY':
+                    success = self._execute_grid_buy(session, signal)
+                elif signal_type == 'SELL':
+                    success = self._execute_grid_sell(session, signal)
+                else:
+                    logger.error(f"未知信号类型: {signal_type}")
+                    return False
+
+                if not success:
+                    return False
+
+                # 设置档位冷却
+                level = signal['grid_level']
+                self.level_cooldowns[(session.id, level)] = time.time()
+
+                # 触发数据版本更新
+                self.position_manager._increment_data_version()
+
+                return True
+
+        except Exception as e:
+            logger.error(f"执行网格交易失败: {str(e)}")
+            return False
+
+    def _execute_grid_buy(self, session: GridSession, signal: dict) -> bool:
+        """执行网格买入"""
+        stock_code = session.stock_code
+        trigger_price = signal['trigger_price']
+
+        # 1. 检查投入限额
+        if session.current_investment >= session.max_investment:
+            logger.warning(f"{stock_code} 达到最大投入限额,跳过买入")
+            return False
+
+        # 2. 计算买入金额和数量
+        remaining_investment = session.max_investment - session.current_investment
+        buy_amount = min(remaining_investment, session.max_investment * 0.2)  # 单次不超过20%
+
+        if buy_amount < 100:  # 最小买入金额
+            logger.warning(f"{stock_code} 剩余投入额度不足,跳过买入")
+            return False
+
+        volume = int(buy_amount / trigger_price / 100) * 100  # 向下取整到100股
+        if volume == 0:
+            logger.warning(f"{stock_code} 买入数量不足100股,跳过")
+            return False
+
+        # 3. 执行买入
+        actual_amount = volume * trigger_price
+
+        if config.ENABLE_SIMULATION_MODE:
+            trade_id = f"GRID_SIM_BUY_{int(time.time()*1000)}"
+            logger.info(f"[模拟]网格买入: {stock_code}, 数量={volume}, 价格={trigger_price:.2f}")
+        else:
+            # 实盘买入
+            result = self.executor.execute_buy(
+                stock_code=stock_code,
+                amount=actual_amount,
+                strategy=config.GRID_STRATEGY_NAME
+            )
+            if not result:
+                logger.error(f"网格买入失败: {stock_code}")
+                return False
+            trade_id = result.get('order_id', '')
+
+        # 4. 更新会话统计
+        session.trade_count += 1
+        session.buy_count += 1
+        session.total_buy_amount += actual_amount
+        session.current_investment += actual_amount
+
+        # 5. 记录交易
+        trade_data = {
+            'session_id': session.id,
+            'stock_code': stock_code,
+            'trade_type': 'BUY',
+            'grid_level': signal['grid_level'],
+            'trigger_price': trigger_price,
+            'volume': volume,
+            'amount': actual_amount,
+            'valley_price': signal.get('valley_price'),
+            'callback_ratio': signal.get('callback_ratio'),
+            'trade_id': trade_id,
+            'trade_time': datetime.now().isoformat(),
+            'grid_center_before': session.current_center_price,
+            'grid_center_after': trigger_price
+        }
+        self.db.record_grid_trade(trade_data)
+
+        # 6. 更新数据库会话
+        self.db.update_grid_session(session.id, {
+            'trade_count': session.trade_count,
+            'buy_count': session.buy_count,
+            'total_buy_amount': session.total_buy_amount,
+            'current_investment': session.current_investment
+        })
+
+        # 7. 重建网格
+        self._rebuild_grid(session, trigger_price)
+
+        logger.info(f"网格买入成功: {stock_code}, 数量={volume}, 金额={actual_amount:.2f}, "
+                   f"累计投入={session.current_investment:.2f}/{session.max_investment:.2f}")
+
+        return True
+
+    def _execute_grid_sell(self, session: GridSession, signal: dict) -> bool:
+        """执行网格卖出"""
+        stock_code = session.stock_code
+        trigger_price = signal['trigger_price']
+
+        # 1. 获取当前持仓
+        position = self.position_manager.get_position(stock_code)
+        if not position:
+            logger.error(f"{stock_code} 持仓不存在")
+            return False
+
+        current_volume = position.get('volume', 0)
+        if current_volume == 0:
+            logger.warning(f"{stock_code} 持仓为0,跳过卖出")
+            return False
+
+        # 2. 计算卖出数量
+        sell_volume = int(current_volume * session.position_ratio / 100) * 100
+        if sell_volume == 0:
+            sell_volume = 100  # 最少卖100股
+
+        if sell_volume > current_volume:
+            sell_volume = int(current_volume / 100) * 100
+
+        if sell_volume == 0:
+            logger.warning(f"{stock_code} 可卖数量不足100股,跳过")
+            return False
+
+        # 3. 执行卖出
+        sell_amount = sell_volume * trigger_price
+
+        if config.ENABLE_SIMULATION_MODE:
+            trade_id = f"GRID_SIM_SELL_{int(time.time()*1000)}"
+            logger.info(f"[模拟]网格卖出: {stock_code}, 数量={sell_volume}, 价格={trigger_price:.2f}")
+        else:
+            # 实盘卖出
+            result = self.executor.execute_sell(
+                stock_code=stock_code,
+                volume=sell_volume,
+                strategy=config.GRID_STRATEGY_NAME
+            )
+            if not result:
+                logger.error(f"网格卖出失败: {stock_code}")
+                return False
+            trade_id = result.get('order_id', '')
+
+        # 4. 更新会话统计
+        session.trade_count += 1
+        session.sell_count += 1
+        session.total_sell_amount += sell_amount
+        # 卖出时减少投入(回收资金)
+        recovered_cost = sell_volume * position.get('cost_price', trigger_price)
+        session.current_investment = max(0, session.current_investment - recovered_cost)
+
+        # 5. 记录交易
+        trade_data = {
+            'session_id': session.id,
+            'stock_code': stock_code,
+            'trade_type': 'SELL',
+            'grid_level': signal['grid_level'],
+            'trigger_price': trigger_price,
+            'volume': sell_volume,
+            'amount': sell_amount,
+            'peak_price': signal.get('peak_price'),
+            'callback_ratio': signal.get('callback_ratio'),
+            'trade_id': trade_id,
+            'trade_time': datetime.now().isoformat(),
+            'grid_center_before': session.current_center_price,
+            'grid_center_after': trigger_price
+        }
+        self.db.record_grid_trade(trade_data)
+
+        # 6. 更新数据库会话
+        self.db.update_grid_session(session.id, {
+            'trade_count': session.trade_count,
+            'sell_count': session.sell_count,
+            'total_sell_amount': session.total_sell_amount,
+            'current_investment': session.current_investment
+        })
+
+        # 7. 重建网格
+        self._rebuild_grid(session, trigger_price)
+
+        profit = session.get_profit_ratio()
+        logger.info(f"网格卖出成功: {stock_code}, 数量={sell_volume}, 金额={sell_amount:.2f}, "
+                   f"网格盈亏={profit*100:.2f}%")
+
+        return True
+
+    def get_session_stats(self, session_id: int) -> dict:
+        """获取会话统计信息"""
+        session = None
+        for s in self.sessions.values():
+            if s.id == session_id:
+                session = s
+                break
+
+        if not session:
+            return {}
+
+        return {
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'status': session.status,
+            'center_price': session.center_price,
+            'current_center_price': session.current_center_price,
+            'grid_levels': session.get_grid_levels(),
+            'trade_count': session.trade_count,
+            'buy_count': session.buy_count,
+            'sell_count': session.sell_count,
+            'profit_ratio': session.get_profit_ratio(),
+            'deviation_ratio': session.get_deviation_ratio(),
+            'current_investment': session.current_investment,
+            'max_investment': session.max_investment,
+            'start_time': session.start_time.isoformat() if session.start_time else None,
+            'end_time': session.end_time.isoformat() if session.end_time else None
+        }
+
+    def get_trade_history(self, session_id: int, limit=50, offset=0) -> list:
+        """获取交易历史"""
+        return self.db.get_grid_trades(session_id, limit, offset)
