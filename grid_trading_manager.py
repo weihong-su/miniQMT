@@ -140,7 +140,7 @@ class GridTradingManager:
         self.sessions: Dict[str, GridSession] = {}
         self.trackers: Dict[int, PriceTracker] = {}
         self.level_cooldowns: Dict[tuple, float] = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
 
         # 初始化:从数据库加载活跃会话
         self._load_active_sessions()
