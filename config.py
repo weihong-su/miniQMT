@@ -467,7 +467,7 @@ SELL_ALERT_CONFIG = {
 # ======================= 网格交易高级配置 (2026-01-24) =======================
 
 # 网格交易总开关
-ENABLE_GRID_TRADING = False  # 启用后才能使用网格交易功能
+ENABLE_GRID_TRADING = True  # 启用后才能使用网格交易功能
 
 # 回调触发机制
 GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易

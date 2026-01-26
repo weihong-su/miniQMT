@@ -225,6 +225,8 @@ class DatabaseManager:
                 max_investment_ratio REAL DEFAULT 0.5,
                 description TEXT,
                 is_default BOOLEAN DEFAULT FALSE,
+                usage_count INTEGER DEFAULT 0,
+                last_used_at TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -356,6 +358,17 @@ class DatabaseManager:
             """, (session_id, limit, offset))
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_grid_session(self, session_id: int):
+        """获取指定网格会话"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_trading_sessions
+                WHERE id=?
+            """, (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_grid_trade_count(self, session_id: int) -> int:
         """获取网格交易总数"""
         with self.lock:
@@ -449,6 +462,20 @@ class DatabaseManager:
                 DELETE FROM grid_config_templates WHERE template_name=?
             """, (template_name,))
             self.conn.commit()
+
+    def increment_template_usage(self, template_name: str):
+        """增加模板使用次数"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                UPDATE grid_config_templates
+                SET usage_count = usage_count + 1,
+                    last_used_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE template_name = ?
+            """, (datetime.now().isoformat(), template_name))
+            self.conn.commit()
+            logger.debug(f"模板使用统计已更新: {template_name}")
 
     def close(self):
         """关闭数据库连接"""

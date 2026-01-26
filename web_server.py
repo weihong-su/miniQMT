@@ -22,6 +22,7 @@ from position_manager import get_position_manager
 from trading_executor import get_trading_executor
 from strategy import get_trading_strategy
 from config_manager import get_config_manager
+from grid_validation import validate_grid_config, validate_grid_template
 import utils
 
 
@@ -1242,6 +1243,35 @@ def sync_auto_trading_status():
 
 # ======================= 网格交易API端点 (2026-01-24) =======================
 
+def normalize_stock_code(stock_code: str) -> str:
+    """
+    标准化股票代码，自动补充市场后缀
+
+    Args:
+        stock_code: 股票代码，可能缺少.SH或.SZ后缀
+
+    Returns:
+        标准化后的股票代码 (格式: XXXXXX.SH 或 XXXXXX.SZ)
+    """
+    if not stock_code:
+        return stock_code
+
+    # 如果已经有后缀，直接返回
+    if '.' in stock_code:
+        return stock_code
+
+    # 自动判断市场（基于A股规则）
+    # 上海交易所: 60xxxx(主板), 688xxx(科创板), 689xxx(科创板), 900xxx(B股)
+    # 深圳交易所: 00xxxx(主板), 30xxxx(创业板), 200xxx(B股)
+    if stock_code.startswith(('6', '900')):
+        return stock_code + '.SH'
+    elif stock_code.startswith(('0', '3', '200')):
+        return stock_code + '.SZ'
+    else:
+        # 默认返回原值（让后续验证处理）
+        return stock_code
+
+
 @app.route('/api/grid/start', methods=['POST'])
 def start_grid_trading():
     """启动网格交易"""
@@ -1252,25 +1282,49 @@ def start_grid_trading():
         if not stock_code:
             return jsonify({'success': False, 'error': '缺少stock_code参数'}), 400
 
+        # 标准化股票代码（自动补充市场后缀）
+        stock_code = normalize_stock_code(stock_code)
+
         # 获取网格管理器
         position_manager = get_position_manager()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
-        # 用户配置
+        # 从嵌套的config对象中提取参数（兼容前端发送的数据结构）
+        frontend_config = data.get('config', {})
+
+        # 调试日志
+        logger.info(f"启动网格交易请求: stock_code={stock_code}, has_config={bool(frontend_config)}")
+        if frontend_config:
+            logger.debug(f"前端config参数: {frontend_config}")
+
+        # 用户配置（优先使用config对象中的值，否则使用顶层值）
         user_config = {
-            'price_interval': data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
-            'position_ratio': data.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
-            'callback_ratio': data.get('callback_ratio', config.GRID_CALLBACK_RATIO),
-            'max_investment': data.get('max_investment'),
-            'max_deviation': data.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
-            'target_profit': data.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
-            'stop_loss': data.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
+            'stock_code': stock_code,
+            'price_interval': frontend_config.get('price_interval') or data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
+            'position_ratio': frontend_config.get('position_ratio') or data.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
+            'callback_ratio': frontend_config.get('callback_ratio') or data.get('callback_ratio', config.GRID_CALLBACK_RATIO),
+            'max_investment': frontend_config.get('max_investment') or data.get('max_investment'),
+            'max_deviation': frontend_config.get('max_deviation') or data.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
+            'target_profit': frontend_config.get('target_profit') or data.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
+            'stop_loss': frontend_config.get('stop_loss') or data.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
             'duration_days': data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS)
         }
 
-        # 启动网格会话
-        session = position_manager.grid_manager.start_grid_session(stock_code, user_config)
+        logger.debug(f"解析后的user_config: {user_config}")
+
+        # 参数校验
+        is_valid, result = validate_grid_config(user_config)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'error': '参数校验失败',
+                'details': result
+            }), 400
+
+        # 启动网格会话（从校验后的数据中移除stock_code）
+        validated_config = {k: v for k, v in result.items() if k != 'stock_code'}
+        session = position_manager.grid_manager.start_grid_session(stock_code, validated_config)
 
         return jsonify({
             'success': True,
@@ -1325,7 +1379,14 @@ def get_grid_sessions():
     try:
         position_manager = get_position_manager()
         if not position_manager.grid_manager:
-            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+            # 返回200和空列表，而不是400错误
+            # 这符合RESTful最佳实践："没有数据"不是错误
+            return jsonify({
+                'success': True,
+                'sessions': [],
+                'total': 0,
+                'message': '网格交易功能未启用'
+            })
 
         sessions = []
         for stock_code, session in position_manager.grid_manager.sessions.items():
@@ -1569,7 +1630,7 @@ def save_grid_template():
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
-        # 保存模板
+        # 准备模板数据
         template_data = {
             'template_name': template_name,
             'price_interval': data.get('price_interval', 0.05),
@@ -1584,7 +1645,17 @@ def save_grid_template():
             'is_default': data.get('is_default', False)
         }
 
-        template_id = position_manager.db_manager.save_grid_template(template_data)
+        # 参数校验
+        is_valid, result = validate_grid_template(template_data)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'error': '参数校验失败',
+                'details': result
+            }), 400
+
+        # 保存模板（使用校验后的数据）
+        template_id = position_manager.db_manager.save_grid_template(result)
 
         return jsonify({
             'success': True,
@@ -1614,6 +1685,91 @@ def delete_grid_template(template_name):
 
     except Exception as e:
         logger.error(f"删除网格配置模板失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/template/use', methods=['POST'])
+def use_grid_template():
+    """使用模板（更新使用统计）"""
+    try:
+        data = request.get_json()
+        template_name = data.get('template_name')
+
+        if not template_name:
+            return jsonify({'success': False, 'error': '缺少template_name参数'}), 400
+
+        position_manager = get_position_manager()
+        if not position_manager.db_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        # 更新使用统计
+        position_manager.db_manager.increment_template_usage(template_name)
+
+        # 返回模板配置
+        template = position_manager.db_manager.get_grid_template(template_name)
+
+        return jsonify({
+            'success': True,
+            'template': template,
+            'message': f'模板{template_name}已应用'
+        })
+
+    except Exception as e:
+        logger.error(f"使用网格配置模板失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/template/default', methods=['GET'])
+def get_default_grid_template():
+    """获取默认网格配置模板"""
+    try:
+        position_manager = get_position_manager()
+        if not position_manager.db_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        template = position_manager.db_manager.get_default_grid_template()
+
+        if not template:
+            return jsonify({
+                'success': True,
+                'template': None,
+                'message': '未设置默认模板'
+            })
+
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+
+    except Exception as e:
+        logger.error(f"获取默认网格配置模板失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/template/<template_name>/default', methods=['PUT'])
+def set_default_grid_template(template_name):
+    """设置默认网格配置模板"""
+    try:
+        position_manager = get_position_manager()
+        if not position_manager.db_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        # 检查模板是否存在
+        template = position_manager.db_manager.get_grid_template(template_name)
+        if not template:
+            return jsonify({'success': False, 'error': f'模板{template_name}不存在'}), 404
+
+        # 设置为默认模板（通过更新is_default字段）
+        template['is_default'] = True
+        position_manager.db_manager.save_grid_template(template)
+
+        return jsonify({
+            'success': True,
+            'message': f'已将{template_name}设置为默认模板'
+        })
+
+    except Exception as e:
+        logger.error(f"设置默认网格配置模板失败: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

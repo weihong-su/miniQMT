@@ -416,6 +416,22 @@
                 <p class="text-sm text-gray-600">当前价格: <span id="gridCurrentPrice" class="font-semibold"></span></p>
             </div>
 
+            <!-- 模板选择区域 -->
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div class="flex items-center gap-2 mb-2">
+                    <label class="text-sm font-medium text-gray-700">配置模板:</label>
+                    <select id="gridTemplateSelect" class="flex-1 px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">自定义配置</option>
+                    </select>
+                    <button id="gridSaveTemplateBtn" class="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700" title="保存当前配置为模板">
+                        💾 保存模板
+                    </button>
+                    <button id="gridManageTemplatesBtn" class="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700" title="管理所有模板">
+                        ⚙️ 管理
+                    </button>
+                </div>
+            </div>
+
             <div class="grid grid-cols-2 gap-4 mb-6">
                 <!-- 网格价格间隔 -->
                 <div>
@@ -501,6 +517,48 @@
             <div class="flex justify-end space-x-2">
                 <button id="gridDialogCancelBtn" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">取消</button>
                 <button id="gridDialogConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">启动网格交易</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 保存模板对话框 -->
+    <div id="saveTemplateDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 w-[400px]">
+            <h3 class="text-lg font-semibold mb-4">保存配置模板</h3>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">模板名称</label>
+                <input type="text" id="saveTemplateName" placeholder="例如: 高波动股网格"
+                       class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">模板描述</label>
+                <textarea id="saveTemplateDesc" placeholder="适用场景和特点说明" rows="3"
+                          class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+            </div>
+            <div class="mb-4">
+                <label class="flex items-center">
+                    <input type="checkbox" id="saveTemplateDefault" class="mr-2">
+                    <span class="text-sm text-gray-700">设为默认模板</span>
+                </label>
+            </div>
+            <div class="flex justify-end space-x-2">
+                <button id="saveTemplateCancel" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">取消</button>
+                <button id="saveTemplateConfirm" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模板管理对话框 -->
+    <div id="manageTemplatesDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 w-[700px] max-w-4xl">
+            <h3 class="text-lg font-semibold mb-4">网格配置模板管理</h3>
+            <div class="mb-4">
+                <div id="templatesList" class="space-y-2 max-h-[400px] overflow-y-auto">
+                    <!-- 模板列表将动态填充 -->
+                </div>
+            </div>
+            <div class="flex justify-end">
+                <button id="manageTemplatesClose" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">关闭</button>
             </div>
         </div>
     </div>

@@ -521,36 +521,13 @@ class TradingStrategy:
                     cost_price = position['cost_price']
                     current_value = position['market_value']
 
-                    # 检查是否满足补仓格点要求
-                    price_ratio = current_price / cost_price
-
-                    # 获取网格交易配置（支持向后兼容）
-                    grid_price_levels, grid_amount_ratios = config.get_grid_config()
-
-                    # 寻找满足条件的补仓格点
-                    buy_level = None
-                    for i, level in enumerate(grid_price_levels):
-                        if i > 0 and price_ratio <= level:  # 不是第一格且价格比例小于等于格点比例
-                            buy_level = i
-                            break
-
-                    if buy_level is None:
-                        logger.info(f"{stock_code} 当前价格不满足补仓条件")
-                        return False
-
-                    # 检查是否达到最大持仓限制
-                    if current_value >= config.MAX_POSITION_VALUE:
-                        logger.info(f"{stock_code} 持仓已达到最大限制，不再补仓")
-                        return False
-
-                    # 确定补仓金额（网格交易策略使用金额比例）
-                    buy_amount = config.POSITION_UNIT * grid_amount_ratios[buy_level]
-
-                    logger.info(f"执行 {stock_code} 补仓策略，当前价格比例: {price_ratio:.2f}, 补仓格点: {buy_level}, 补仓金额: {buy_amount}")
+                    # 🔑 注意: execute_buy_strategy()仅处理技术指标买入信号的首次建仓
+                    # 补仓策略已由position_manager.check_add_position_signal()独立处理
+                    logger.info(f"{stock_code} 已有持仓，技术指标买入信号不触发补仓（补仓由独立策略处理）")
+                    return False
                 else:
-                    # 新建仓，使用第一个格点的金额
-                    grid_price_levels, grid_amount_ratios = config.get_grid_config()
-                    buy_amount = config.POSITION_UNIT * grid_amount_ratios[0]
+                    # 新建仓，使用POSITION_UNIT作为首次建仓金额
+                    buy_amount = config.POSITION_UNIT
                     logger.info(f"执行 {stock_code} 首次建仓，金额: {buy_amount}")
                 
                 # 执行买入

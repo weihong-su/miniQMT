@@ -2216,6 +2216,308 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ======================= 网格模板管理功能 (v1.1) =======================
+
+    /**
+     * 加载网格配置模板列表
+     */
+    async function loadGridTemplates() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/grid/templates`);
+            if (!response.ok) throw new Error('加载模板列表失败');
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '加载模板列表失败');
+
+            const select = document.getElementById('gridTemplateSelect');
+            // 清空现有选项（保留"自定义配置"）
+            select.innerHTML = '<option value="">自定义配置</option>';
+
+            // 添加模板选项
+            result.templates.forEach(tpl => {
+                const option = document.createElement('option');
+                option.value = tpl.template_name;
+                option.textContent = `${tpl.template_name}${tpl.is_default ? ' (默认)' : ''}`;
+                if (tpl.usage_count > 0) {
+                    option.textContent += ` [已用${tpl.usage_count}次]`;
+                }
+                select.appendChild(option);
+            });
+
+            return result.templates;
+        } catch (error) {
+            console.error('加载模板列表失败:', error);
+            showMessage('加载模板列表失败: ' + error.message, 'error');
+            return [];
+        }
+    }
+
+    /**
+     * 应用选中的模板
+     */
+    async function applyGridTemplate(templateName) {
+        if (!templateName) return;
+
+        try {
+            // 调用使用模板API（更新统计）
+            const response = await fetch(`${API_BASE_URL}/api/grid/template/use`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({template_name: templateName})
+            });
+
+            if (!response.ok) throw new Error('应用模板失败');
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '应用模板失败');
+
+            const tpl = result.template;
+
+            // 填充表单
+            document.getElementById('gridPriceInterval').value = (tpl.price_interval * 100).toFixed(2);
+            document.getElementById('gridPositionRatio').value = (tpl.position_ratio * 100).toFixed(2);
+            document.getElementById('gridCallbackRatio').value = (tpl.callback_ratio * 100).toFixed(2);
+            document.getElementById('gridDurationDays').value = tpl.duration_days;
+            document.getElementById('gridMaxDeviation').value = (tpl.max_deviation * 100).toFixed(0);
+            document.getElementById('gridTargetProfit').value = (tpl.target_profit * 100).toFixed(0);
+            document.getElementById('gridStopLoss').value = (tpl.stop_loss * 100).toFixed(0);
+
+            showMessage(`已应用模板: ${templateName}`, 'success');
+        } catch (error) {
+            console.error('应用模板失败:', error);
+            showMessage('应用模板失败: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * 显示保存模板对话框
+     */
+    function showSaveTemplateDialog() {
+        document.getElementById('saveTemplateDialog').classList.remove('hidden');
+        document.getElementById('saveTemplateName').value = '';
+        document.getElementById('saveTemplateDesc').value = '';
+        document.getElementById('saveTemplateDefault').checked = false;
+    }
+
+    /**
+     * 保存模板
+     */
+    async function saveGridTemplate() {
+        const name = document.getElementById('saveTemplateName').value.trim();
+        const desc = document.getElementById('saveTemplateDesc').value.trim();
+        const isDefault = document.getElementById('saveTemplateDefault').checked;
+
+        if (!name) {
+            showMessage('请输入模板名称', 'error');
+            return;
+        }
+
+        try {
+            // 收集当前配置
+            const templateData = {
+                template_name: name,
+                price_interval: parseFloat(document.getElementById('gridPriceInterval').value) / 100,
+                position_ratio: parseFloat(document.getElementById('gridPositionRatio').value) / 100,
+                callback_ratio: parseFloat(document.getElementById('gridCallbackRatio').value) / 100,
+                duration_days: parseInt(document.getElementById('gridDurationDays').value),
+                max_deviation: parseFloat(document.getElementById('gridMaxDeviation').value) / 100,
+                target_profit: parseFloat(document.getElementById('gridTargetProfit').value) / 100,
+                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100,
+                description: desc,
+                is_default: isDefault
+            };
+
+            const response = await fetch(`${API_BASE_URL}/api/grid/template/save`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(templateData)
+            });
+
+            if (!response.ok) throw new Error('保存模板失败');
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '保存模板失败');
+
+            showMessage(`模板"${name}"保存成功`, 'success');
+            document.getElementById('saveTemplateDialog').classList.add('hidden');
+
+            // 重新加载模板列表
+            await loadGridTemplates();
+        } catch (error) {
+            console.error('保存模板失败:', error);
+            showMessage('保存模板失败: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * 显示模板管理对话框
+     */
+    async function showManageTemplatesDialog() {
+        document.getElementById('manageTemplatesDialog').classList.remove('hidden');
+        await refreshTemplatesList();
+    }
+
+    /**
+     * 刷新模板列表
+     */
+    async function refreshTemplatesList() {
+        try {
+            const templates = await loadGridTemplates();
+            const container = document.getElementById('templatesList');
+
+            if (templates.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-4">暂无保存的模板</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+
+            templates.forEach(tpl => {
+                const item = document.createElement('div');
+                item.className = 'border border-gray-200 rounded p-3 flex items-center justify-between hover:bg-gray-50';
+
+                const info = document.createElement('div');
+                info.className = 'flex-1';
+
+                const title = document.createElement('div');
+                title.className = 'font-semibold';
+                title.textContent = tpl.template_name;
+                if (tpl.is_default) {
+                    const badge = document.createElement('span');
+                    badge.className = 'ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded';
+                    badge.textContent = '默认';
+                    title.appendChild(badge);
+                }
+
+                const details = document.createElement('div');
+                details.className = 'text-sm text-gray-600 mt-1';
+                details.innerHTML = `
+                    价格间隔: ${(tpl.price_interval * 100).toFixed(1)}% |
+                    档位比例: ${(tpl.position_ratio * 100).toFixed(0)}% |
+                    使用次数: ${tpl.usage_count || 0}
+                `;
+
+                if (tpl.description) {
+                    const desc = document.createElement('div');
+                    desc.className = 'text-sm text-gray-500 mt-1';
+                    desc.textContent = tpl.description;
+                    info.appendChild(title);
+                    info.appendChild(details);
+                    info.appendChild(desc);
+                } else {
+                    info.appendChild(title);
+                    info.appendChild(details);
+                }
+
+                const actions = document.createElement('div');
+                actions.className = 'flex gap-2';
+
+                if (!tpl.is_default) {
+                    const setDefaultBtn = document.createElement('button');
+                    setDefaultBtn.className = 'px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700';
+                    setDefaultBtn.textContent = '设为默认';
+                    setDefaultBtn.onclick = () => setDefaultTemplate(tpl.template_name);
+                    actions.appendChild(setDefaultBtn);
+                }
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700';
+                deleteBtn.textContent = '删除';
+                deleteBtn.onclick = () => deleteTemplate(tpl.template_name);
+                actions.appendChild(deleteBtn);
+
+                item.appendChild(info);
+                item.appendChild(actions);
+                container.appendChild(item);
+            });
+        } catch (error) {
+            console.error('刷新模板列表失败:', error);
+        }
+    }
+
+    /**
+     * 设置默认模板
+     */
+    async function setDefaultTemplate(templateName) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/grid/template/${templateName}/default`, {
+                method: 'PUT'
+            });
+
+            if (!response.ok) throw new Error('设置默认模板失败');
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '设置默认模板失败');
+
+            showMessage(`已将"${templateName}"设为默认模板`, 'success');
+            await refreshTemplatesList();
+        } catch (error) {
+            console.error('设置默认模板失败:', error);
+            showMessage('设置默认模板失败: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * 删除模板
+     */
+    async function deleteTemplate(templateName) {
+        if (!confirm(`确定删除模板"${templateName}"吗？`)) return;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/grid/template/${templateName}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) throw new Error('删除模板失败');
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '删除模板失败');
+
+            showMessage(`模板"${templateName}"已删除`, 'success');
+            await refreshTemplatesList();
+        } catch (error) {
+            console.error('删除模板失败:', error);
+            showMessage('删除模板失败: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * 初始化模板管理事件监听器
+     */
+    function initGridTemplateListeners() {
+        // 模板选择变化
+        document.getElementById('gridTemplateSelect').addEventListener('change', (e) => {
+            if (e.target.value) {
+                applyGridTemplate(e.target.value);
+            }
+        });
+
+        // 保存模板按钮
+        document.getElementById('gridSaveTemplateBtn').addEventListener('click', showSaveTemplateDialog);
+
+        // 管理模板按钮
+        document.getElementById('gridManageTemplatesBtn').addEventListener('click', showManageTemplatesDialog);
+
+        // 保存模板对话框
+        document.getElementById('saveTemplateConfirm').addEventListener('click', saveGridTemplate);
+        document.getElementById('saveTemplateCancel').addEventListener('click', () => {
+            document.getElementById('saveTemplateDialog').classList.add('hidden');
+        });
+
+        // 关闭模板管理对话框
+        document.getElementById('manageTemplatesClose').addEventListener('click', () => {
+            document.getElementById('manageTemplatesDialog').classList.add('hidden');
+        });
+    }
+
+    // 在页面加载时初始化模板功能
+    document.addEventListener('DOMContentLoaded', () => {
+        initGridTemplateListeners();
+        loadGridTemplates(); // 加载模板列表到下拉框
+    });
+
+    // ======================= 网格模板管理功能结束 =======================
+
     console.log("Adding event listeners and fetching initial data...");
     fetchAllData(); // 脚本运行时加载初始数据
 });
