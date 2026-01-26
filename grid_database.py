@@ -112,6 +112,8 @@ class DatabaseManager:
         cursor = self.conn.cursor()
 
         # 创建grid_trading_sessions表
+        # 优化: 移除UNIQUE(stock_code, status) ON CONFLICT REPLACE约束
+        # 改用应用层检查,确保一个股票只有一个active session
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grid_trading_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,9 +152,7 @@ class DatabaseManager:
                 stop_reason TEXT,
 
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-                UNIQUE(stock_code, status) ON CONFLICT REPLACE
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -241,12 +241,34 @@ class DatabaseManager:
         logger.info("网格交易表初始化完成")
 
     def create_grid_session(self, session_data: dict) -> int:
-        """创建网格会话"""
-        logger.debug(f"[GRID-DB] create_grid_session: 开始创建会话 stock_code={session_data.get('stock_code')}")
+        """创建网格会话
+
+        优化: 确保一个股票只有一个active session
+        1. 在创建前检查是否已存在active session
+        2. 如果存在,先停止旧session
+        3. 创建新session
+        """
+        stock_code = session_data.get('stock_code')
+        logger.debug(f"[GRID-DB] create_grid_session: 开始创建会话 stock_code={stock_code}")
         logger.debug(f"[GRID-DB] create_grid_session: session_data={session_data}")
 
         with self.lock:
             cursor = self.conn.cursor()
+
+            # 检查是否已存在active session
+            cursor.execute("""
+                SELECT id FROM grid_trading_sessions
+                WHERE stock_code=? AND status='active'
+            """, (stock_code,))
+            existing = cursor.fetchone()
+
+            if existing:
+                # 先停止旧的active session
+                old_session_id = existing[0]
+                logger.warning(f"[GRID-DB] create_grid_session: {stock_code}已有活跃session(id={old_session_id}), 先停止")
+                self.stop_grid_session(old_session_id, 'replaced')
+
+            # 创建新session
             cursor.execute("""
                 INSERT INTO grid_trading_sessions
                 (stock_code, status, center_price, current_center_price,
@@ -271,7 +293,7 @@ class DatabaseManager:
             ))
             self.conn.commit()
             session_id = cursor.lastrowid
-            logger.info(f"[GRID-DB] create_grid_session: 创建成功 session_id={session_id}, stock_code={session_data.get('stock_code')}")
+            logger.info(f"[GRID-DB] create_grid_session: 创建成功 session_id={session_id}, stock_code={stock_code}")
             return session_id
 
     def update_grid_session(self, session_id: int, updates: dict):
@@ -304,6 +326,24 @@ class DatabaseManager:
             """, ('stopped', datetime.now().isoformat(), reason, session_id))
             self.conn.commit()
             logger.debug(f"[GRID-DB] stop_grid_session: 停止完成 session_id={session_id}, affected_rows={cursor.rowcount}")
+
+    def get_all_grid_sessions(self) -> list:
+        """获取所有网格会话(包括stopped状态)
+
+        返回:
+            所有会话的列表,按创建时间倒序排列
+        """
+        logger.debug(f"[GRID-DB] get_all_grid_sessions: 查询所有会话")
+
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_trading_sessions
+                ORDER BY start_time DESC
+            """)
+            results = cursor.fetchall()
+            logger.debug(f"[GRID-DB] get_all_grid_sessions: 查询到 {len(results)} 个会话")
+            return results
 
     def get_active_grid_sessions(self) -> list:
         """获取所有活跃的网格会话"""

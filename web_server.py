@@ -1448,7 +1448,10 @@ def stop_grid_trading(session_id):
 
 @app.route('/api/grid/sessions', methods=['GET'])
 def get_grid_sessions():
-    """获取所有网格会话"""
+    """获取所有网格会话(包括stopped状态)
+
+    优化: 返回所有会话,包括内存中的active sessions和数据库中的stopped sessions
+    """
     try:
         position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
@@ -1462,6 +1465,8 @@ def get_grid_sessions():
             })
 
         sessions = []
+
+        # 1. 从内存获取active sessions
         for stock_code, session in position_manager.grid_manager.sessions.items():
             sessions.append({
                 'session_id': session.id,
@@ -1475,8 +1480,36 @@ def get_grid_sessions():
                 'profit_ratio': session.get_profit_ratio(),
                 'deviation_ratio': session.get_deviation_ratio(),
                 'start_time': session.start_time.isoformat() if session.start_time else None,
-                'end_time': session.end_time.isoformat() if session.end_time else None
+                'end_time': session.end_time.isoformat() if session.end_time else None,
+                'stop_time': session.stop_time.isoformat() if session.stop_time else None,
+                'stop_reason': session.stop_reason
             })
+
+        # 2. 从数据库获取所有sessions(避免重复添加active sessions)
+        db_sessions = position_manager.grid_manager.db.get_all_grid_sessions()
+        for session_data in db_sessions:
+            # 检查是否已在列表中(避免重复)
+            if not any(s['session_id'] == session_data['id'] for s in sessions):
+                # 将sqlite3.Row转换为字典以支持.get()方法
+                session_dict = dict(session_data)
+                sessions.append({
+                    'session_id': session_dict['id'],
+                    'stock_code': session_dict['stock_code'],
+                    'status': session_dict['status'],
+                    'center_price': session_dict['center_price'],
+                    'current_center_price': session_dict['current_center_price'],
+                    'trade_count': session_dict['trade_count'],
+                    'buy_count': session_dict['buy_count'],
+                    'sell_count': session_dict['sell_count'],
+                    # 计算盈亏率
+                    'profit_ratio': (session_dict['total_sell_amount'] - session_dict['total_buy_amount']) / session_dict['total_buy_amount'] if session_dict['total_buy_amount'] > 0 else 0,
+                    # 计算偏离度
+                    'deviation_ratio': abs(session_dict['current_center_price'] - session_dict['center_price']) / session_dict['center_price'] if session_dict['center_price'] > 0 else 0,
+                    'start_time': session_dict['start_time'],
+                    'end_time': session_dict['end_time'],
+                    'stop_time': session_dict.get('stop_time'),
+                    'stop_reason': session_dict.get('stop_reason')
+                })
 
         return jsonify({
             'success': True,
