@@ -37,12 +37,32 @@ app = Flask(__name__, static_folder=webpage_dir, static_url_path='')
 CORS(app)
 
 # 获取各个模块的实例
+# 注意: position_manager通过set_position_manager由main.py传入
+# 原因: 单例模式在多线程+Flask debug环境下不可靠
 data_manager = get_data_manager()
 indicator_calculator = get_indicator_calculator()
-position_manager = get_position_manager()
 trading_executor = get_trading_executor()
 trading_strategy = get_trading_strategy()
 config_manager = get_config_manager()
+
+# 全局变量，用于存储main.py传入的position_manager实例
+_position_manager_instance = None
+
+def set_position_manager(pm):
+    """设置position_manager实例（由main.py调用）"""
+    global _position_manager_instance
+    _position_manager_instance = pm
+    logger.info(f"[DEBUG] set_position_manager: 设置position_manager id={id(pm)}")
+
+def get_position_manager_instance():
+    """获取position_manager实例（供API端点使用）"""
+    global _position_manager_instance
+    if _position_manager_instance is None:
+        # 如果未设置，回退到单例模式
+        logger.warning("[DEBUG] _position_manager_instance为None，使用get_position_manager()单例")
+        return get_position_manager()
+    logger.debug(f"[DEBUG] get_position_manager_instance: 返回position_manager id={id(_position_manager_instance)}")
+    return _position_manager_instance
 
 # 实时推送的数据
 realtime_data = {
@@ -74,6 +94,9 @@ def serve_static(filename):
 def connection_status():
     """返回API连接状态 - 简化版本,避免阻塞"""
     try:
+        # 使用传入的position_manager实例
+        position_manager = get_position_manager_instance()
+
         # 直接检查对象存在性,不调用任何QMT API避免阻塞
         is_connected = False
         if hasattr(position_manager, 'qmt_trader') and position_manager.qmt_trader:
@@ -99,6 +122,9 @@ def connection_status():
 def get_status():
     """获取系统状态 - 增加超时保护"""
     try:
+        # 动态获取position_manager以确保grid_manager已初始化
+        position_manager = get_position_manager_instance()
+
         # 从 position_manager 获取账户信息(使用超时保护)
         def get_account_data():
             return position_manager.get_account_info() or {}
@@ -167,6 +193,9 @@ def get_status():
 def get_positions():
     """获取持仓信息 - 增加版本号支持"""
     try:
+        # 动态获取position_manager以确保grid_manager已初始化
+        position_manager = get_position_manager_instance()
+
         # ⭐ 性能优化: 获取客户端版本号
         # 🔧 修复: 默认值改为-1,确保首次请求返回完整数据
         client_version = request.args.get('version', -1, type=int)
@@ -407,7 +436,7 @@ def save_config():
                 setattr(config, 'ENABLE_SIMULATION_MODE', new_simulation_mode)
 
                 # 模式变化时重新初始化内存数据库
-                position_manager = get_position_manager()
+                position_manager = get_position_manager_instance()
                 # 创建新的内存连接
                 position_manager.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
                 position_manager._create_memory_table()
@@ -809,6 +838,9 @@ def import_data():
 def api_initialize_positions():
     """初始化持仓数据的API端点"""
     try:
+        # 动态获取position_manager以确保grid_manager已初始化
+        position_manager = get_position_manager_instance()
+
         result = position_manager.initialize_all_positions_data()
         return jsonify(result)
         
@@ -1025,6 +1057,9 @@ def execute_buy():
 def update_holding_params():
     """更新持仓参数"""
     try:
+        # 动态获取position_manager以确保grid_manager已初始化
+        position_manager = get_position_manager_instance()
+
         data = request.json
         stock_code = data.get('stock_code')
         profit_triggered = data.get('profit_triggered')
@@ -1070,6 +1105,8 @@ def update_holding_params():
 @app.route('/api/sse', methods=['GET'])
 def sse():
     """提供Server-Sent Events流 - 增强版"""
+    # 动态获取position_manager以确保grid_manager已初始化
+    position_manager = get_position_manager_instance()
     def event_stream():
         last_positions_version = 0
         prev_data = None
@@ -1134,6 +1171,9 @@ def sse():
 def get_positions_all():
     """获取所有持仓信息 - 增加版本号支持"""
     try:
+        # 动态获取position_manager以确保grid_manager已初始化
+        position_manager = get_position_manager_instance()
+
         # 获取客户端版本号
         client_version = request.args.get('version', 0, type=int)
         
@@ -1175,6 +1215,8 @@ def get_positions_all():
 
 def push_realtime_data():
     """推送实时数据的线程函数"""
+    # 动态获取position_manager以确保grid_manager已初始化
+    position_manager = get_position_manager_instance()
     global stop_push_flag
 
     while not stop_push_flag:
@@ -1286,12 +1328,34 @@ def start_grid_trading():
         stock_code = normalize_stock_code(stock_code)
 
         # 获取网格管理器
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
+
+        # DEBUG: 详细检查grid_manager状态
+        pm_id = id(position_manager)
+        logger.info(f"[DEBUG] position_manager id: {pm_id}")
+        logger.info(f"[DEBUG] position_manager类型: {type(position_manager)}")
+        logger.info(f"[DEBUG] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
+        logger.info(f"[DEBUG] grid_manager值: {position_manager.grid_manager}")
+        logger.info(f"[DEBUG] grid_manager类型: {type(position_manager.grid_manager) if position_manager.grid_manager else 'None'}")
+
         if not position_manager.grid_manager:
+            logger.error("[DEBUG] grid_manager为None，无法启动网格交易")
+            logger.error(f"[DEBUG] 检查position_manager.__dict__.keys(): {list(position_manager.__dict__.keys()) if hasattr(position_manager, '__dict__') else 'N/A'}")
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        logger.info(f"[DEBUG] grid_manager检查通过，继续处理请求")
 
         # 从嵌套的config对象中提取参数（兼容前端发送的数据结构）
         frontend_config = data.get('config', {})
+
+        # DEBUG: 详细的请求数据日志
+        logger.info(f"[DEBUG] 收到的原始data keys: {list(data.keys())}")
+        logger.info(f"[DEBUG] frontend_config存在: {bool(frontend_config)}")
+        if frontend_config:
+            logger.info(f"[DEBUG] frontend_config keys: {list(frontend_config.keys())}")
+            logger.info(f"[DEBUG] frontend_config内容: {frontend_config}")
+        else:
+            logger.warning("[DEBUG] frontend_config为空，将使用默认值")
 
         # 调试日志
         logger.info(f"启动网格交易请求: stock_code={stock_code}, has_config={bool(frontend_config)}")
@@ -1313,14 +1377,23 @@ def start_grid_trading():
 
         logger.debug(f"解析后的user_config: {user_config}")
 
+        # DEBUG: 参数校验前日志
+        logger.info(f"[DEBUG] 开始参数校验...")
+        logger.info(f"[DEBUG] user_config['max_investment']: {user_config.get('max_investment')} (type: {type(user_config.get('max_investment'))})")
+
         # 参数校验
         is_valid, result = validate_grid_config(user_config)
+
+        logger.info(f"[DEBUG] 校验结果: is_valid={is_valid}")
         if not is_valid:
+            logger.error(f"[DEBUG] 参数校验失败，错误详情: {result}")
             return jsonify({
                 'success': False,
                 'error': '参数校验失败',
                 'details': result
             }), 400
+
+        logger.info(f"[DEBUG] 参数校验通过，validated_config: {result}")
 
         # 启动网格会话（从校验后的数据中移除stock_code）
         validated_config = {k: v for k, v in result.items() if k != 'stock_code'}
@@ -1354,7 +1427,7 @@ def start_grid_trading():
 def stop_grid_trading(session_id):
     """停止网格交易"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1377,7 +1450,7 @@ def stop_grid_trading(session_id):
 def get_grid_sessions():
     """获取所有网格会话"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             # 返回200和空列表，而不是400错误
             # 这符合RESTful最佳实践："没有数据"不是错误
@@ -1420,7 +1493,7 @@ def get_grid_sessions():
 def get_grid_session_detail(session_id):
     """获取网格会话详情"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1489,7 +1562,7 @@ def get_grid_session_detail(session_id):
 def get_grid_trades(session_id):
     """获取网格交易历史"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1521,7 +1594,7 @@ def get_grid_trades(session_id):
 def get_grid_status(stock_code):
     """获取网格实时状态"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1576,7 +1649,7 @@ def get_grid_status(stock_code):
 def get_grid_templates():
     """获取所有网格配置模板"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1597,7 +1670,7 @@ def get_grid_templates():
 def get_grid_template(template_name):
     """获取指定网格配置模板"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1626,7 +1699,7 @@ def save_grid_template():
         if not template_name:
             return jsonify({'success': False, 'error': '缺少template_name参数'}), 400
 
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1672,7 +1745,7 @@ def save_grid_template():
 def delete_grid_template(template_name):
     """删除网格配置模板"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1698,7 +1771,7 @@ def use_grid_template():
         if not template_name:
             return jsonify({'success': False, 'error': '缺少template_name参数'}), 400
 
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1723,7 +1796,7 @@ def use_grid_template():
 def get_default_grid_template():
     """获取默认网格配置模板"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1750,7 +1823,7 @@ def get_default_grid_template():
 def set_default_grid_template(template_name):
     """设置默认网格配置模板"""
     try:
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         if not position_manager.db_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
@@ -1778,7 +1851,7 @@ def get_grid_config():
     """获取网格交易默认配置"""
     try:
         # 获取持仓总市值
-        position_manager = get_position_manager()
+        position_manager = get_position_manager_instance()
         positions = position_manager.get_all_positions()
         total_market_value = 0
         if not positions.empty:
@@ -1827,9 +1900,20 @@ def shutdown_web_server():
 
     logger.info("Web服务器已关闭")
 
-def start_web_server():
-    """启动Web服务器"""
+def start_web_server(position_manager=None):
+    """启动Web服务器
+
+    Args:
+        position_manager: 已初始化的position_manager实例（从main.py传入）
+    """
     logger.info("正在启动Web服务器...")
+
+    # 设置position_manager实例（如果提供了）
+    if position_manager is not None:
+        set_position_manager(position_manager)
+        logger.info(f"[DEBUG] start_web_server: 已设置position_manager id={id(position_manager)}")
+    else:
+        logger.warning("[DEBUG] start_web_server: 未提供position_manager参数")
 
     # 🟢 20251219新增: 启动时同步配置状态
     sync_auto_trading_status()

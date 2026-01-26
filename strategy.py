@@ -765,6 +765,8 @@ class TradingStrategy:
             if config.ENABLE_GRID_TRADING and self.position_manager.grid_manager:
                 # 从信号队列中获取网格信号
                 pending_signals = self.position_manager.get_pending_signals()
+                logger.debug(f"[GRID-STRATEGY] 检查网格信号: pending_signals中有 {len(pending_signals)} 个待处理信号")
+
                 if stock_code in pending_signals:
                     signal_data = pending_signals[stock_code]
                     signal_type = signal_data['type']
@@ -772,22 +774,23 @@ class TradingStrategy:
 
                     # 检查是否为网格交易信号
                     if signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
-                        logger.info(f"{stock_code} 检测到网格交易信号: {signal_type}")
+                        logger.info(f"[GRID-STRATEGY] {stock_code} 检测到网格交易信号: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 价格={signal_info.get('price', 'N/A')}")
 
                         # 只有在启用自动交易时才执行
                         if config.ENABLE_AUTO_TRADING:
                             try:
+                                logger.debug(f"[GRID-STRATEGY] 开始执行网格交易: {stock_code}, signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}")
                                 success = self.position_manager.grid_manager.execute_grid_trade(signal_info)
                                 if success:
                                     self.position_manager.mark_signal_processed(stock_code)
-                                    logger.info(f"{stock_code} 网格交易执行成功")
+                                    logger.info(f"[GRID-STRATEGY] {stock_code} 网格交易执行成功: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}")
                                     return
                                 else:
-                                    logger.error(f"{stock_code} 网格交易执行失败")
+                                    logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行失败: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}")
                             except Exception as e:
-                                logger.error(f"{stock_code} 网格交易执行异常: {str(e)}")
+                                logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行异常: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 错误={str(e)}")
                         else:
-                            logger.info(f"{stock_code} 检测到网格信号，但自动交易已关闭")
+                            logger.info(f"[GRID-STRATEGY] {stock_code} 检测到网格信号(signal_type={signal_type})，但自动交易已关闭，跳过执行")
                             self.position_manager.mark_signal_processed(stock_code)
 
             # 5. 检查技术指标买入信号

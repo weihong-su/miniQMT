@@ -58,8 +58,8 @@ class GridConfigSchema(Schema):
     def validate_profit_and_loss(self, data, **kwargs):
         """验证目标盈利和止损的合理性"""
         if 'target_profit' in data and 'stop_loss' in data:
-            if data['target_profit'] <= abs(data['stop_loss']):
-                raise ValidationError('目标盈利应大于止损幅度', 'target_profit')
+            if data['target_profit'] < abs(data['stop_loss']):
+                raise ValidationError('目标盈利应大于或等于止损幅度', 'target_profit')
 
 
 class GridTemplateSchema(Schema):
@@ -124,10 +124,21 @@ def validate_request(schema_class, data):
     """
     schema = schema_class()
 
+    # DEBUG: 校验前的详细日志
+    logger.info(f"[DEBUG validate_request] 开始校验...")
+    logger.info(f"[DEBUG validate_request] Schema类: {schema_class.__name__}")
+    logger.info(f"[DEBUG validate_request] 输入data keys: {list(data.keys())}")
+    logger.info(f"[DEBUG validate_request] 输入data内容: {data}")
+    logger.info(f"[DEBUG validate_request] max_investment值: {data.get('max_investment')} (type: {type(data.get('max_investment'))})")
+    logger.info(f"[DEBUG validate_request] max_investment是否为None: {data.get('max_investment') is None}")
+
     try:
         validated_data = schema.load(data)
+        logger.info(f"[DEBUG validate_request] 校验通过！validated_data: {validated_data}")
         return True, validated_data
     except ValidationError as e:
+        logger.error(f"[DEBUG validate_request] 校验失败！错误消息: {e.messages}")
+        logger.error(f"[DEBUG validate_request] ValidationError详情: {str(e)}")
         logger.warning(f"参数校验失败: {e.messages}")
         return False, e.messages
 

@@ -106,12 +106,20 @@ def start_log_cleanup_thread():
         log_thread.start()
         threads.append(("log_thread", lambda: None))  # 没有停止函数，依赖于daemon=True
 
-def start_web_server_thread():
-    """启动Web服务器线程"""
+def start_web_server_thread(position_manager):
+    """启动Web服务器线程
+
+    Args:
+        position_manager: 已初始化的position_manager实例
+    """
     logger.info("启动Web服务器线程")
-    web_thread = threading.Thread(target=start_web_server)
+    logger.info(f"[DEBUG main.py] 传入Web服务器的position_manager id: {id(position_manager)}")
+
+    # 创建线程并传入position_manager
+    web_thread = threading.Thread(target=lambda: start_web_server(position_manager))
     web_thread.daemon = True
     web_thread.start()
+
     # 使用shutdown_web_server进行资源清理
     from web_server import shutdown_web_server
     threads.append(("web_thread", shutdown_web_server))
@@ -207,10 +215,16 @@ def main():
 
         # 初始化网格交易管理器
         logger.info(f"检查网格交易配置: ENABLE_GRID_TRADING = {config.ENABLE_GRID_TRADING}")
+        logger.info(f"[DEBUG main.py] position_manager id: {id(position_manager)}")
+        logger.info(f"[DEBUG main.py] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
+
         if config.ENABLE_GRID_TRADING:
             try:
                 logger.info("初始化网格交易管理器")
+                logger.info(f"[DEBUG main.py] 调用init_grid_manager前，grid_manager={getattr(position_manager, 'grid_manager', 'NO_ATTR')}")
                 position_manager.init_grid_manager(trading_executor)
+                logger.info(f"[DEBUG main.py] 调用init_grid_manager后，grid_manager={position_manager.grid_manager}")
+                logger.info(f"[DEBUG main.py] grid_manager类型: {type(position_manager.grid_manager)}")
                 logger.info("✓ 网格交易管理器初始化完成")
             except Exception as e:
                 logger.error(f"网格交易管理器初始化失败: {str(e)}")
@@ -276,8 +290,8 @@ def main():
                 logger.warning(f"⚠️ 卖出监控器失败:{str(e)[:30]}")
                 logger.info("系统继续运行")
 
-        # 最后启动Web服务器
-        start_web_server_thread()
+        # 最后启动Web服务器，传入已初始化的position_manager
+        start_web_server_thread(position_manager)
 
         # 等待退出信号
         logger.info("✅ 系统启动完成")

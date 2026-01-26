@@ -242,6 +242,9 @@ class DatabaseManager:
 
     def create_grid_session(self, session_data: dict) -> int:
         """创建网格会话"""
+        logger.debug(f"[GRID-DB] create_grid_session: 开始创建会话 stock_code={session_data.get('stock_code')}")
+        logger.debug(f"[GRID-DB] create_grid_session: session_data={session_data}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -267,10 +270,14 @@ class DatabaseManager:
                 session_data['end_time']
             ))
             self.conn.commit()
-            return cursor.lastrowid
+            session_id = cursor.lastrowid
+            logger.info(f"[GRID-DB] create_grid_session: 创建成功 session_id={session_id}, stock_code={session_data.get('stock_code')}")
+            return session_id
 
     def update_grid_session(self, session_id: int, updates: dict):
         """更新网格会话"""
+        logger.debug(f"[GRID-DB] update_grid_session: session_id={session_id}, updates={updates}")
+
         with self.lock:
             set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
             values = list(updates.values()) + [session_id]
@@ -282,9 +289,12 @@ class DatabaseManager:
                 WHERE id=?
             """, values)
             self.conn.commit()
+            logger.debug(f"[GRID-DB] update_grid_session: 更新完成 session_id={session_id}, affected_rows={cursor.rowcount}")
 
     def stop_grid_session(self, session_id: int, reason: str):
         """停止网格会话"""
+        logger.info(f"[GRID-DB] stop_grid_session: session_id={session_id}, reason={reason}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -293,9 +303,12 @@ class DatabaseManager:
                 WHERE id=?
             """, ('stopped', datetime.now().isoformat(), reason, session_id))
             self.conn.commit()
+            logger.debug(f"[GRID-DB] stop_grid_session: 停止完成 session_id={session_id}, affected_rows={cursor.rowcount}")
 
     def get_active_grid_sessions(self) -> list:
         """获取所有活跃的网格会话"""
+        logger.debug(f"[GRID-DB] get_active_grid_sessions: 查询活跃会话")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -303,10 +316,14 @@ class DatabaseManager:
                 WHERE status='active'
                 ORDER BY start_time DESC
             """)
-            return cursor.fetchall()
+            results = cursor.fetchall()
+            logger.debug(f"[GRID-DB] get_active_grid_sessions: 查询到 {len(results)} 个活跃会话")
+            return results
 
     def get_grid_session_by_stock(self, stock_code: str):
         """获取指定股票的活跃网格会话"""
+        logger.debug(f"[GRID-DB] get_grid_session_by_stock: stock_code={stock_code}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -315,10 +332,16 @@ class DatabaseManager:
                 LIMIT 1
             """, (stock_code,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            result = dict(row) if row else None
+            logger.debug(f"[GRID-DB] get_grid_session_by_stock: stock_code={stock_code}, found={result is not None}")
+            return result
 
     def record_grid_trade(self, trade_data: dict) -> int:
         """记录网格交易"""
+        logger.info(f"[GRID-DB] record_grid_trade: 记录交易 session_id={trade_data.get('session_id')}, "
+                   f"stock_code={trade_data.get('stock_code')}, trade_type={trade_data.get('trade_type')}")
+        logger.debug(f"[GRID-DB] record_grid_trade: trade_data={trade_data}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -344,10 +367,15 @@ class DatabaseManager:
                 trade_data.get('grid_center_after')
             ))
             self.conn.commit()
-            return cursor.lastrowid
+            trade_id = cursor.lastrowid
+            logger.info(f"[GRID-DB] record_grid_trade: 记录成功 id={trade_id}, session_id={trade_data.get('session_id')}, "
+                       f"trade_type={trade_data.get('trade_type')}, volume={trade_data.get('volume')}, amount={trade_data.get('amount')}")
+            return trade_id
 
     def get_grid_trades(self, session_id: int, limit=50, offset=0) -> list:
         """获取网格交易历史"""
+        logger.debug(f"[GRID-DB] get_grid_trades: session_id={session_id}, limit={limit}, offset={offset}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -356,10 +384,14 @@ class DatabaseManager:
                 ORDER BY trade_time DESC
                 LIMIT ? OFFSET ?
             """, (session_id, limit, offset))
-            return [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in cursor.fetchall()]
+            logger.debug(f"[GRID-DB] get_grid_trades: session_id={session_id}, 查询到 {len(results)} 条记录")
+            return results
 
     def get_grid_session(self, session_id: int):
         """获取指定网格会话"""
+        logger.debug(f"[GRID-DB] get_grid_session: session_id={session_id}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -367,16 +399,22 @@ class DatabaseManager:
                 WHERE id=?
             """, (session_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            result = dict(row) if row else None
+            logger.debug(f"[GRID-DB] get_grid_session: session_id={session_id}, found={result is not None}")
+            return result
 
     def get_grid_trade_count(self, session_id: int) -> int:
         """获取网格交易总数"""
+        logger.debug(f"[GRID-DB] get_grid_trade_count: session_id={session_id}")
+
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute("""
                 SELECT COUNT(*) FROM grid_trades WHERE session_id=?
             """, (session_id,))
-            return cursor.fetchone()[0]
+            count = cursor.fetchone()[0]
+            logger.debug(f"[GRID-DB] get_grid_trade_count: session_id={session_id}, count={count}")
+            return count
 
     # ======================= 网格配置模板管理 =======================
 

@@ -77,6 +77,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 参数范围
     let paramRanges = {};
 
+    // 网格交易状态存储
+    let gridTradingStatus = {};  // 格式: { stock_code: { sessionId, status, config, lastUpdate } }
+
     // --- DOM Element References ---
     const elements = {
         messageArea: document.getElementById('messageArea'),
@@ -1177,6 +1180,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const allChecked = Array.from(checkboxes).every(cb => cb.checked);
                 elements.selectAllHoldings.checked = allChecked;
             });
+
+            // 初始化时应用当前网格交易状态的样式
+            const stockCode = checkbox.dataset.stockCode;
+            if (gridTradingStatus[stockCode]) {
+                const status = gridTradingStatus[stockCode].status;
+                updateGridCheckboxStyle(stockCode, status);
+            }
         });
     }
 
@@ -1362,6 +1372,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.status === 'success' && Array.isArray(data.data)) {
                 updateHoldingsTable(data.data);
                 lastDataUpdateTimestamps.holdings = Date.now();
+
+                // 更新网格交易状态
+                await updateAllGridTradingStatus();
             } else {
                 throw new Error(data.message || '数据格式错误');
             }
@@ -2085,6 +2098,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
+     * 更新网格交易checkbox样式
+     * @param {string} stockCode - 股票代码
+     * @param {string} status - 状态: 'active'(绿色), 'paused'(黄色), 'stopped'(红色), 'none'(默认)
+     */
+    function updateGridCheckboxStyle(stockCode, status) {
+        const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+        if (!checkbox) return;
+
+        // 移除所有状态类
+        checkbox.classList.remove('grid-active', 'grid-paused', 'grid-stopped');
+
+        // 根据状态添加类和样式
+        switch(status) {
+            case 'active':
+                checkbox.classList.add('grid-active');
+                checkbox.style.backgroundColor = '#22c55e';  // 绿色
+                checkbox.style.borderColor = '#16a34a';
+                break;
+            case 'paused':
+                checkbox.classList.add('grid-paused');
+                checkbox.style.backgroundColor = '#eab308';  // 黄色
+                checkbox.style.borderColor = '#ca8a04';
+                break;
+            case 'stopped':
+                checkbox.classList.add('grid-stopped');
+                checkbox.style.backgroundColor = '#ef4444';  // 红色
+                checkbox.style.borderColor = '#dc2626';
+                break;
+            default:
+                // 默认状态，移除自定义样式
+                checkbox.style.backgroundColor = '';
+                checkbox.style.borderColor = '';
+        }
+    }
+
+    /**
      * 启动网格交易会话
      * @param {string} stockCode - 股票代码
      * @param {number} centerPrice - 中心价格
@@ -2148,6 +2197,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             showMessage(`网格交易启动成功! 会话ID: ${result.session_id}`, 'success');
 
+            // 保存网格交易状态
+            gridTradingStatus[stockCode] = {
+                sessionId: result.session_id,
+                status: 'active',  // active, paused, stopped
+                config: result.config,
+                lastUpdate: Date.now()
+            };
+
+            // 更新checkbox状态
+            updateGridCheckboxStyle(stockCode, 'active');
+
             // 关闭对话框
             document.getElementById('gridConfigDialog').classList.add('hidden');
 
@@ -2205,6 +2265,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             showMessage(`网格交易已停止 (会话ID: ${session.session_id})`, 'success');
 
+            // 清除网格交易状态
+            delete gridTradingStatus[stockCode];
+
+            // 更新checkbox为停止状态（红色）
+            updateGridCheckboxStyle(stockCode, 'stopped');
+
             // 刷新持仓数据
             await fetchHoldings();
 
@@ -2213,6 +2279,56 @@ document.addEventListener('DOMContentLoaded', () => {
             showMessage('停止网格交易失败: ' + error.message, 'error');
             // 刷新持仓数据以同步状态
             await fetchHoldings();
+        }
+    }
+
+    /**
+     * 更新所有网格交易状态
+     * 定期从服务器获取最新状态并更新UI
+     */
+    async function updateAllGridTradingStatus() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/grid/sessions`);
+            if (!response.ok) {
+                console.warn('获取网格会话列表失败');
+                return;
+            }
+
+            const data = await response.json();
+            if (!data.success || !Array.isArray(data.sessions)) {
+                return;
+            }
+
+            // 更新每个活跃会话的状态
+            data.sessions.forEach(session => {
+                if (session.status === 'active') {
+                    gridTradingStatus[session.stock_code] = {
+                        sessionId: session.session_id,
+                        status: 'active',
+                        config: session.config,
+                        lastUpdate: Date.now()
+                    };
+                    updateGridCheckboxStyle(session.stock_code, 'active');
+                }
+            });
+
+            // 检查是否有session被停止（存在于本地状态但不在服务器响应中）
+            Object.keys(gridTradingStatus).forEach(stockCode => {
+                const localSession = gridTradingStatus[stockCode];
+                const serverSession = data.sessions.find(s => s.stock_code === stockCode);
+
+                // 如果本地有状态但服务器没有对应会话，说明已停止
+                if (!serverSession || serverSession.status !== 'active') {
+                    updateGridCheckboxStyle(stockCode, 'stopped');
+                    // 可以选择删除本地状态或标记为stopped
+                    if (!serverSession) {
+                        delete gridTradingStatus[stockCode];
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('更新网格交易状态失败:', error);
         }
     }
 
