@@ -167,3 +167,38 @@ def validate_grid_template(data):
         tuple: (is_valid, result_or_errors)
     """
     return validate_request(GridTemplateSchema, data)
+
+
+def validate_grid_config_simple(user_config: dict) -> dict:
+    """
+    网格配置参数校验(简化版,供Web API使用)
+
+    Args:
+        user_config: 用户配置字典,参数已转换为小数格式(非百分比)
+
+    Returns:
+        {
+            'valid': True/False,
+            'errors': [...]  # 错误列表
+        }
+
+    注意: 此函数返回格式与validate_grid_config不同,更符合Web API使用习惯
+    """
+    # 调用原有的marshmallow校验
+    is_valid, result_or_errors = validate_grid_config(user_config)
+
+    if is_valid:
+        return {'valid': True, 'errors': []}
+    else:
+        # 将marshmallow的错误格式转换为简单的字符串列表
+        errors = []
+        if isinstance(result_or_errors, dict):
+            for field, messages in result_or_errors.items():
+                if isinstance(messages, list):
+                    errors.extend([f"{field}: {msg}" for msg in messages])
+                else:
+                    errors.append(f"{field}: {messages}")
+        else:
+            errors = [str(result_or_errors)]
+
+        return {'valid': False, 'errors': errors}

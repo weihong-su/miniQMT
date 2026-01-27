@@ -196,6 +196,14 @@ def get_positions():
         # 动态获取position_manager以确保grid_manager已初始化
         position_manager = get_position_manager_instance()
 
+        # ⭐ 确保grid_manager已初始化(用于Web界面重启的情况)
+        if not position_manager.grid_manager and config.ENABLE_GRID_TRADING:
+            try:
+                position_manager.init_grid_manager(trading_executor)
+                logger.info("[API] 已在API调用中初始化grid_manager")
+            except Exception as e:
+                logger.error(f"[API] 初始化grid_manager失败: {str(e)}")
+
         # ⭐ 性能优化: 获取客户端版本号
         # 🔧 修复: 默认值改为-1,确保首次请求返回完整数据
         client_version = request.args.get('version', -1, type=int)
@@ -229,11 +237,33 @@ def get_positions():
             stock_code = pos['stock_code']
             realtime_data['positions'][stock_code] = pos
 
+        # ⭐ 新增: 为每个持仓添加网格会话状态
+        grid_manager = getattr(position_manager, 'grid_manager', None)
+        if grid_manager:
+            # 为positions添加grid_session_active字段
+            for pos in positions:
+                stock_code = pos.get('stock_code')
+                session = grid_manager.sessions.get(stock_code)
+                pos['grid_session_active'] = (session is not None and session.status == 'active')
+
+            # 为positions_all添加grid_session_active字段
+            for pos in realtime_data['positions_all']:
+                stock_code = pos.get('stock_code')
+                session = grid_manager.sessions.get(stock_code)
+                pos['grid_session_active'] = (session is not None and session.status == 'active')
+
         # 获取所有持仓数据
         positions_all_df = position_manager.get_all_positions_with_all_fields()
         # 修复NaN序列化问题: 将NaN替换为None以生成有效的JSON
         positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
         realtime_data['positions_all'] = positions_all_df.to_dict('records')
+
+        # ⭐ 为positions_all添加grid_session_active字段 (必须在to_dict之后)
+        if grid_manager:
+            for pos in realtime_data['positions_all']:
+                stock_code = pos.get('stock_code')
+                session = grid_manager.sessions.get(stock_code)
+                pos['grid_session_active'] = (session is not None and session.status == 'active')
 
         response = make_response(jsonify({
             'status': 'success',
@@ -1194,7 +1224,19 @@ def get_positions_all():
         positions_all_df = position_manager.get_all_positions_with_all_fields()
         positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
         positions_all = positions_all_df.to_dict('records')
-        
+
+        # ⭐ 为positions_all添加grid_session_active字段 (必须在to_dict之后)
+        grid_manager = position_manager.grid_manager
+        if grid_manager:
+            for pos in positions_all:
+                stock_code = pos.get('stock_code')
+                session = grid_manager.sessions.get(stock_code)
+                pos['grid_session_active'] = (session is not None and session.status == 'active')
+        else:
+            # 如果grid_manager未初始化，所有股票设为False
+            for pos in positions_all:
+                pos['grid_session_active'] = False
+
         # 更新实时数据
         realtime_data['positions_all'] = positions_all
 
@@ -1232,8 +1274,23 @@ def push_realtime_data():
                 # 处理NaN值
                 positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
 
+                # 转换为字典列表
+                positions_all = positions_all_df.to_dict('records')
+
+                # ⭐ 为positions_all添加grid_session_active字段 (必须在to_dict之后)
+                grid_manager = position_manager.grid_manager
+                if grid_manager:
+                    for pos in positions_all:
+                        stock_code = pos.get('stock_code')
+                        session = grid_manager.sessions.get(stock_code)
+                        pos['grid_session_active'] = (session is not None and session.status == 'active')
+                else:
+                    # 如果grid_manager未初始化，所有股票设为False
+                    for pos in positions_all:
+                        pos['grid_session_active'] = False
+
                 # 更新实时数据
-                realtime_data['positions_all'] = positions_all_df.to_dict('records')
+                realtime_data['positions_all'] = positions_all
 
             # 休眠间隔
             time.sleep(3)
@@ -1363,6 +1420,7 @@ def start_grid_trading():
             logger.debug(f"前端config参数: {frontend_config}")
 
         # 用户配置（优先使用config对象中的值，否则使用顶层值）
+        # 注意：前端发送的是百分比格式（已经除以100），直接使用
         user_config = {
             'stock_code': stock_code,
             'price_interval': frontend_config.get('price_interval') or data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
@@ -1395,13 +1453,25 @@ def start_grid_trading():
 
         logger.info(f"[DEBUG] 参数校验通过，validated_config: {result}")
 
+        # 检查是否有旧session(用于返回警告消息)
+        grid_manager = position_manager.grid_manager
+        old_session = grid_manager.sessions.get(stock_code)
+        had_old_session = old_session is not None
+        old_session_id = old_session.id if old_session else None
+
         # 启动网格会话（从校验后的数据中移除stock_code）
         validated_config = {k: v for k, v in result.items() if k != 'stock_code'}
-        session = position_manager.grid_manager.start_grid_session(stock_code, validated_config)
+        session = grid_manager.start_grid_session(stock_code, validated_config)
+
+        # 触发前端数据更新
+        position_manager._increment_data_version()
 
         return jsonify({
             'success': True,
             'session_id': session.id,
+            'warning': '已自动停止旧的网格会话' if had_old_session else None,
+            'old_session_id': old_session_id,
+            'message': f'网格交易会话启动成功 (ID: {session.id})',
             'config': {
                 'stock_code': session.stock_code,
                 'center_price': session.center_price,
@@ -1425,7 +1495,7 @@ def start_grid_trading():
 
 @app.route('/api/grid/stop/<int:session_id>', methods=['POST'])
 def stop_grid_trading(session_id):
-    """停止网格交易"""
+    """停止网格交易(通过session_id)"""
     try:
         position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
@@ -1434,9 +1504,13 @@ def stop_grid_trading(session_id):
         # 停止网格会话
         final_stats = position_manager.grid_manager.stop_grid_session(session_id, 'manual')
 
+        # 触发前端数据更新
+        position_manager._increment_data_version()
+
         return jsonify({
             'success': True,
-            'final_stats': final_stats
+            'final_stats': final_stats,
+            'message': f'网格交易会话已停止 (ID: {session_id})'
         })
 
     except ValueError as e:
@@ -1445,6 +1519,186 @@ def stop_grid_trading(session_id):
         logger.error(f"停止网格交易失败: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/grid/stop', methods=['POST'])
+def stop_grid_trading_flexible():
+    """
+    停止网格交易(支持通过session_id或stock_code)
+
+    请求体:
+    {
+        "session_id": 123  # 或者
+        "stock_code": "000001.SZ"
+    }
+    """
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        stock_code = data.get('stock_code')
+
+        position_manager = get_position_manager_instance()
+        if not position_manager.grid_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        grid_manager = position_manager.grid_manager
+
+        # 如果提供stock_code,查找对应的session_id
+        if not session_id and stock_code:
+            session = grid_manager.sessions.get(stock_code)
+            if not session:
+                return jsonify({
+                    'success': False,
+                    'error': 'session_not_found',
+                    'message': f'{stock_code}没有活跃的网格会话'
+                }), 404
+            session_id = session.id
+
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'error': 'missing_parameter',
+                'message': '必须提供session_id或stock_code'
+            }), 400
+
+        # 停止会话
+        stats = grid_manager.stop_grid_session(session_id, 'manual_stop')
+
+        # 触发前端数据更新
+        position_manager._increment_data_version()
+
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'message': f'网格交易会话已停止 (ID: {session_id})'
+        })
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'error': 'session_not_found',
+            'message': str(e)
+        }), 404
+    except Exception as e:
+        logger.error(f"[API] stop_grid_session失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'server_error',
+            'message': str(e)
+        }), 500
+
+
+# ======================= 新增:网格交易Web配置对话框专用API =======================
+
+@app.route('/api/grid/session/<stock_code>', methods=['GET'])
+def get_grid_session_status(stock_code):
+    """
+    查询指定股票的网格交易会话状态(供Web配置对话框使用)
+
+    返回:
+        - 如果有活跃session: 返回完整配置
+        - 如果无session: 返回默认配置模板
+    """
+    try:
+        position_manager = get_position_manager_instance()
+
+        # ⭐ 确保grid_manager已初始化(用于Web界面重启的情况)
+        if not position_manager.grid_manager and config.ENABLE_GRID_TRADING:
+            try:
+                position_manager.init_grid_manager(trading_executor)
+                logger.info("[API] 已在API调用中初始化grid_manager")
+            except Exception as e:
+                logger.error(f"[API] 初始化grid_manager失败: {str(e)}")
+                return jsonify({'success': False, 'error': '网格交易功能初始化失败'}), 500
+
+        if not position_manager.grid_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        grid_manager = position_manager.grid_manager
+
+        # 标准化股票代码(自动补充市场后缀)
+        stock_code = normalize_stock_code(stock_code)
+        logger.info(f"[API] 查询网格会话状态: stock_code={stock_code}")
+
+        # 从内存中查询活跃会话
+        session = grid_manager.sessions.get(stock_code)
+
+        if session and session.status == 'active':
+            # 返回现有配置(小数格式，前端会乘以100显示)
+            return jsonify({
+                'success': True,
+                'has_session': True,
+                'session_id': session.id,
+                'config': {
+                    'price_interval': session.price_interval,  # ⭐ 小数格式，前端乘以100显示
+                    'position_ratio': session.position_ratio,
+                    'callback_ratio': session.callback_ratio,
+                    'max_investment': session.max_investment,
+                    'duration_days': (session.end_time - datetime.now()).days,
+                    'max_deviation': session.max_deviation,
+                    'target_profit': session.target_profit,
+                    'stop_loss': session.stop_loss
+                },
+                'stats': {
+                    'center_price': session.center_price,
+                    'current_center_price': session.current_center_price,
+                    'trade_count': session.trade_count,
+                    'buy_count': session.buy_count,
+                    'sell_count': session.sell_count,
+                    'profit_ratio': session.get_profit_ratio() * 100,
+                    'current_investment': session.current_investment
+                }
+            })
+        else:
+            # 返回默认配置(百分比格式)
+            # 计算当前持仓总市值，用于计算max_investment（添加超时保护）
+            try:
+                # 使用超时保护避免阻塞
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+                def get_positions_data():
+                    positions = position_manager.get_all_positions()
+                    total_market_value = 0
+                    if not positions.empty:
+                        for _, pos in positions.iterrows():
+                            market_value = pos.get('market_value', 0)
+                            if market_value:
+                                total_market_value += float(market_value)
+                    return total_market_value
+
+                timeout_seconds = 2.0  # 2秒超时
+                future = api_executor.submit(get_positions_data)
+
+                try:
+                    total_market_value = future.result(timeout=timeout_seconds)
+                    default_config = config.get_grid_default_config(total_market_value)
+                    max_investment = default_config['max_investment']
+                except FuturesTimeoutError:
+                    logger.warning(f"[API] 获取持仓数据超时({timeout_seconds}秒),使用固定默认值")
+                    max_investment = 10000  # 降级到固定默认值
+            except Exception as e:
+                logger.warning(f"[API] 计算max_investment失败: {str(e)},使用固定默认值")
+                max_investment = 10000  # 降级到固定默认值
+
+            return jsonify({
+                'success': True,
+                'has_session': False,
+                'config': {
+                    'price_interval': config.GRID_DEFAULT_PRICE_INTERVAL,  # ⭐ 小数格式，前端乘以100显示
+                    'position_ratio': config.GRID_DEFAULT_POSITION_RATIO,
+                    'callback_ratio': config.GRID_CALLBACK_RATIO,
+                    'max_investment': max_investment,
+                    'duration_days': config.GRID_DEFAULT_DURATION_DAYS,
+                    'max_deviation': config.GRID_MAX_DEVIATION_RATIO,
+                    'target_profit': config.GRID_TARGET_PROFIT_RATIO,
+                    'stop_loss': config.GRID_STOP_LOSS_RATIO
+                }
+            })
+    except Exception as e:
+        logger.error(f"[API] get_grid_session_status失败: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ======================= 网格交易会话管理API =======================
 
 @app.route('/api/grid/sessions', methods=['GET'])
 def get_grid_sessions():
@@ -1526,6 +1780,20 @@ def get_grid_sessions():
 def get_grid_session_detail(session_id):
     """获取网格会话详情"""
     try:
+        # ⭐ 如果session_id看起来像股票代码（6位数字），转发到股票代码处理逻辑
+        # 检查原始URL路径，因为Flask会将000001转换为整数1
+        from flask import request
+        path = request.path.split('/')[-1]  # 获取URL最后一部分
+
+        # 如果原始路径是6位数字，说明这是股票代码
+        if len(path) == 6 and path.isdigit():
+            return get_grid_session_status(path)
+
+        # 检查转换后的整数是否在股票代码范围（用于不带前导零的情况）
+        if 100000 <= session_id <= 999999:
+            stock_code = str(session_id)
+            return get_grid_session_status(stock_code)
+
         position_manager = get_position_manager_instance()
         if not position_manager.grid_manager:
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
@@ -1907,6 +2175,7 @@ def get_grid_config():
             'status': 'error',
             'message': f"获取网格配置失败: {str(e)}"
         }), 500
+
 
 # ======================= 网格交易API端点结束 =======================
 

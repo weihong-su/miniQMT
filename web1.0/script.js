@@ -978,8 +978,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // 更新各个单元格的值
         const cells = row.querySelectorAll('td');
 
-        // 检查是否有活跃的网格会话
-        const hasActiveGrid = activeGridSessions.has(stock.stock_code);
+        // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
+        const hasActiveGrid = stock.grid_session_active === true;
 
         // 更新行的边框样式
         row.className = hasActiveGrid
@@ -991,6 +991,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const checkbox = checkboxCell.querySelector('.holding-checkbox');
         if (checkbox) {
             checkbox.checked = hasActiveGrid;
+            // 更新checkbox背景色样式
+            updateGridCheckboxStyle(stock.stock_code, hasActiveGrid ? 'active' : 'none');
+
+            // 确保有点击事件监听器（检查是否已有监听器）
+            if (!checkbox.dataset.gridClickListener) {
+                checkbox.addEventListener('click', async (event) => {
+                    event.preventDefault();
+                    await showGridConfigDialog(stock.stock_code);
+                });
+                checkbox.dataset.gridClickListener = 'true';
+            }
         }
         // 更新"运行中"标识
         const existingLabel = checkboxCell.querySelector('span');
@@ -1041,8 +1052,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 创建新的持仓行
     function createStockRow(stock) {
         const row = document.createElement('tr');
-        // 检查是否有活跃的网格会话
-        const hasActiveGrid = activeGridSessions.has(stock.stock_code);
+        // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
+        const hasActiveGrid = stock.grid_session_active === true;
         // 如果有活跃网格，添加绿色边框
         row.className = hasActiveGrid
             ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
@@ -1077,6 +1088,19 @@ document.addEventListener('DOMContentLoaded', () => {
             <td class="border p-2 whitespace-nowrap">${(stock.open_date || '').split(' ')[0]}</td>
             <td class="border p-2">${parseFloat(stock.base_cost_price || stock.cost_price || 0).toFixed(2)}</td>
         `;
+
+        // 添加checkbox点击事件监听器
+        const checkbox = row.querySelector('.holding-checkbox');
+        if (checkbox) {
+            // 设置初始背景色样式
+            updateGridCheckboxStyle(stock.stock_code, hasActiveGrid ? 'active' : 'none');
+
+            // 添加点击事件：显示网格配置对话框
+            checkbox.addEventListener('click', async (event) => {
+                event.preventDefault(); // 阻止默认的checkbox切换行为
+                await showGridConfigDialog(stock.stock_code);
+            });
+        }
 
         return row;
     }
@@ -1315,8 +1339,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 添加版本号跟踪
     let currentHoldingsVersion = 0;
-    // 全局变量存储活跃网格会话
-    let activeGridSessions = new Set();
+    // ⭐ 不再需要activeGridSessions变量，直接使用后端返回的grid_session_active字段
 
     // 修改数据获取函数
     async function fetchHoldings() {
@@ -1346,25 +1369,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log(`Holdings data updated to version: ${currentHoldingsVersion}`);
             }
 
-            // 获取活跃的网格会话
-            try {
-                const gridResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
-                if (gridResponse.ok) {
-                    const gridData = await gridResponse.json();
-                    if (gridData.success && Array.isArray(gridData.sessions)) {
-                        // 更新活跃会话集合（只包含运行中的会话，状态为'active'）
-                        activeGridSessions = new Set(
-                            gridData.sessions
-                                .filter(s => s.status === 'active')
-                                .map(s => s.stock_code)
-                        );
-                        console.log(`Active grid sessions: ${Array.from(activeGridSessions).join(', ')}`);
-                    }
-                }
-            } catch (gridError) {
-                console.log('Failed to fetch grid sessions:', gridError);
-                // 不影响持仓数据的显示
-            }
+            // ⭐ 不再需要单独调用/api/grid/sessions，因为/api/positions响应已包含grid_session_active字段
 
             if (data.status === 'success' && Array.isArray(data.data)) {
                 updateHoldingsTable(data.data);
@@ -2033,62 +2038,56 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // 从DOM中提取当前价格(第5列,索引4)
+            // 从DOM中提取价格信息
             const cells = row.querySelectorAll('td');
             const currentPrice = cells[4] ? parseFloat(cells[4].textContent) : 0;
+            const costPrice = cells[5] ? parseFloat(cells[5].textContent) : 0;
 
-            if (currentPrice <= 0) {
-                showMessage('无法获取当前价格', 'error');
-                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
-                if (checkbox) {
-                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
-                    checkbox.checked = hasActiveGrid;
-                }
-                return;
-            }
+            // ⭐ 价格容错处理：支持盘前时间为0的情况
+            let centerPrice = currentPrice;
+            let priceSource = '当前价格';
 
-            // 检查是否有active session
-            const sessionsResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
-            let activeSession = null;
-
-            if (sessionsResponse.ok) {
-                const sessionsData = await sessionsResponse.json();
-                if (sessionsData.success && Array.isArray(sessionsData.sessions)) {
-                    activeSession = sessionsData.sessions.find(
-                        s => s.stock_code === stockCode && s.status === 'active'
-                    );
+            if (centerPrice <= 0) {
+                // 尝试使用成本价作为中心价
+                if (costPrice > 0) {
+                    centerPrice = costPrice;
+                    priceSource = '成本价';
+                    showMessage(`当前价格不可用，使用成本价作为网格中心价`, 'warning');
+                } else {
+                    // 两种价格都不可用，允许继续但不设置默认中心价
+                    centerPrice = 0;
+                    priceSource = '待手动设置';
+                    showMessage(`当前价格和成本价都不可用，请在配置对话框中手动设置网格中心价`, 'warning');
                 }
             }
 
-            let config;
-
-            if (activeSession) {
-                // 有active session，显示当前session的配置
-                config = {
-                    price_interval: activeSession.price_interval || 0.05,
-                    position_ratio: activeSession.position_ratio || 0.25,
-                    callback_ratio: activeSession.callback_ratio || 0.005,
-                    max_investment: activeSession.max_investment || 10000,
-                    max_deviation: activeSession.max_deviation || 0.15,
-                    target_profit: activeSession.target_profit || 0.1,
-                    stop_loss: activeSession.stop_loss || -0.1,
-                    duration_days: 7  // duration需要从end_time计算，这里先用默认值
-                };
-            } else {
-                // 没有active session，获取默认配置
-                const response = await fetch(`${API_BASE_URL}/api/grid/config`);
-                if (!response.ok) {
-                    throw new Error('获取网格配置失败');
-                }
-                const result = await response.json();
-                config = result.data;
+            // ⭐ 使用新的 /api/grid/session/<stock_code> API 直接获取该股票的会话状态
+            const sessionResponse = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
+            if (!sessionResponse.ok) {
+                throw new Error('获取网格会话状态失败');
             }
+
+            const sessionData = await sessionResponse.json();
+
+            if (!sessionData.success) {
+                throw new Error(sessionData.error || '获取网格会话状态失败');
+            }
+
+            const hasActiveSession = sessionData.has_session;
+            let config = sessionData.config;  // ⭐ 新API直接返回配置（百分比格式）
+            const activeSessionId = sessionData.session_id;
 
             // 填充对话框信息
             document.getElementById('gridStockCode').textContent = stockCode;
-            document.getElementById('gridCurrentPrice').textContent = `¥${currentPrice.toFixed(2)}`;
 
-            // 填充配置参数(转换为百分比显示)
+            // ⭐ 显示价格及来源
+            if (centerPrice > 0) {
+                document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)} (${priceSource})`;
+            } else {
+                document.getElementById('gridCurrentPrice').textContent = `价格不可用 - 请手动设置中心价`;
+            }
+
+            // ⭐ 配置是小数格式，乘以100转换为百分比显示
             document.getElementById('gridPriceInterval').value = (config.price_interval * 100).toFixed(2);
             document.getElementById('gridPositionRatio').value = (config.position_ratio * 100).toFixed(2);
             document.getElementById('gridCallbackRatio').value = (config.callback_ratio * 100).toFixed(2);
@@ -2096,7 +2095,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('gridDurationDays').value = config.duration_days;
             document.getElementById('gridMaxDeviation').value = (config.max_deviation * 100).toFixed(0);
             document.getElementById('gridTargetProfit').value = (config.target_profit * 100).toFixed(0);
-            document.getElementById('gridStopLoss').value = (config.stop_loss * 100).toFixed(0);
+            document.getElementById('gridStopLoss').value = (config.stop_loss * 100).toFixed(0);  // ⭐ 负数转换为百分比
 
             // 显示对话框
             const dialog = document.getElementById('gridConfigDialog');
@@ -2113,22 +2112,22 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
 
             // 根据是否有active session来设置按钮文本和行为
-            if (activeSession) {
+            if (hasActiveSession) {
                 // 有active session，按钮显示"停止网格交易"
                 newConfirmBtn.textContent = '停止网格交易';
-                newConfirmBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
-                newConfirmBtn.classList.add('bg-red-500', 'hover:bg-red-600');
+                newConfirmBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                newConfirmBtn.classList.add('bg-red-600', 'hover:bg-red-700');
 
                 newConfirmBtn.addEventListener('click', async () => {
-                    // 停止网格交易
-                    await stopGridSessionById(activeSession.session_id, stockCode);
+                    // ⭐ 使用新的灵活API，支持通过session_id停止
+                    await stopGridSessionById(activeSessionId, stockCode);
                     dialog.classList.add('hidden');
                 });
             } else {
                 // 没有active session，按钮显示"启动网格交易"
                 newConfirmBtn.textContent = '启动网格交易';
-                newConfirmBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
-                newConfirmBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                newConfirmBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+                newConfirmBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
 
                 newConfirmBtn.addEventListener('click', () => startGridSession(stockCode, currentPrice));
             }
@@ -2156,7 +2155,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 更新网格交易checkbox样式
+     * 更新网格交易checkbox样式和状态
      * @param {string} stockCode - 股票代码
      * @param {string} status - 状态: 'active'(绿色), 'paused'(黄色), 'stopped'(红色), 'none'(默认)
      */
@@ -2167,27 +2166,31 @@ document.addEventListener('DOMContentLoaded', () => {
         // 移除所有状态类
         checkbox.classList.remove('grid-active', 'grid-paused', 'grid-stopped');
 
-        // 根据状态添加类和样式
+        // 根据状态添加类和样式，并同步checked属性
         switch(status) {
             case 'active':
                 checkbox.classList.add('grid-active');
                 checkbox.style.backgroundColor = '#22c55e';  // 绿色
                 checkbox.style.borderColor = '#16a34a';
+                checkbox.checked = true;  // ⭐ 同步checked状态
                 break;
             case 'paused':
                 checkbox.classList.add('grid-paused');
                 checkbox.style.backgroundColor = '#eab308';  // 黄色
                 checkbox.style.borderColor = '#ca8a04';
+                checkbox.checked = true;  // ⭐ 暂停状态也保持勾选
                 break;
             case 'stopped':
                 checkbox.classList.add('grid-stopped');
                 checkbox.style.backgroundColor = '#ef4444';  // 红色
                 checkbox.style.borderColor = '#dc2626';
+                checkbox.checked = false;  // ⭐ 停止后取消勾选
                 break;
             default:
                 // 默认状态，移除自定义样式
                 checkbox.style.backgroundColor = '';
                 checkbox.style.borderColor = '';
+                checkbox.checked = false;  // ⭐ 无会话时取消勾选
         }
     }
 
@@ -2206,7 +2209,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 max_investment: parseFloat(document.getElementById('gridMaxInvestment').value),
                 max_deviation: parseFloat(document.getElementById('gridMaxDeviation').value) / 100,
                 target_profit: parseFloat(document.getElementById('gridTargetProfit').value) / 100,
-                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100
+                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100  // ⭐ 前端也用负数，直接除以100
             };
 
             const durationDays = parseInt(document.getElementById('gridDurationDays').value);
@@ -2234,6 +2237,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // 调用API启动网格交易
+            // ⭐ 价格验证：如果center_price为0，提示用户手动输入
+            if (centerPrice <= 0) {
+                showMessage('中心价格不可用，请等待行情数据更新后重试', 'error');
+                return;
+            }
+
             const response = await fetch(`${API_BASE_URL}/api/grid/start`, {
                 method: 'POST',
                 headers: {
@@ -2252,21 +2261,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) {
                 // 检查是否是重复会话错误
                 if (result.error && result.error.includes('已有活跃的网格会话')) {
-                    // 提供用户友好的提示和选项
-                    const userChoice = confirm(
-                        `该股票已有活跃的网格交易会话！\n\n` +
-                        `点击"确定"停止旧会话并启动新会话\n` +
-                        `点击"取消"保持当前会话`
-                    );
-
-                    if (userChoice) {
-                        // 用户选择停止旧会话并启动新会话
-                        await forceRestartGridSession(stockCode, centerPrice, durationDays, config);
-                    } else {
-                        // 用户取消，恢复checkbox状态
-                        const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
-                        if (checkbox) checkbox.checked = false;
-                    }
+                    // 自动停止旧会话并启动新会话（无需用户确认）
+                    showMessage('检测到已有活跃会话，将自动停止旧会话并启动新会话', 'warning');
+                    await forceRestartGridSession(stockCode, centerPrice, durationDays, config);
                 } else {
                     throw new Error(result.error || '启动网格交易失败');
                 }
@@ -2579,7 +2576,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('gridDurationDays').value = tpl.duration_days;
             document.getElementById('gridMaxDeviation').value = (tpl.max_deviation * 100).toFixed(0);
             document.getElementById('gridTargetProfit').value = (tpl.target_profit * 100).toFixed(0);
-            document.getElementById('gridStopLoss').value = (tpl.stop_loss * 100).toFixed(0);
+            document.getElementById('gridStopLoss').value = (tpl.stop_loss * 100).toFixed(0);  // ⭐ 前端也用负数，直接乘以100
 
             showMessage(`已应用模板: ${templateName}`, 'success');
         } catch (error) {
@@ -2621,7 +2618,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 duration_days: parseInt(document.getElementById('gridDurationDays').value),
                 max_deviation: parseFloat(document.getElementById('gridMaxDeviation').value) / 100,
                 target_profit: parseFloat(document.getElementById('gridTargetProfit').value) / 100,
-                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100,
+                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100,  // ⭐ 前端也用负数，直接除以100
                 description: desc,
                 is_default: isDefault
             };
