@@ -2210,6 +2210,119 @@ def get_grid_config():
         }), 500
 
 
+# ======================= 新增: 独立的checkbox状态API =======================
+
+@app.route('/api/grid/checkbox-states', methods=['GET'])
+def get_grid_checkbox_states():
+    """
+    获取所有股票的网格交易checkbox状态（独立于持仓数据）
+
+    返回格式:
+    {
+        "success": true,
+        "states": {
+            "000001.SZ": {"active": true, "session_id": 123},
+            "600036.SH": {"active": false, "session_id": null}
+        },
+        "version": 12345  # 数据版本号，用于前端判断是否需要更新
+    }
+    """
+    try:
+        position_manager = get_position_manager_instance()
+
+        # 如果grid_manager未初始化，返回空状态
+        if not position_manager.grid_manager:
+            return jsonify({
+                'success': True,
+                'states': {},
+                'version': position_manager.data_version
+            })
+
+        grid_manager = position_manager.grid_manager
+
+        # 构建checkbox状态字典
+        checkbox_states = {}
+
+        # 遍历所有活跃的网格session
+        for stock_code, session in grid_manager.sessions.items():
+            checkbox_states[stock_code] = {
+                'active': (session.status == 'active'),
+                'session_id': session.id if session.status == 'active' else None
+            }
+
+        # 可选：也包含持仓中但没有网格session的股票
+        stock_codes = request.args.get('stock_codes')  # 前端可以传入需要查询的股票列表
+        if stock_codes:
+            stock_list = stock_codes.split(',')
+            for stock_code in stock_list:
+                stock_code = stock_code.strip()
+                if stock_code not in checkbox_states:
+                    checkbox_states[stock_code] = {
+                        'active': False,
+                        'session_id': None
+                    }
+
+        return jsonify({
+            'success': True,
+            'states': checkbox_states,
+            'version': position_manager.data_version
+        })
+
+    except Exception as e:
+        logger.error(f"获取checkbox状态失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/checkbox-state/<stock_code>', methods=['GET'])
+def get_single_grid_checkbox_state(stock_code):
+    """
+    获取单个股票的网格交易checkbox状态（独立于持仓数据）
+
+    返回格式:
+    {
+        "success": true,
+        "stock_code": "000001.SZ",
+        "active": true,
+        "session_id": 123,
+        "version": 12345
+    }
+    """
+    try:
+        position_manager = get_position_manager_instance()
+
+        # 标准化股票代码
+        stock_code = normalize_stock_code(stock_code)
+
+        # 如果grid_manager未初始化，返回inactive状态
+        if not position_manager.grid_manager:
+            return jsonify({
+                'success': True,
+                'stock_code': stock_code,
+                'active': False,
+                'session_id': None,
+                'version': position_manager.data_version
+            })
+
+        grid_manager = position_manager.grid_manager
+
+        # 检查是否有活跃session
+        session = grid_manager.sessions.get(stock_code)
+        active = (session is not None and session.status == 'active')
+        session_id = session.id if active else None
+
+        return jsonify({
+            'success': True,
+            'stock_code': stock_code,
+            'active': active,
+            'session_id': session_id,
+            'version': position_manager.data_version
+        })
+
+    except Exception as e:
+        logger.error(f"获取{stock_code}的checkbox状态失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ======================= 网格交易API端点结束 =======================
 
 def shutdown_web_server():
