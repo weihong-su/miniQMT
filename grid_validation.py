@@ -21,6 +21,11 @@ class GridConfigSchema(Schema):
         )
     )
 
+    center_price = fields.Float(
+        required=False,
+        validate=validate.Range(min=0.01, error='中间价必须大于0.01')
+    )
+
     price_interval = fields.Float(
         validate=validate.Range(min=0.01, max=0.20, error='网格价格间隔必须在0.01-0.20之间（1%-20%）')
     )

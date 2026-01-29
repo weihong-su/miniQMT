@@ -506,7 +506,8 @@ def get_grid_default_config(position_market_value: float) -> dict:
         'price_interval': GRID_DEFAULT_PRICE_INTERVAL,
         'position_ratio': GRID_DEFAULT_POSITION_RATIO,
         'callback_ratio': GRID_CALLBACK_RATIO,
-        'max_investment': position_market_value * GRID_DEFAULT_MAX_INVESTMENT_RATIO,
+        # 非交易时间市值可能为None，使用默认值10000元兜底
+        'max_investment': (position_market_value * GRID_DEFAULT_MAX_INVESTMENT_RATIO) if position_market_value and position_market_value > 0 else 10000,
         'max_deviation': GRID_MAX_DEVIATION_RATIO,
         'target_profit': GRID_TARGET_PROFIT_RATIO,
         'stop_loss': GRID_STOP_LOSS_RATIO,

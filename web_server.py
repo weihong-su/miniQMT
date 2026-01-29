@@ -1423,6 +1423,7 @@ def start_grid_trading():
         # 注意：前端发送的是百分比格式（已经除以100），直接使用
         user_config = {
             'stock_code': stock_code,
+            'center_price': data.get('center_price'),  # ⭐ 新增: 读取前端传入的中心价格
             'price_interval': frontend_config.get('price_interval') or data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
             'position_ratio': frontend_config.get('position_ratio') or data.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
             'callback_ratio': frontend_config.get('callback_ratio') or data.get('callback_ratio', config.GRID_CALLBACK_RATIO),
@@ -1430,7 +1431,7 @@ def start_grid_trading():
             'max_deviation': frontend_config.get('max_deviation') or data.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
             'target_profit': frontend_config.get('target_profit') or data.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
             'stop_loss': frontend_config.get('stop_loss') or data.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
-            'duration_days': data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS)
+            'duration_days': int(data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS))
         }
 
         logger.debug(f"解析后的user_config: {user_config}")
@@ -1635,6 +1636,7 @@ def get_grid_session_status(stock_code):
                 'has_session': True,
                 'session_id': session.id,
                 'config': {
+                    'center_price': session.center_price,  # ⭐ 新增: 中心价格，用于前端回显
                     'price_interval': session.price_interval,  # ⭐ 小数格式，前端乘以100显示
                     'position_ratio': session.position_ratio,
                     'callback_ratio': session.callback_ratio,

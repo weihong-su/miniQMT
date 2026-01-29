@@ -328,13 +328,21 @@ class GridTradingManager:
 
             logger.debug(f"[GRID] start_grid_session: 前置条件验证通过, position volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
 
-            # 2. 获取highest_price作为center_price
+            # 2. 确定中心价格: 优先使用用户自定义，其次使用历史最高价
+            user_center_price = user_config.get('center_price')
             highest_price = position.get('highest_price', 0)
-            if highest_price == 0:
-                logger.warning(f"[GRID] start_grid_session: {stock_code}缺少最高价数据, 拒绝启动")
-                raise ValueError(f"{stock_code}缺少最高价数据")
 
-            logger.debug(f"[GRID] start_grid_session: highest_price={highest_price:.2f}")
+            if user_center_price and user_center_price > 0:
+                center_price = user_center_price
+                logger.info(f"[GRID] start_grid_session: {stock_code} 使用用户自定义中心价格: {center_price:.2f}")
+            elif highest_price > 0:
+                center_price = highest_price
+                logger.info(f"[GRID] start_grid_session: {stock_code} 使用历史最高价作为中心价格: {center_price:.2f}")
+            else:
+                logger.warning(f"[GRID] start_grid_session: {stock_code}缺少有效的中心价格(用户未提供且无最高价数据), 拒绝启动")
+                raise ValueError(f"{stock_code}缺少有效的中心价格")
+
+            logger.debug(f"[GRID] start_grid_session: 最终center_price={center_price:.2f}, user_center_price={user_center_price}, highest_price={highest_price:.2f}")
 
             # 3. 创建GridSession对象
             start_time = datetime.now()
@@ -342,7 +350,7 @@ class GridTradingManager:
 
             session_data = {
                 'stock_code': stock_code,
-                'center_price': highest_price,
+                'center_price': center_price,
                 'price_interval': user_config.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
                 'position_ratio': user_config.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
                 'callback_ratio': user_config.get('callback_ratio', config.GRID_CALLBACK_RATIO),

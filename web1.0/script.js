@@ -1383,9 +1383,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error fetching holdings:', error);
         } finally {
-            setTimeout(() => {
-                requestLocks.holdings = false;
-            }, 1000);
+            // 立即释放锁，移除1秒延迟以支持快速刷新
+            requestLocks.holdings = false;
         }
     }
 
@@ -1843,7 +1842,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // 持仓数据降低轮询频率，主要依赖SSE推送
-            if (!requestLocks.holdings && now - lastDataUpdateTimestamps.holdings >= 30000) { // 增加到30秒
+            if (!requestLocks.holdings && now - lastDataUpdateTimestamps.holdings >= 10000) { // 轮询兜底间隔缩短为10秒
                 await fetchHoldings();
             }
             
@@ -1898,25 +1897,31 @@ document.addEventListener('DOMContentLoaded', () => {
         if (sseConnection) {
             sseConnection.close();
         }
-    
+
         const sseURL = `${API_BASE_URL}/api/sse`;
         sseConnection = new EventSource(sseURL);
-    
+
+        // SSE心跳检测：记录最后一次收到消息的时间
+        let lastSSEMessageTime = Date.now();
+
         sseConnection.onmessage = function(event) {
             try {
+                // 更新心跳时间
+                lastSSEMessageTime = Date.now();
+
                 const data = JSON.parse(event.data);
                 console.log('SSE update received:', data);
-                
+
                 // 更新账户信息
                 if (data.account_info) {
                     updateQuickAccountInfo(data.account_info);
                 }
-                
+
                 // 更新监控状态
                 if (data.monitoring) {
                     updateMonitoringInfo(data.monitoring);
                 }
-                
+
                 // 处理持仓数据变化通知
                 if (data.positions_update && data.positions_update.changed) {
                     console.log(`Received positions update notification: v${data.positions_update.version}`);
@@ -1927,18 +1932,30 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }, 100); // 短暂延迟避免冲突
                 }
-                
+
             } catch (e) {
                 console.error('SSE data parse error:', e);
             }
         };
-    
+
         sseConnection.onerror = function(error) {
             console.error('SSE connection error:', error);
             setTimeout(() => {
                 initSSE();
             }, 5000); // 减少重连时间到5秒
         };
+
+        // SSE心跳检测：每10秒检查SSE是否存活
+        setInterval(() => {
+            const elapsed = Date.now() - lastSSEMessageTime;
+            if (elapsed > 15000) {  // 15秒没收到消息
+                console.warn(`⚠️ SSE heartbeat timeout (${Math.round(elapsed/1000)}s), reconnecting...`);
+                if (sseConnection) {
+                    sseConnection.close();
+                }
+                initSSE();
+            }
+        }, 10000);
     }
 
     // --- 事件监听器 ---
