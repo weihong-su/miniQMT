@@ -195,7 +195,8 @@ class GridTradingManager:
 
                 try:
                     # 1. 检查会话是否已过期
-                    end_time = datetime.fromisoformat(session_data['end_time'])
+                    # BUG FIX: 使用session_dict而不是session_data
+                    end_time = datetime.fromisoformat(session_dict['end_time'])
                     if datetime.now() > end_time:
                         self.db.stop_grid_session(session_id, 'expired')
                         logger.info(f"[GRID] _load_active_sessions: 会话{session_id}({stock_code})已过期,自动停止")
@@ -206,12 +207,11 @@ class GridTradingManager:
                     # 修复: 启动时调用get_position可能导致阻塞30秒以上
                     # 策略: 先恢复会话,如果持仓已被清空,用户可以手动停止
                     position = None
-                    current_price = session_data.get('current_center_price', session_data['center_price'])
+                    # BUG FIX: 使用session_dict.get()而不是session_data.get()
+                    current_price = session_dict.get('current_center_price', session_dict['center_price'])
                     logger.debug(f"[GRID] _load_active_sessions: 跳过持仓检查以避免阻塞, 使用数据库价格: {current_price:.2f}")
 
                     # 3. 恢复GridSession对象
-                    # CRITICAL FIX: 将sqlite3.Row转换为字典,避免"'sqlite3.Row' object has no attribute 'get'"错误
-                    session_dict = dict(session_data)
                     logger.debug(f"[GRID] _load_active_sessions: 恢复会话对象 session_id={session_id}")
                     session = GridSession(
                         id=session_dict['id'],

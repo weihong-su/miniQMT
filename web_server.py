@@ -1623,6 +1623,12 @@ def get_grid_session_status(stock_code):
         session = grid_manager.sessions.get(stock_code)
 
         if session and session.status == 'active':
+            # ⭐ 添加调试日志：检查session对象的实际值
+            logger.info(f"[API] 找到活跃session: id={session.id}, stock_code={session.stock_code}")
+            logger.info(f"[API] session配置值: price_interval={session.price_interval} ({session.price_interval*100:.1f}%), "
+                       f"position_ratio={session.position_ratio} ({session.position_ratio*100:.1f}%), "
+                       f"stop_loss={session.stop_loss} ({session.stop_loss*100:.1f}%)")
+
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
                 'success': True,
