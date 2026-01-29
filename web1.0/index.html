@@ -419,11 +419,17 @@
             <h3 class="text-lg font-semibold mb-4">网格交易配置</h3>
             <div class="mb-4">
                 <p class="text-sm text-gray-600">股票代码: <span id="gridStockCode" class="font-semibold"></span></p>
-                <p class="text-sm text-gray-600 mb-2">当前价格: <span id="gridCurrentPrice" class="font-semibold"></span></p>
+
+                <!-- 价格参考信息 -->
+                <div class="bg-blue-50 border border-blue-200 rounded p-2 mb-3 space-y-1">
+                    <p class="text-sm text-gray-700">📊 <span class="font-medium">实时市场价</span>: <span id="gridCurrentPrice" class="font-semibold text-blue-700"></span></p>
+                    <p class="text-sm text-gray-700" id="gridExistingCenterPriceRow" style="display: none;">📌 <span class="font-medium">原网格中心价</span>: <span id="gridExistingCenterPrice" class="font-semibold text-green-700"></span> <span class="text-xs text-gray-500">(锁定)</span></p>
+                </div>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">
                         网格中心价格 (元)
-                        <span class="text-gray-500 text-xs">可手动修改，默认使用当前价或成本价</span>
+                        <span class="text-gray-500 text-xs">可手动修改，默认使用实时市场价</span>
                     </label>
                     <input type="number" id="gridCenterPriceInput" step="0.01" min="0.01"
                            class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"

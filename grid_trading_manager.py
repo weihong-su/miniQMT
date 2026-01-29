@@ -13,6 +13,7 @@ from typing import Optional, Dict, List
 import threading
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import config
 from logger import get_logger
@@ -305,83 +306,105 @@ class GridTradingManager:
             return 0
 
     def start_grid_session(self, stock_code: str, user_config: dict) -> GridSession:
-        """启动网格交易会话
+        """启动网格交易会话（三阶段设计，避免AB-BA死锁）
 
-        优化: 自动停止旧的active session
-        1. 检查内存中是否有active session
-        2. 如果有,自动停止并从内存移除
-        3. 数据库层也会检查并停止旧session
+        阶段1（锁外）：获取持仓数据并验证前置条件
+        阶段2（锁内）：停止旧session、创建数据库记录、创建内存对象
+        阶段3（锁外）：触发数据版本更新、打印成功日志
         """
-        logger.info(f"[GRID] start_grid_session: 开始启动会话 stock_code={stock_code}")
-        logger.debug(f"[GRID] start_grid_session: user_config={user_config}")
+        logger.info(f"[GRID] start_grid_session: ========== 开始启动会话 ==========")
+        logger.info(f"[GRID] start_grid_session: stock_code={stock_code}")
+        logger.info(f"[GRID] start_grid_session: user_config={user_config}")
 
-        with self.lock:
-            # 1. 检查内存中是否有active session
+        # ========== 阶段1: 锁外操作 - 获取持仓数据并验证 ==========
+        logger.info(f"[GRID] start_grid_session: [阶段1] 获取持仓数据（锁外）...")
+
+        # 使用ThreadPoolExecutor + 5秒超时避免阻塞
+        position = None
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                future = executor.submit(self.position_manager.get_position, stock_code)
+                position = future.result(timeout=5.0)
+            except TimeoutError:
+                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓超时(5秒)，拒绝启动")
+                raise RuntimeError(f"获取{stock_code}持仓信息超时，请稍后重试")
+            except Exception as e:
+                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓失败: {str(e)}")
+                raise
+
+        # 验证持仓条件
+        if not position:
+            logger.warning(f"[GRID] start_grid_session: [阶段1] 未持有{stock_code}, 拒绝启动")
+            raise ValueError(f"未持有{stock_code}")
+
+        if not position.get('profit_triggered'):
+            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}未触发止盈, 拒绝启动")
+            raise ValueError(f"{stock_code}未触发止盈,无法启动网格交易")
+
+        logger.debug(f"[GRID] start_grid_session: [阶段1] 前置条件验证通过, volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
+
+        # 确定中心价格
+        user_center_price = user_config.get('center_price')
+        highest_price = position.get('highest_price', 0)
+
+        if user_center_price and user_center_price > 0:
+            center_price = user_center_price
+            logger.info(f"[GRID] start_grid_session: [阶段1] 使用用户自定义中心价格: {center_price:.2f}")
+        elif highest_price > 0:
+            center_price = highest_price
+            logger.info(f"[GRID] start_grid_session: [阶段1] 使用历史最高价作为中心价格: {center_price:.2f}")
+        else:
+            logger.warning(f"[GRID] start_grid_session: [阶段1] 缺少有效的中心价格, 拒绝启动")
+            raise ValueError(f"{stock_code}缺少有效的中心价格")
+
+        # 预构建会话数据
+        start_time = datetime.now()
+        end_time = start_time + timedelta(days=user_config.get('duration_days', 7))
+        current_price = position.get('current_price', highest_price)
+
+        session_data = {
+            'stock_code': stock_code,
+            'center_price': center_price,
+            'price_interval': user_config.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
+            'position_ratio': user_config.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
+            'callback_ratio': user_config.get('callback_ratio', config.GRID_CALLBACK_RATIO),
+            'max_investment': user_config.get('max_investment', 0),
+            'max_deviation': user_config.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
+            'target_profit': user_config.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
+            'stop_loss': user_config.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat()
+        }
+        logger.info(f"[GRID] start_grid_session: [阶段1] 完成，预构建会话数据完成")
+
+        # ========== 阶段2: 锁内操作 - 停止旧session、创建记录 ==========
+        logger.info(f"[GRID] start_grid_session: [阶段2] 尝试获取锁...")
+        lock_acquired = self.lock.acquire(timeout=5.0)
+        if not lock_acquired:
+            logger.error(f"[GRID] start_grid_session: [阶段2] 获取锁超时(5秒)! 拒绝启动")
+            raise RuntimeError(f"网格交易启动失败：系统繁忙，请稍后重试")
+
+        logger.info(f"[GRID] start_grid_session: [阶段2] 成功获取锁，开始处理...")
+        session = None
+        try:
+            # 检查并停止旧session
             if stock_code in self.sessions:
                 old_session = self.sessions[stock_code]
                 old_session_id = old_session.id
-                logger.warning(f"[GRID] start_grid_session: {stock_code}已有活跃session(id={old_session_id}), 自动停止旧session")
+                logger.warning(f"[GRID] start_grid_session: [阶段2] {stock_code}已有活跃session(id={old_session_id}), 自动停止")
+                self._stop_grid_session_unlocked(old_session_id, 'replaced_by_user')
 
-                # 自动停止旧session (会从内存中移除)
-                self.stop_grid_session(old_session_id, 'replaced_by_user')
-
-            position = self.position_manager.get_position(stock_code)
-            if not position:
-                logger.warning(f"[GRID] start_grid_session: 未持有{stock_code}, 拒绝启动")
-                raise ValueError(f"未持有{stock_code}")
-
-            if not position.get('profit_triggered'):
-                logger.warning(f"[GRID] start_grid_session: {stock_code}未触发止盈, 拒绝启动")
-                raise ValueError(f"{stock_code}未触发止盈,无法启动网格交易")
-
-            logger.debug(f"[GRID] start_grid_session: 前置条件验证通过, position volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
-
-            # 2. 确定中心价格: 优先使用用户自定义，其次使用历史最高价
-            user_center_price = user_config.get('center_price')
-            highest_price = position.get('highest_price', 0)
-
-            if user_center_price and user_center_price > 0:
-                center_price = user_center_price
-                logger.info(f"[GRID] start_grid_session: {stock_code} 使用用户自定义中心价格: {center_price:.2f}")
-            elif highest_price > 0:
-                center_price = highest_price
-                logger.info(f"[GRID] start_grid_session: {stock_code} 使用历史最高价作为中心价格: {center_price:.2f}")
-            else:
-                logger.warning(f"[GRID] start_grid_session: {stock_code}缺少有效的中心价格(用户未提供且无最高价数据), 拒绝启动")
-                raise ValueError(f"{stock_code}缺少有效的中心价格")
-
-            logger.debug(f"[GRID] start_grid_session: 最终center_price={center_price:.2f}, user_center_price={user_center_price}, highest_price={highest_price:.2f}")
-
-            # 3. 创建GridSession对象
-            start_time = datetime.now()
-            end_time = start_time + timedelta(days=user_config.get('duration_days', 7))
-
-            session_data = {
-                'stock_code': stock_code,
-                'center_price': center_price,
-                'price_interval': user_config.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
-                'position_ratio': user_config.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
-                'callback_ratio': user_config.get('callback_ratio', config.GRID_CALLBACK_RATIO),
-                'max_investment': user_config.get('max_investment', 0),
-                'max_deviation': user_config.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
-                'target_profit': user_config.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
-                'stop_loss': user_config.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
-                'start_time': start_time.isoformat(),
-                'end_time': end_time.isoformat()
-            }
-            logger.debug(f"[GRID] start_grid_session: 会话配置 session_data={session_data}")
-
-            # 4. 持久化到数据库
+            # 创建数据库记录
             session_id = self.db.create_grid_session(session_data)
-            logger.debug(f"[GRID] start_grid_session: 数据库创建成功, session_id={session_id}")
+            logger.debug(f"[GRID] start_grid_session: [阶段2] 数据库创建成功, session_id={session_id}")
 
-            # 5. 创建内存对象
+            # 创建内存对象
             session = GridSession(
                 id=session_id,
                 stock_code=stock_code,
                 status='active',
-                center_price=highest_price,
-                current_center_price=highest_price,
+                center_price=center_price,  # ✅ 使用阶段1确定的中心价格
+                current_center_price=center_price,  # ✅ 初始化为相同值
                 price_interval=session_data['price_interval'],
                 position_ratio=session_data['position_ratio'],
                 callback_ratio=session_data['callback_ratio'],
@@ -393,94 +416,108 @@ class GridTradingManager:
                 end_time=end_time
             )
             self.sessions[stock_code] = session
-            logger.debug(f"[GRID] start_grid_session: 内存会话对象创建完成")
+            logger.debug(f"[GRID] start_grid_session: [阶段2] 内存会话对象创建完成")
 
-            # 6. 初始化PriceTracker
-            current_price = position.get('current_price', highest_price)
+            # 创建PriceTracker
             self.trackers[session_id] = PriceTracker(
                 session_id=session_id,
                 last_price=current_price,
                 peak_price=current_price,
                 valley_price=current_price
             )
-            logger.debug(f"[GRID] start_grid_session: PriceTracker创建完成, current_price={current_price:.2f}")
+            logger.debug(f"[GRID] start_grid_session: [阶段2] PriceTracker创建完成, current_price={current_price:.2f}")
 
-            # 7. 触发数据版本更新
-            self.position_manager._increment_data_version()
+        finally:
+            self.lock.release()
+            logger.info(f"[GRID] start_grid_session: [阶段2] 已释放锁")
 
-            levels = session.get_grid_levels()
-            logger.info(f"[GRID] start_grid_session: 启动成功! stock_code={stock_code}, session_id={session_id}")
-            logger.info(f"[GRID] start_grid_session: 中心价={highest_price:.2f}, 档位间隔={session.price_interval*100:.1f}%")
-            logger.info(f"[GRID] start_grid_session: 网格档位 lower={levels['lower']:.2f}, center={levels['center']:.2f}, upper={levels['upper']:.2f}")
-            logger.info(f"[GRID] start_grid_session: 最大投入={session.max_investment:.2f}, 持仓比例={session.position_ratio*100:.1f}%")
-            logger.info(f"[GRID] start_grid_session: 回调比例={session.callback_ratio*100:.2f}%, 最大偏离={session.max_deviation*100:.1f}%")
-            logger.info(f"[GRID] start_grid_session: 目标盈利={session.target_profit*100:.1f}%, 止损={session.stop_loss*100:.1f}%")
-            logger.info(f"[GRID] start_grid_session: 有效期至 {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        # ========== 阶段3: 锁外操作 - 后处理 ==========
+        logger.info(f"[GRID] start_grid_session: [阶段3] 执行后处理...")
 
-            return session
+        # 触发数据版本更新
+        self.position_manager._increment_data_version()
+
+        # 打印成功日志
+        levels = session.get_grid_levels()
+        logger.info(f"[GRID] start_grid_session: ========== 启动成功 ==========")
+        logger.info(f"[GRID] start_grid_session: 股票代码={stock_code}, 会话ID={session.id}")
+        logger.info(f"[GRID] start_grid_session: 中心价={highest_price:.2f}, 档位间隔={session.price_interval*100:.1f}%")
+        logger.info(f"[GRID] start_grid_session: 网格档位 lower={levels['lower']:.2f}, center={levels['center']:.2f}, upper={levels['upper']:.2f}")
+        logger.info(f"[GRID] start_grid_session: 最大投入={session.max_investment:.2f}, 持仓比例={session.position_ratio*100:.1f}%")
+        logger.info(f"[GRID] start_grid_session: 回调比例={session.callback_ratio*100:.2f}%, 最大偏离={session.max_deviation*100:.1f}%")
+        logger.info(f"[GRID] start_grid_session: 目标盈利={session.target_profit*100:.1f}%, 止损={session.stop_loss*100:.1f}%")
+        logger.info(f"[GRID] start_grid_session: 有效期至 {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        return session
 
     def stop_grid_session(self, session_id: int, reason: str) -> dict:
-        """停止网格交易会话"""
+        """停止网格交易会话（公共接口，会获取锁）"""
         logger.info(f"[GRID] stop_grid_session: 开始停止会话 session_id={session_id}, reason={reason}")
 
         with self.lock:
-            # 查找会话
-            session = None
-            for s in self.sessions.values():
-                if s.id == session_id:
-                    session = s
-                    break
+            return self._stop_grid_session_unlocked(session_id, reason)
 
-            if not session:
-                logger.warning(f"[GRID] stop_grid_session: 会话{session_id}不存在, 无法停止")
-                raise ValueError(f"会话{session_id}不存在")
+    def _stop_grid_session_unlocked(self, session_id: int, reason: str) -> dict:
+        """停止网格交易会话（内部方法，调用者必须已持有锁）"""
+        logger.info(f"[GRID] _stop_grid_session_unlocked: 开始停止会话 session_id={session_id}, reason={reason}")
 
-            stock_code = session.stock_code
-            logger.debug(f"[GRID] stop_grid_session: 找到会话 stock_code={stock_code}")
+        # 查找会话
+        session = None
+        for s in self.sessions.values():
+            if s.id == session_id:
+                session = s
+                break
 
-            # 记录停止前的统计信息
-            logger.info(f"[GRID] stop_grid_session: 停止前统计:")
-            logger.info(f"[GRID]   - 股票代码: {stock_code}")
-            logger.info(f"[GRID]   - 总交易次数: {session.trade_count} (买入{session.buy_count}/卖出{session.sell_count})")
-            logger.info(f"[GRID]   - 总买入金额: {session.total_buy_amount:.2f}")
-            logger.info(f"[GRID]   - 总卖出金额: {session.total_sell_amount:.2f}")
-            logger.info(f"[GRID]   - 网格盈亏: {session.get_profit_ratio()*100:.2f}%")
-            logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
-            logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
+        if not session:
+            logger.warning(f"[GRID] _stop_grid_session_unlocked: 会话{session_id}不存在, 无法停止")
+            raise ValueError(f"会话{session_id}不存在")
 
-            # 更新数据库
-            self.db.stop_grid_session(session_id, reason)
-            logger.debug(f"[GRID] stop_grid_session: 数据库更新完成")
+        stock_code = session.stock_code
+        logger.debug(f"[GRID] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}")
 
-            # 从内存中移除
-            if stock_code in self.sessions:
-                del self.sessions[stock_code]
-                logger.debug(f"[GRID] stop_grid_session: 从sessions中移除 {stock_code}")
-            if session_id in self.trackers:
-                del self.trackers[session_id]
-                logger.debug(f"[GRID] stop_grid_session: 从trackers中移除 session_id={session_id}")
+        # 记录停止前的统计信息
+        logger.info(f"[GRID] _stop_grid_session_unlocked: 停止前统计:")
+        logger.info(f"[GRID]   - 股票代码: {stock_code}")
+        logger.info(f"[GRID]   - 总交易次数: {session.trade_count} (买入{session.buy_count}/卖出{session.sell_count})")
+        logger.info(f"[GRID]   - 总买入金额: {session.total_buy_amount:.2f}")
+        logger.info(f"[GRID]   - 总卖出金额: {session.total_sell_amount:.2f}")
+        logger.info(f"[GRID]   - 网格盈亏: {session.get_profit_ratio()*100:.2f}%")
+        logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
+        logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
 
-            # 清除冷却记录
-            cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
-            if cooldown_keys:
-                logger.debug(f"[GRID] stop_grid_session: 清除 {len(cooldown_keys)} 个档位冷却记录")
-            for key in cooldown_keys:
-                del self.level_cooldowns[key]
+        # 更新数据库
+        self.db.stop_grid_session(session_id, reason)
+        logger.debug(f"[GRID] _stop_grid_session_unlocked: 数据库更新完成")
 
-            # 触发数据版本更新
-            self.position_manager._increment_data_version()
+        # 从内存中移除
+        if stock_code in self.sessions:
+            del self.sessions[stock_code]
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从sessions中移除 {stock_code}")
+        if session_id in self.trackers:
+            del self.trackers[session_id]
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
 
-            final_stats = {
-                'stock_code': stock_code,
-                'trade_count': session.trade_count,
-                'profit_ratio': session.get_profit_ratio(),
-                'stop_reason': reason
-            }
+        # 清除冷却记录
+        cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
+        if cooldown_keys:
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys)} 个档位冷却记录")
+        for key in cooldown_keys:
+            del self.level_cooldowns[key]
 
-            logger.info(f"[GRID] stop_grid_session: 停止完成! stock_code={stock_code}, reason={reason}, "
-                       f"trade_count={session.trade_count}, profit={session.get_profit_ratio()*100:.2f}%")
+        # 触发数据版本更新
+        self.position_manager._increment_data_version()
 
-            return final_stats
+        final_stats = {
+            'stock_code': stock_code,
+            'trade_count': session.trade_count,
+            'profit_ratio': session.get_profit_ratio(),
+            'stop_reason': reason
+        }
+
+        logger.info(f"[GRID] _stop_grid_session_unlocked: 停止完成! stock_code={stock_code}, reason={reason}, "
+                   f"trade_count={session.trade_count}, profit={session.get_profit_ratio()*100:.2f}%")
+
+        return final_stats
 
     def _check_exit_conditions(self, session: GridSession, current_price: float) -> Optional[str]:
         """检查退出条件,返回退出原因或None"""

@@ -1134,23 +1134,26 @@ def update_holding_params():
 # 添加SSE接口
 @app.route('/api/sse', methods=['GET'])
 def sse():
-    """提供Server-Sent Events流 - 增强版"""
+    """提供Server-Sent Events流 - 增强版（支持定时推送）"""
     # 动态获取position_manager以确保grid_manager已初始化
     position_manager = get_position_manager_instance()
     def event_stream():
         last_positions_version = 0
         prev_data = None
-        
+        last_push_time = time.time()  # 🔧 新增：记录上次推送时间
+        FORCE_PUSH_INTERVAL = 5.0  # 🔧 强制推送间隔（秒）
+
         while True:
             try:
                 # 检查持仓数据是否有变化
                 version_info = position_manager.get_data_version_info()
                 current_version = version_info['version']
                 data_changed = version_info['changed']
-                
+                current_time = time.time()
+
                 # 获取基础数据
                 account_info = position_manager.get_account_info() or {}
-                
+
                 current_data = {
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'account_info': {
@@ -1166,29 +1169,45 @@ def sse():
                         'simulationMode': getattr(config, 'ENABLE_SIMULATION_MODE', False)
                     }
                 }
-                
-                # 如果持仓数据有变化，添加持仓更新通知
-                if current_version > last_positions_version:
+
+                # 🔧 修改：始终添加持仓更新通知（无论是否变化）
+                version_changed = current_version > last_positions_version
+                if version_changed:
                     current_data['positions_update'] = {
                         'version': current_version,
                         'changed': True
                     }
                     last_positions_version = current_version
                     logger.debug(f"SSE推送持仓数据变化通知: v{current_version}")
-                
-                # 只在数据变化时发送更新
+                else:
+                    # 即使版本未变化，也添加字段（标记为未变化）
+                    current_data['positions_update'] = {
+                        'version': current_version,
+                        'changed': False
+                    }
+
+                # 🔧 修改推送逻辑：数据变化或超过5秒都要推送
+                should_push = False
                 if current_data != prev_data:
+                    should_push = True
+                    logger.debug("SSE推送：数据变化")
+                elif current_time - last_push_time >= FORCE_PUSH_INTERVAL:
+                    should_push = True
+                    logger.debug("SSE推送：定时推送（5秒）")
+
+                if should_push:
                     yield f"data: {json.dumps(current_data)}\n\n"
                     prev_data = current_data
-                    
+                    last_push_time = current_time
+
                     # 标记数据已被消费
                     if data_changed:
                         position_manager.mark_data_consumed()
-                
+
             except Exception as e:
                 logger.error(f"SSE流生成数据时出错: {str(e)}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            
+
             time.sleep(1)  # 减少到1秒检查一次
     
     return Response(stream_with_context(event_stream()), 
@@ -1210,9 +1229,10 @@ def get_positions_all():
         # 获取当前数据版本
         version_info = position_manager.get_data_version_info()
         current_version = version_info['version']
-        
-        # 如果客户端版本是最新的，返回无变化
-        if client_version >= current_version:
+
+        # 🔧 修复: 只有当客户端版本大于服务器版本时才返回无变化
+        # 初始请求(version=0)必须返回完整数据
+        if client_version > 0 and client_version >= current_version:
             return jsonify({
                 'status': 'success',
                 'data': [],

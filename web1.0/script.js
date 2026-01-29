@@ -990,7 +990,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const checkboxCell = cells[0];
         const checkbox = checkboxCell.querySelector('.holding-checkbox');
         if (checkbox) {
-            // ⭐ 只通过updateGridCheckboxStyle设置状态,确保checked和背景色同步
+            // 直接更新checkbox状态，不做任何检查
             updateGridCheckboxStyle(stock.stock_code, hasActiveGrid ? 'active' : 'none');
 
             // 确保有点击事件监听器（检查是否已有监听器）
@@ -1096,6 +1096,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 添加点击事件：显示网格配置对话框
             checkbox.addEventListener('click', async (event) => {
                 event.preventDefault(); // 阻止默认的checkbox切换行为
+
                 await showGridConfigDialog(stock.stock_code);
             });
         }
@@ -2074,13 +2075,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // ⭐ 价格容错处理：支持盘前时间为0的情况
             let centerPrice = currentPrice;
-            let priceSource = '当前价格';
 
             if (centerPrice <= 0) {
                 // 尝试使用成本价作为中心价
                 if (costPrice > 0) {
                     centerPrice = costPrice;
-                    priceSource = '成本价';
                     showMessage(`当前价格不可用，使用成本价作为网格中心价`, 'warning');
                 } else {
                     // 两种价格都不可用，允许继续但不设置默认中心价
@@ -2122,15 +2121,25 @@ document.addEventListener('DOMContentLoaded', () => {
             // 填充对话框信息
             document.getElementById('gridStockCode').textContent = stockCode;
 
-            // ⭐ 显示价格及来源，并设置中心价格输入框的默认值
+            // ⭐ 显示实时市场价（移除来源说明，界面已明确标注）
             const centerPriceInput = document.getElementById('gridCenterPriceInput');
             if (centerPrice > 0) {
-                document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)} (${priceSource})`;
+                document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)}`;
                 centerPriceInput.value = centerPrice.toFixed(2);
             } else {
-                document.getElementById('gridCurrentPrice').textContent = `价格不可用 - 请手动设置中心价`;
+                document.getElementById('gridCurrentPrice').textContent = `价格不可用`;
                 centerPriceInput.value = '';
                 centerPriceInput.placeholder = '请手动输入网格中心价格';
+            }
+
+            // ⭐ 如果存在active session，显示原网格中心价
+            const existingCenterPriceRow = document.getElementById('gridExistingCenterPriceRow');
+            const existingCenterPriceSpan = document.getElementById('gridExistingCenterPrice');
+            if (hasActiveSession && config && config.center_price) {
+                existingCenterPriceRow.style.display = 'block';
+                existingCenterPriceSpan.textContent = `¥${parseFloat(config.center_price).toFixed(2)}`;
+            } else {
+                existingCenterPriceRow.style.display = 'none';
             }
 
             // ⭐ 验证config对象完整性，如果缺失字段使用默认值
@@ -2191,7 +2200,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 gridConfirmHandler = async () => {
                     // ⭐ 使用新的灵活API，支持通过session_id停止
                     await stopGridSessionById(activeSessionId, stockCode);
+
                     dialog.classList.add('hidden');
+                    fetchHoldings(); // 立即刷新持仓数据
                 };
             } else {
                 // 没有active session，按钮显示"启动网格交易"
@@ -2210,13 +2221,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // 3. 创建取消按钮的处理函数
             gridCancelHandler = () => {
                 dialog.classList.add('hidden');
-                // 🔧 修复: 使用updateGridCheckboxStyle恢复完整状态（checked + 样式）
-                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
-                if (checkbox) {
-                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
-                    // 使用统一的状态更新函数，确保checked和样式同步
-                    updateGridCheckboxStyle(stockCode, hasActiveGrid ? 'active' : 'none');
-                }
+                // 不需要恢复状态，刷新时会自动更新
+                fetchHoldings();
             };
 
             // 4. 添加新的事件监听器
@@ -2231,12 +2237,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             console.error('显示网格配置对话框失败:', error);
             showMessage('显示配置对话框失败: ' + error.message, 'error');
-            // 恢复checkbox状态
-            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
-            if (checkbox) {
-                const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
-                checkbox.checked = hasActiveGrid;
-            }
+            // 刷新持仓数据以确保状态一致
+            fetchHoldings();
         }
     }
 
@@ -2248,6 +2250,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateGridCheckboxStyle(stockCode, status) {
         const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
         if (!checkbox) return;
+
+        // ⭐ 防止旧数据覆盖：如果刚停止网格，忽略active状态更新
+        const justStoppedKey = `just_stopped_${stockCode}`;
+        if (window[justStoppedKey] && status === 'active') {
+            console.log(`[防抖] 忽略${stockCode}的active状态更新（刚停止网格）`);
+            return;  // 忽略此次更新，保持unchecked状态
+        }
 
         // 移除所有状态类
         checkbox.classList.remove('grid-active', 'grid-paused', 'grid-stopped');
@@ -2355,37 +2364,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 lastUpdate: Date.now()
             };
 
-            // 更新checkbox状态
-            updateGridCheckboxStyle(stockCode, 'active');
-
             // 关闭对话框
             document.getElementById('gridConfigDialog').classList.add('hidden');
 
-            // 立即同步状态（不依赖定时器）
-            await updateAllGridTradingStatus();
+            // ⭐ 立即更新checkbox状态（不需要等待fetchHoldings）
+            updateGridCheckboxStyle(stockCode, 'active');
 
-            // 刷新持仓数据
+            // 刷新持仓数据（确保所有数据一致）
             await fetchHoldings();
 
         } catch (error) {
             console.error('启动网格交易失败:', error);
             showMessage('启动网格交易失败: ' + error.message, 'error');
 
-            // 检查是否有活跃的网格交易session
-            const statusInfo = gridTradingStatus[stockCode];
-            const hasActiveSession = statusInfo && statusInfo.active_sessions > 0;
-
-            // 恢复checkbox状态和样式
-            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
-            if (checkbox) {
-                if (hasActiveSession) {
-                    // 有活跃session，显示激活状态
-                    updateGridCheckboxStyle(stockCode, 'active');
-                } else {
-                    // 无活跃session，清除样式
-                    updateGridCheckboxStyle(stockCode, 'none');
-                }
-            }
+            // 刷新持仓数据以确保状态一致
+            await fetchHoldings();
         }
     }
 
@@ -2415,11 +2408,22 @@ document.addEventListener('DOMContentLoaded', () => {
             // 清除网格交易状态
             delete gridTradingStatus[stockCode];
 
-            // 更新checkbox为停止状态（红色）
-            updateGridCheckboxStyle(stockCode, 'stopped');
+            // ⭐ 标记为"刚停止"，防止旧数据覆盖checkbox状态
+            const justStoppedKey = `just_stopped_${stockCode}`;
+            window[justStoppedKey] = true;
 
-            // 刷新持仓数据
-            await fetchHoldings();
+            // 关闭对话框
+            document.getElementById('gridConfigDialog').classList.add('hidden');
+
+            // ⭐ 立即更新checkbox状态
+            updateGridCheckboxStyle(stockCode, 'none');
+
+            // ⭐ 延迟1.5秒后刷新持仓数据（给后端时间更新数据库）
+            setTimeout(async () => {
+                await fetchHoldings();
+                // 清除"刚停止"标记
+                delete window[justStoppedKey];
+            }, 1500);
 
         } catch (error) {
             console.error('停止网格交易失败:', error);
