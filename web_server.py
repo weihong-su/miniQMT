@@ -52,16 +52,16 @@ def set_position_manager(pm):
     """设置position_manager实例（由main.py调用）"""
     global _position_manager_instance
     _position_manager_instance = pm
-    logger.info(f"[DEBUG] set_position_manager: 设置position_manager id={id(pm)}")
+    # logger.info(f"[DEBUG] set_position_manager: 设置position_manager id={id(pm)}")
 
 def get_position_manager_instance():
     """获取position_manager实例（供API端点使用）"""
     global _position_manager_instance
     if _position_manager_instance is None:
         # 如果未设置，回退到单例模式
-        logger.warning("[DEBUG] _position_manager_instance为None，使用get_position_manager()单例")
+        # logger.warning("[DEBUG] _position_manager_instance为None，使用get_position_manager()单例")
         return get_position_manager()
-    logger.debug(f"[DEBUG] get_position_manager_instance: 返回position_manager id={id(_position_manager_instance)}")
+    # logger.debug(f"[DEBUG] get_position_manager_instance: 返回position_manager id={id(_position_manager_instance)}")
     return _position_manager_instance
 
 # 实时推送的数据
@@ -1230,7 +1230,12 @@ def get_positions_all():
         if grid_manager:
             for pos in positions_all:
                 stock_code = pos.get('stock_code')
+                # 🔧 修复: 尝试带后缀和不带后缀两种格式查询
                 session = grid_manager.sessions.get(stock_code)
+                if not session and '.' not in stock_code:
+                    # 如果不带后缀，尝试添加.SH和.SZ后缀
+                    session = grid_manager.sessions.get(f"{stock_code}.SH") or \
+                              grid_manager.sessions.get(f"{stock_code}.SZ")
                 pos['grid_session_active'] = (session is not None and session.status == 'active')
         else:
             # 如果grid_manager未初始化，所有股票设为False
@@ -1389,15 +1394,15 @@ def start_grid_trading():
 
         # DEBUG: 详细检查grid_manager状态
         pm_id = id(position_manager)
-        logger.info(f"[DEBUG] position_manager id: {pm_id}")
-        logger.info(f"[DEBUG] position_manager类型: {type(position_manager)}")
-        logger.info(f"[DEBUG] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
-        logger.info(f"[DEBUG] grid_manager值: {position_manager.grid_manager}")
-        logger.info(f"[DEBUG] grid_manager类型: {type(position_manager.grid_manager) if position_manager.grid_manager else 'None'}")
+        # logger.info(f"[DEBUG] position_manager id: {pm_id}")
+        # logger.info(f"[DEBUG] position_manager类型: {type(position_manager)}")
+        # logger.info(f"[DEBUG] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
+        # logger.info(f"[DEBUG] grid_manager值: {position_manager.grid_manager}")
+        # logger.info(f"[DEBUG] grid_manager类型: {type(position_manager.grid_manager) if position_manager.grid_manager else 'None'}")
 
         if not position_manager.grid_manager:
-            logger.error("[DEBUG] grid_manager为None，无法启动网格交易")
-            logger.error(f"[DEBUG] 检查position_manager.__dict__.keys(): {list(position_manager.__dict__.keys()) if hasattr(position_manager, '__dict__') else 'N/A'}")
+            # logger.error("[DEBUG] grid_manager为None，无法启动网格交易")
+            # logger.error(f"[DEBUG] 检查position_manager.__dict__.keys(): {list(position_manager.__dict__.keys()) if hasattr(position_manager, '__dict__') else 'N/A'}")
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
         logger.info(f"[DEBUG] grid_manager检查通过，继续处理请求")
@@ -2221,7 +2226,7 @@ def start_web_server(position_manager=None):
     # 设置position_manager实例（如果提供了）
     if position_manager is not None:
         set_position_manager(position_manager)
-        logger.info(f"[DEBUG] start_web_server: 已设置position_manager id={id(position_manager)}")
+        # logger.info(f"[DEBUG] start_web_server: 已设置position_manager id={id(position_manager)}")
     else:
         logger.warning("[DEBUG] start_web_server: 未提供position_manager参数")
 

@@ -1070,7 +1070,6 @@ document.addEventListener('DOMContentLoaded', () => {
                        data-id="${stock.id || stock.stock_code}"
                        data-stock-code="${stock.stock_code}"
                        ${hasActiveGrid ? 'checked' : ''}>
-                ${hasActiveGrid ? '<span class="ml-1 text-green-600 text-xs">🟢</span>' : ''}
             </td>
             <td class="border p-2">${stock.stock_code || '--'}</td>
             <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>
@@ -2211,11 +2210,12 @@ document.addEventListener('DOMContentLoaded', () => {
             // 3. 创建取消按钮的处理函数
             gridCancelHandler = () => {
                 dialog.classList.add('hidden');
-                // 恢复checkbox状态
+                // 🔧 修复: 使用updateGridCheckboxStyle恢复完整状态（checked + 样式）
                 const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
                 if (checkbox) {
                     const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
-                    checkbox.checked = hasActiveGrid;
+                    // 使用统一的状态更新函数，确保checked和样式同步
+                    updateGridCheckboxStyle(stockCode, hasActiveGrid ? 'active' : 'none');
                 }
             };
 
@@ -2253,29 +2253,22 @@ document.addEventListener('DOMContentLoaded', () => {
         checkbox.classList.remove('grid-active', 'grid-paused', 'grid-stopped');
 
         // 根据状态添加类和样式，并同步checked属性
+        // 🔧 修复: 删除所有背景色设置，只使用checked状态展示
         switch(status) {
             case 'active':
                 checkbox.classList.add('grid-active');
-                checkbox.style.backgroundColor = '#22c55e';  // 绿色
-                checkbox.style.borderColor = '#16a34a';
                 checkbox.checked = true;  // ⭐ 同步checked状态
                 break;
             case 'paused':
                 checkbox.classList.add('grid-paused');
-                checkbox.style.backgroundColor = '#eab308';  // 黄色
-                checkbox.style.borderColor = '#ca8a04';
                 checkbox.checked = true;  // ⭐ 暂停状态也保持勾选
                 break;
             case 'stopped':
                 checkbox.classList.add('grid-stopped');
-                checkbox.style.backgroundColor = '#ef4444';  // 红色
-                checkbox.style.borderColor = '#dc2626';
                 checkbox.checked = false;  // ⭐ 停止后取消勾选
                 break;
             default:
-                // 默认状态，移除自定义样式
-                checkbox.style.backgroundColor = '';
-                checkbox.style.borderColor = '';
+                // 默认状态
                 checkbox.checked = false;  // ⭐ 无会话时取消勾选
         }
     }

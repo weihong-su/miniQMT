@@ -182,7 +182,15 @@ class GridTradingManager:
 
         try:
             active_sessions = self.db.get_active_grid_sessions()
-            logger.debug(f"[GRID] _load_active_sessions: 从数据库查询到 {len(active_sessions)} 个活跃会话")
+            logger.info(f"[GRID] _load_active_sessions: 从数据库查询到 {len(active_sessions)} 个活跃会话")
+
+            # 详细日志：打印所有查询到的会话
+            for idx, s in enumerate(active_sessions):
+                s_dict = dict(s)
+                logger.info(f"[GRID] _load_active_sessions: 数据库会话#{idx+1}: id={s_dict.get('id')}, "
+                           f"stock={s_dict.get('stock_code')}, status={s_dict.get('status')}, "
+                           f"end_time={s_dict.get('end_time')}")
+
             recovered_count = 0
             stopped_count = 0
 
@@ -191,7 +199,7 @@ class GridTradingManager:
                 session_dict = dict(session_data)
                 stock_code = session_dict['stock_code']
                 session_id = session_dict['id']
-                logger.debug(f"[GRID] _load_active_sessions: 处理会话 session_id={session_id}, stock_code={stock_code}")
+                logger.info(f"[GRID] _load_active_sessions: >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}")
 
                 try:
                     # 1. 检查会话是否已过期

@@ -113,7 +113,7 @@ def start_web_server_thread(position_manager):
         position_manager: 已初始化的position_manager实例
     """
     logger.info("启动Web服务器线程")
-    logger.info(f"[DEBUG main.py] 传入Web服务器的position_manager id: {id(position_manager)}")
+    # logger.info(f"[DEBUG main.py] 传入Web服务器的position_manager id: {id(position_manager)}")
 
     # 创建线程并传入position_manager
     web_thread = threading.Thread(target=lambda: start_web_server(position_manager))
@@ -215,16 +215,16 @@ def main():
 
         # 初始化网格交易管理器
         logger.info(f"检查网格交易配置: ENABLE_GRID_TRADING = {config.ENABLE_GRID_TRADING}")
-        logger.info(f"[DEBUG main.py] position_manager id: {id(position_manager)}")
-        logger.info(f"[DEBUG main.py] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
+        # logger.info(f"[DEBUG main.py] position_manager id: {id(position_manager)}")
+        # logger.info(f"[DEBUG main.py] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
 
         if config.ENABLE_GRID_TRADING:
             try:
                 logger.info("初始化网格交易管理器")
-                logger.info(f"[DEBUG main.py] 调用init_grid_manager前，grid_manager={getattr(position_manager, 'grid_manager', 'NO_ATTR')}")
+                # logger.info(f"[DEBUG main.py] 调用init_grid_manager前，grid_manager={getattr(position_manager, 'grid_manager', 'NO_ATTR')}")
                 position_manager.init_grid_manager(trading_executor)
-                logger.info(f"[DEBUG main.py] 调用init_grid_manager后，grid_manager={position_manager.grid_manager}")
-                logger.info(f"[DEBUG main.py] grid_manager类型: {type(position_manager.grid_manager)}")
+                # logger.info(f"[DEBUG main.py] 调用init_grid_manager后，grid_manager={position_manager.grid_manager}")
+                # logger.info(f"[DEBUG main.py] grid_manager类型: {type(position_manager.grid_manager)}")
                 logger.info("✓ 网格交易管理器初始化完成")
             except Exception as e:
                 logger.error(f"网格交易管理器初始化失败: {str(e)}")
