@@ -76,6 +76,10 @@ class PositionManager:
         self.last_full_refresh_time = 0
         self.full_refresh_interval = 60  # 1分钟全量刷新间隔
 
+        # 新增：定期版本升级控制
+        self.last_version_increment_time = time.time()
+        self.version_increment_interval = config.VERSION_INCREMENT_INTERVAL if hasattr(config, 'VERSION_INCREMENT_INTERVAL') else 15  # 默认15秒
+
         # 定时同步线程
         self.sync_thread = None
         self.sync_stop_flag = False
@@ -509,7 +513,7 @@ class PositionManager:
 
     # position_manager.py:_sync_loop() 方法修改
     def _sync_loop(self):
-        """定时同步循环 - 增强版"""
+        """定时同步循环 - 增强版（支持定期版本升级）"""
         while not self.sync_stop_flag:
             try:
                 # 原有的数据库同步
@@ -530,15 +534,22 @@ class PositionManager:
                         logger.debug("模拟交易模式：更新持仓价格和指标")
                         self.update_all_positions_price()  # 更新价格
                         self._increment_data_version()      # 触发版本更新
-                
+
+                # ⭐ 新增：定期自动升级版本号（确保Web界面定期刷新）
+                if (current_time - self.last_version_increment_time) >= self.version_increment_interval:
+                    with self.version_lock:
+                        self.data_version += 1
+                        self.last_version_increment_time = current_time
+                        # logger.info(f"⏰ 定期版本升级: v{self.data_version} (间隔: {self.version_increment_interval}秒)")
+
                 # ⭐ 优化: 使用配置文件中的同步间隔(15秒)
                 sleep_time = int(config.POSITION_SYNC_INTERVAL)
-                
+
                 for _ in range(sleep_time):
                     if self.sync_stop_flag:
                         break
                     time.sleep(1)
-                    
+
             except Exception as e:
                 logger.error(f"定时同步循环出错: {str(e)}")
                 time.sleep(60)  # 出错后等待一分钟再继续

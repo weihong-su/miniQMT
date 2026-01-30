@@ -1005,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 更新"运行中"标识
         const existingLabel = checkboxCell.querySelector('span');
         if (hasActiveGrid && !existingLabel) {
-            checkboxCell.innerHTML += '<span class="ml-1 text-green-600 text-xs">🟢</span>';
+            checkboxCell.innerHTML += '<span class="ml-1 text-green-600 text-xs"></span>';
         } else if (!hasActiveGrid && existingLabel) {
             existingLabel.remove();
         }

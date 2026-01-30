@@ -452,6 +452,9 @@ HTTP_API_MIN_INTERVAL = 1.0    # 最小请求间隔1秒
 # HTTP版本号机制(用于减少无效数据传输)
 ENABLE_HTTP_VERSION_CONTROL = True  # 是否启用版本号机制
 
+# 版本号定期升级间隔(秒) - 用于Web界面定期刷新
+VERSION_INCREMENT_INTERVAL = 15.0   # Web界面持仓数据每15秒自动刷新一次
+
 # ======================= 卖出监控配置 (2026-01-12) =======================
 # 卖出监控功能开关
 ENABLE_SELL_MONITOR = True                    # 监控总开关

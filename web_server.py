@@ -1339,7 +1339,7 @@ def start_push_thread():
         logger.warning("实时推送线程已在运行")
 
 def sync_auto_trading_status():
-    """🟢 20251219修复: Web服务器启动时同步ENABLE_AUTO_TRADING状态
+    """ 20251219修复: Web服务器启动时同步ENABLE_AUTO_TRADING状态
 
     问题: ENABLE_AUTO_TRADING不持久化导致重启后数据库和内存不一致
     - 数据库: 保存Web界面设置的值(可能是True)
@@ -2363,7 +2363,7 @@ def start_web_server(position_manager=None):
     else:
         logger.warning("[DEBUG] start_web_server: 未提供position_manager参数")
 
-    # 🟢 20251219新增: 启动时同步配置状态
+    #  20251219新增: 启动时同步配置状态
     sync_auto_trading_status()
 
     start_push_thread()
