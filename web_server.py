@@ -1643,17 +1643,17 @@ def get_grid_session_status(stock_code):
 
         # 标准化股票代码(自动补充市场后缀)
         stock_code = normalize_stock_code(stock_code)
-        logger.info(f"[API] 查询网格会话状态: stock_code={stock_code}")
+        # logger.info(f"[API] 查询网格会话状态: stock_code={stock_code}")
 
         # 从内存中查询活跃会话
         session = grid_manager.sessions.get(stock_code)
 
         if session and session.status == 'active':
             # ⭐ 添加调试日志：检查session对象的实际值
-            logger.info(f"[API] 找到活跃session: id={session.id}, stock_code={session.stock_code}")
-            logger.info(f"[API] session配置值: price_interval={session.price_interval} ({session.price_interval*100:.1f}%), "
-                       f"position_ratio={session.position_ratio} ({session.position_ratio*100:.1f}%), "
-                       f"stop_loss={session.stop_loss} ({session.stop_loss*100:.1f}%)")
+            # logger.info(f"[API] 找到活跃session: id={session.id}, stock_code={session.stock_code}")
+            # logger.info(f"[API] session配置值: price_interval={session.price_interval} ({session.price_interval*100:.1f}%), "
+            #            f"position_ratio={session.position_ratio} ({session.position_ratio*100:.1f}%), "
+            #            f"stop_loss={session.stop_loss} ({session.stop_loss*100:.1f}%)")
 
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
@@ -1683,33 +1683,46 @@ def get_grid_session_status(stock_code):
             })
         else:
             # 返回默认配置(百分比格式)
-            # 计算当前持仓总市值，用于计算max_investment（添加超时保护）
+            # ⭐ 计算当前股票的持仓市值，用于计算max_investment（当前持仓的一半）
             try:
-                # 使用超时保护避免阻塞
-                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                # 直接获取持仓数据，不使用线程池（避免线程安全问题）
+                positions_df = position_manager.get_all_positions()
+                stock_market_value = 0
 
-                def get_positions_data():
-                    positions = position_manager.get_all_positions()
-                    total_market_value = 0
-                    if not positions.empty:
-                        for _, pos in positions.iterrows():
+                # ⭐ 添加调试日志
+                logger.info(f"[API] 调试: 获取所有持仓，DataFrame形状: {positions_df.shape}, 是否为空: {positions_df.empty}")
+
+                if not positions_df.empty:
+                    # ⭐ 添加调试日志：显示所有持仓的stock_code
+                    all_stock_codes = positions_df['stock_code'].tolist()
+                    logger.info(f"[API] 调试: 所有持仓stock_code: {all_stock_codes}")
+                    logger.info(f"[API] 调试: 查询stock_code: {stock_code}, 类型: {type(stock_code)}")
+
+                    # 筛选当前股票的持仓（确保类型一致）
+                    stock_positions = positions_df[positions_df['stock_code'].astype(str) == str(stock_code)]
+                    logger.info(f"[API] 调试: 筛选后持仓数量: {len(stock_positions)}")
+
+                    if not stock_positions.empty:
+                        for idx, pos in stock_positions.iterrows():
                             market_value = pos.get('market_value', 0)
+                            volume = pos.get('volume', 0)
+                            current_price = pos.get('current_price', 0)
+                            logger.info(f"[API] 调试: 持仓详情 - volume={volume}, current_price={current_price}, market_value={market_value}")
                             if market_value:
-                                total_market_value += float(market_value)
-                    return total_market_value
+                                stock_market_value += float(market_value)
 
-                timeout_seconds = 2.0  # 2秒超时
-                future = api_executor.submit(get_positions_data)
+                logger.info(f"[API] {stock_code}当前持仓市值: {stock_market_value:.2f}元")
 
-                try:
-                    total_market_value = future.result(timeout=timeout_seconds)
-                    default_config = config.get_grid_default_config(total_market_value)
-                    max_investment = default_config['max_investment']
-                except FuturesTimeoutError:
-                    logger.warning(f"[API] 获取持仓数据超时({timeout_seconds}秒),使用固定默认值")
-                    max_investment = 10000  # 降级到固定默认值
+                # ⭐ max_investment = 当前持仓市值的一半
+                if stock_market_value and stock_market_value > 0:
+                    max_investment = stock_market_value * config.GRID_DEFAULT_MAX_INVESTMENT_RATIO
+                    logger.info(f"[API] {stock_code} max_investment计算: {stock_market_value:.2f} * {config.GRID_DEFAULT_MAX_INVESTMENT_RATIO} = {max_investment:.2f}元")
+                else:
+                    max_investment = 10000  # 无持仓时使用固定默认值
+                    logger.info(f"[API] {stock_code}无持仓或市值为0，使用固定默认值: {max_investment}元")
+
             except Exception as e:
-                logger.warning(f"[API] 计算max_investment失败: {str(e)},使用固定默认值")
+                logger.warning(f"[API] 计算{stock_code}的max_investment失败: {str(e)},使用固定默认值")
                 max_investment = 10000  # 降级到固定默认值
 
             return jsonify({

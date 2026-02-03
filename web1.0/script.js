@@ -973,7 +973,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 更新现有持仓行
+    // 更新现有持仓行（仅更新持仓数据，不更新checkbox状态）
     function updateExistingRow(row, stock) {
         // 更新各个单元格的值
         const cells = row.querySelectorAll('td');
@@ -981,34 +981,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
         const hasActiveGrid = stock.grid_session_active === true;
 
-        // 更新行的边框样式
+        // 更新行的边框样式（视觉指示，不影响checkbox状态）
         row.className = hasActiveGrid
             ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
             : 'hover:bg-gray-50 even:bg-gray-100';
 
-        // 更新checkbox和网格状态标识
-        const checkboxCell = cells[0];
-        const checkbox = checkboxCell.querySelector('.holding-checkbox');
-        if (checkbox) {
-            // 直接更新checkbox状态，不做任何检查
-            updateGridCheckboxStyle(stock.stock_code, hasActiveGrid ? 'active' : 'none');
-
-            // 确保有点击事件监听器（检查是否已有监听器）
-            if (!checkbox.dataset.gridClickListener) {
-                checkbox.addEventListener('click', async (event) => {
-                    event.preventDefault();
-                    await showGridConfigDialog(stock.stock_code);
-                });
-                checkbox.dataset.gridClickListener = 'true';
-            }
-        }
-        // 更新"运行中"标识
-        const existingLabel = checkboxCell.querySelector('span');
-        if (hasActiveGrid && !existingLabel) {
-            checkboxCell.innerHTML += '<span class="ml-1 text-green-600 text-xs"></span>';
-        } else if (!hasActiveGrid && existingLabel) {
-            existingLabel.remove();
-        }
+        // ⭐ checkbox状态由 updateAllGridTradingStatus 独立管理，此处不更新
 
         // 更新基本信息
         cells[1].textContent = stock.stock_code || '--';
@@ -1048,12 +1026,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 1000);
     }
 
-    // 创建新的持仓行
+    // 创建新的持仓行（仅创建DOM结构，不设置checkbox状态）
     function createStockRow(stock) {
         const row = document.createElement('tr');
         // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
         const hasActiveGrid = stock.grid_session_active === true;
-        // 如果有活跃网格，添加绿色边框
+        // 如果有活跃网格，添加绿色边框（视觉指示）
         row.className = hasActiveGrid
             ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
             : 'hover:bg-gray-50 even:bg-gray-100';
@@ -1063,6 +1041,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const changePercentage = parseFloat(stock.change_percentage || 0);
         const profitRatio = parseFloat(stock.profit_ratio || 0);
 
+        // ⭐ checkbox根据后端返回的grid_session_active字段设置初始状态
+        // 后续的状态更新仍由 updateAllGridTradingStatus 独立管理
         // 构建行内容
         row.innerHTML = `
             <td class="border p-2">
@@ -1087,15 +1067,17 @@ document.addEventListener('DOMContentLoaded', () => {
             <td class="border p-2">${parseFloat(stock.base_cost_price || stock.cost_price || 0).toFixed(2)}</td>
         `;
 
-        // 添加checkbox点击事件监听器
+        // ⭐ checkbox状态由 updateAllGridTradingStatus 独立管理
+        // 点击后立即恢复状态，防止浏览器默认行为导致的状态切换
+
+        // 添加点击事件监听器（用于打开网格配置对话框）
         const checkbox = row.querySelector('.holding-checkbox');
         if (checkbox) {
-            // 设置初始背景色样式
-            updateGridCheckboxStyle(stock.stock_code, hasActiveGrid ? 'active' : 'none');
-
-            // 添加点击事件：显示网格配置对话框
             checkbox.addEventListener('click', async (event) => {
                 event.preventDefault(); // 阻止默认的checkbox切换行为
+
+                // ⭐ 立即恢复checkbox的正确状态（防止浏览器切换）
+                checkbox.checked = hasActiveGrid;
 
                 await showGridConfigDialog(stock.stock_code);
             });
@@ -1188,24 +1170,29 @@ document.addEventListener('DOMContentLoaded', () => {
     function addHoldingCheckboxListeners() {
         const checkboxes = elements.holdingsTableBody.querySelectorAll('.holding-checkbox');
         checkboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => {
-                const stockCode = e.target.dataset.stockCode;
+            // ⭐ checkbox状态由 updateAllGridTradingStatus 独立管理
+            // 此处只添加点击事件监听器，用于打开网格配置对话框
 
-                // 无论选中还是取消选中，都弹出配置对话框
-                // 如果有active session，对话框会显示当前配置和"停止"按钮
-                // 如果没有active session，对话框会显示默认配置和"启动"按钮
-                showGridConfigDialog(stockCode);
+            // 检查是否已有监听器（避免重复添加）
+            if (!checkbox.dataset.hasClickListener) {
+                checkbox.addEventListener('click', async (e) => {
+                    e.preventDefault(); // 阻止默认的checkbox切换行为
+                    const stockCode = e.target.dataset.stockCode;
 
-                // 检查是否所有复选框都被选中
-                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-                elements.selectAllHoldings.checked = allChecked;
-            });
+                    // ⭐ 立即恢复checkbox的正确状态（防止浏览器切换）
+                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                    e.target.checked = hasActiveGrid;
 
-            // 初始化时应用当前网格交易状态的样式
-            const stockCode = checkbox.dataset.stockCode;
-            if (gridTradingStatus[stockCode]) {
-                const status = gridTradingStatus[stockCode].status;
-                updateGridCheckboxStyle(stockCode, status);
+                    // 弹出配置对话框
+                    // 如果有active session，对话框会显示当前配置和"停止"按钮
+                    // 如果没有active session，对话框会显示默认配置和"启动"按钮
+                    await showGridConfigDialog(stockCode);
+
+                    // 检查是否所有复选框都被选中（用于全选框状态）
+                    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                    elements.selectAllHoldings.checked = allChecked;
+                });
+                checkbox.dataset.hasClickListener = 'true';
             }
         });
     }
@@ -2177,6 +2164,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const dialog = document.getElementById('gridConfigDialog');
             dialog.classList.remove('hidden');
 
+            // ⭐ 立即恢复checkbox的正确状态（防止点击时的状态切换）
+            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+            if (checkbox) {
+                const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                checkbox.checked = hasActiveGrid;
+            }
+
             // ⭐ 绑定按钮事件（优雅方式：先移除旧监听器，再添加新监听器）
             const confirmBtn = document.getElementById('gridDialogConfirmBtn');
             const cancelBtn = document.getElementById('gridDialogCancelBtn');
@@ -2221,7 +2215,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // 3. 创建取消按钮的处理函数
             gridCancelHandler = () => {
                 dialog.classList.add('hidden');
-                // 不需要恢复状态，刷新时会自动更新
+
+                // ⭐ 立即恢复checkbox的正确状态（避免刷新延迟导致的状态不一致）
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                if (checkbox) {
+                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                    checkbox.checked = hasActiveGrid;
+                }
+
+                // 刷新持仓数据以确保所有状态同步
                 fetchHoldings();
             };
 
@@ -2444,72 +2446,75 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 更新所有网格交易状态（优化版：使用独立的checkbox状态API）
+     * 更新所有网格交易状态（使用单个股票API逐个查询）
      * 定期从服务器获取最新状态并更新UI
-     * ⭐ 优化点：checkbox状态与持仓数据完全解耦
+     * ⭐ 优化点：checkbox状态与持仓数据完全解耦，独立更新
      */
     async function updateAllGridTradingStatus() {
         try {
-            // ⭐ 使用新的独立checkbox状态API
-            const response = await fetch(`${API_BASE_URL}/api/grid/checkbox-states`);
-            if (!response.ok) {
-                console.warn('获取网格checkbox状态失败');
+            // ⭐ 获取所有持仓股票的checkbox元素
+            const checkboxes = elements.holdingsTableBody.querySelectorAll('.holding-checkbox');
+            if (checkboxes.length === 0) {
+                console.log('[Grid] 没有持仓股票，跳过checkbox状态更新');
                 return;
             }
-
-            const data = await response.json();
-            if (!data.success) {
-                console.warn('获取网格checkbox状态失败:', data.error);
-                return;
-            }
-
-            // ⭐ 记录当前版本号，用于判断是否需要更新
-            const serverVersion = data.version;
-            const localVersion = localStorage.getItem('gridCheckboxVersion');
-
-            // 如果版本号相同，跳过更新（减少不必要的DOM操作）
-            if (localVersion && parseInt(localVersion) === serverVersion) {
-                console.log('[Grid] checkbox状态未变化，跳过更新');
-                return;
-            }
-
-            // 更新本地版本号
-            localStorage.setItem('gridCheckboxVersion', serverVersion);
-
-            // ⭐ 更新每个股票的checkbox状态
-            const states = data.states || {};
 
             // 先清除所有本地状态（准备全量更新）
             const previousStates = {...gridTradingStatus};
+            const currentStates = {};
 
-            // 更新活跃session的状态
-            Object.keys(states).forEach(stockCode => {
-                const state = states[stockCode];
-                if (state.active) {
-                    gridTradingStatus[stockCode] = {
-                        sessionId: state.session_id,
-                        status: 'active',
-                        lastUpdate: Date.now()
-                    };
-                    updateGridCheckboxStyle(stockCode, 'active');
-                } else {
-                    // 如果之前有状态，现在变为inactive，需要更新UI
-                    if (previousStates[stockCode]) {
-                        updateGridCheckboxStyle(stockCode, 'none');
-                        delete gridTradingStatus[stockCode];
+            // ⭐ 对每个持仓股票单独调用 /api/grid/session/<stock_code> 接口
+            for (const checkbox of checkboxes) {
+                const stockCode = checkbox.dataset.stockCode;
+                if (!stockCode) continue;
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
+                    if (!response.ok) {
+                        console.warn(`[Grid] 获取${stockCode}的session状态失败`);
+                        continue;
                     }
-                }
-            });
 
-            // 检查是否有本地状态但服务器没有的（说明session已停止）
+                    const data = await response.json();
+                    if (!data.success) {
+                        console.warn(`[Grid] 获取${stockCode}的session状态失败:`, data.error);
+                        continue;
+                    }
+
+                    // ⭐ 根据返回的 has_session 字段更新checkbox状态
+                    const hasActiveSession = data.has_session === true;
+
+                    if (hasActiveSession) {
+                        // 有活跃session
+                        gridTradingStatus[stockCode] = {
+                            sessionId: data.session_id,
+                            status: 'active',
+                            lastUpdate: Date.now()
+                        };
+                        currentStates[stockCode] = true;
+                        updateGridCheckboxStyle(stockCode, 'active');
+                    } else {
+                        // 无活跃session
+                        currentStates[stockCode] = false;
+                        if (previousStates[stockCode]) {
+                            updateGridCheckboxStyle(stockCode, 'none');
+                            delete gridTradingStatus[stockCode];
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[Grid] 获取${stockCode}的session状态异常:`, error);
+                }
+            }
+
+            // 检查是否有本地状态但当前没有的（说明session已停止）
             Object.keys(previousStates).forEach(stockCode => {
-                if (!states[stockCode] || !states[stockCode].active) {
+                if (!currentStates[stockCode]) {
                     updateGridCheckboxStyle(stockCode, 'none');
                     delete gridTradingStatus[stockCode];
                 }
             });
 
-            console.log(`[Grid] checkbox状态已更新，版本: ${serverVersion}`);
+            console.log(`[Grid] checkbox状态已更新，共查询${checkboxes.length}只股票`);
 
         } catch (error) {
             console.error('更新网格交易状态失败:', error);
