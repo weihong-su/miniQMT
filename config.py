@@ -291,13 +291,23 @@ LOG_CLEANUP_TIME = "00:00:00"  # 每天凌晨执行清理
 
 # ======================= 功能配置 =======================
 # 交易时间配置
-TRADE_TIME = {
-    "morning_start": "09:30:00",
-    "morning_end": "13:00:00",
-    "afternoon_start": "13:00:00",
-    "afternoon_end": "15:00:00",
-    "trade_days": [1, 2, 3, 4, 5]  # 周一至周五
-}
+# DEBUG模式下使用24小时全周交易，方便测试
+if DEBUG:
+    TRADE_TIME = {
+        "morning_start": "00:00:00",
+        "morning_end": "23:59:59",
+        "afternoon_start": "00:00:00",
+        "afternoon_end": "23:59:59",
+        "trade_days": [1, 2, 3, 4, 5, 6, 7]  # 周一至周日
+    }
+else:
+    TRADE_TIME = {
+        "morning_start": "09:30:00",
+        "morning_end": "13:00:00",
+        "afternoon_start": "13:00:00",
+        "afternoon_end": "15:00:00",
+        "trade_days": [1, 2, 3, 4, 5]  # 周一至周五
+    }
 
 # ============ 新增: 盘前同步配置 ============
 PREMARKET_SYNC_TIME = {

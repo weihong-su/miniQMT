@@ -439,11 +439,15 @@ class DataManager:
             if stock_code in self.stock_names_cache:
                 return self.stock_names_cache[stock_code]
             
-            # 从QMT交易接口获取
+            # 从QMT交易接口获取（仅实盘模式）
             try:
+                # 模拟模式下跳过实盘API调用
+                if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                    raise Exception("模拟模式，跳过QMT API")
+
                 from position_manager import get_position_manager
                 position_manager = get_position_manager()
-                
+
                 if hasattr(position_manager, 'qmt_trader') and position_manager.qmt_trader:
                     positions_df = position_manager.qmt_trader.position()
                     if not positions_df.empty and '证券代码' in positions_df.columns and '证券名称' in positions_df.columns:

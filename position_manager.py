@@ -557,8 +557,29 @@ class PositionManager:
     def get_all_positions(self):
         """获取所有持仓"""
         try:
+            # 模拟模式：直接从内存数据库返回，不调用实盘API
+            if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                query = "SELECT * FROM positions"
+                positions_df = pd.read_sql_query(query, self.memory_conn)
+
+                # 确保数值列类型正确
+                if not positions_df.empty:
+                    numeric_columns = ['volume', 'available', 'cost_price', 'current_price',
+                                        'market_value', 'profit_ratio', 'highest_price', 'stop_loss_price','breakout_highest_price']
+                    for col in numeric_columns:
+                        if col in positions_df.columns:
+                            positions_df[col] = pd.to_numeric(positions_df[col], errors='coerce').fillna(0)
+
+                    if 'profit_triggered' in positions_df.columns:
+                        positions_df['profit_triggered'] = positions_df['profit_triggered'].fillna(False)
+                    if 'profit_breakout_triggered' in positions_df.columns:
+                        positions_df['profit_breakout_triggered'] = positions_df['profit_breakout_triggered'].fillna(False)
+
+                return positions_df.copy() if not positions_df.empty else pd.DataFrame()
+
+            # 实盘模式：调用QMT API
             current_time = time.time()
-            
+
             # 只在时间间隔到达后更新数据
             if (current_time - self.last_position_update_time) >= self.position_update_interval:
                 # 获取实盘持仓数据
