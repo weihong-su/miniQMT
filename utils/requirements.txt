@@ -1,0 +1,53 @@
+# miniQMT 量化交易系统依赖包
+# 使用方式: pip install -r utils/requirements.txt
+# (从项目根目录运行)
+
+# ============= 核心依赖 =============
+# 数据分析与处理
+pandas>=1.3.0,<2.0.0
+numpy>=1.21.0,<2.0.0
+
+# Web服务框架
+Flask>=2.0.0,<3.0.0
+Flask-CORS>=3.0.10
+
+# ============= QMT API依赖 =============
+# 迅投QMT量化交易接口
+xtquant>=1.0.0
+
+# ============= 数据源依赖 =============
+# 行情数据接口
+mootdx>=0.4.0
+baostock>=0.8.8
+
+# ============= 验证与工具 =============
+# 数据验证
+marshmallow>=3.14.0
+
+# HTTP请求库
+requests>=2.26.0
+
+# ============= 可选依赖 =============
+# 如果需要更好的性能，可以安装以下包:
+# numexpr>=2.8.0  # pandas加速
+# bottleneck>=1.3.0  # pandas加速
+# openpyxl>=3.0.0  # Excel文件支持(如需导出Excel)
+# xlrd>=2.0.0  # 读取旧版Excel文件
+
+# ============= 可视化与数据库(可选) =============
+# mplfinance>=0.12.0  # K线图绘制(如需可视化)
+# pymysql>=1.0.0  # MySQL数据库支持(如需替换SQLite)
+# schedule>=1.1.0  # 定时任务调度(如需cron风格调度)
+
+# ============= 技术分析库(特殊安装) =============
+# TA-Lib 需要从本地whl文件安装（不在PyPI）:
+# pip install utils/TA_Lib-0.4.26-cp38-cp38-win_amd64.whl
+# 注意: cp38对应Python 3.8，其他版本需下载对应whl
+# whl文件位置: utils/TA_Lib-0.4.26-cp38-cp38-win_amd64.whl
+# 下载地址: https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
+
+# ============= 开发依赖(可选) =============
+# pytest>=6.2.0  # 单元测试
+# pytest-cov>=2.12.0  # 测试覆盖率
+# black>=21.0  # 代码格式化
+# flake8>=3.9.0  # 代码检查

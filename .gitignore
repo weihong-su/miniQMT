@@ -90,3 +90,4 @@ xtquant/__pycache__/xtutil.cpython-38.pyc
 data/trading.db
 stock_pool.json
 logs/qmt_trading.log
+.omc/
