@@ -1356,8 +1356,14 @@ class PositionManager:
                                         if grid_signal:
                                             logger.info(f"检测到网格信号: {grid_signal}")
                                             # 将信号添加到队列(由strategy线程处理)
+                                            # 统一网格信号格式，与止盈止损信号保持一致
+                                            grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
                                             with self.signal_lock:
-                                                self.latest_signals[stock_code] = grid_signal
+                                                self.latest_signals[stock_code] = {
+                                                    'type': grid_signal_type,
+                                                    'info': grid_signal,
+                                                    'timestamp': datetime.now()
+                                                }
                                     except Exception as e:
                                         logger.error(f"检测网格信号失败: {str(e)}")
                     except Exception as e:
@@ -3018,8 +3024,34 @@ class PositionManager:
                             }
                             logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
                         else:
-                            # 清除已不存在的信号
-                            self.latest_signals.pop(stock_code, None)
+                            # 清除已不存在的信号（但保留网格信号，网格信号由网格检测逻辑管理）
+                            with self.signal_lock:
+                                existing = self.latest_signals.get(stock_code)
+                                if existing and existing.get('type', '').startswith('grid_'):
+                                    pass  # 保留网格信号，不清除
+                                else:
+                                    self.latest_signals.pop(stock_code, None)
+
+                    # ===== 网格交易信号检测 =====
+                    if not signal_type and self.grid_manager and config.ENABLE_GRID_TRADING:
+                        try:
+                            # 复用已获取的latest_quote，避免重复调用
+                            if latest_quote:
+                                current_price = float(latest_quote.get('lastPrice', 0))
+                                if current_price > 0:
+                                    grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
+                                    if grid_signal:
+                                        # 转换信号格式：'BUY' -> 'grid_buy', 'SELL' -> 'grid_sell'
+                                        grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
+                                        with self.signal_lock:
+                                            self.latest_signals[stock_code] = {
+                                                'type': grid_signal_type,
+                                                'info': grid_signal,
+                                                'timestamp': datetime.now()
+                                            }
+                                        logger.info(f"[GRID] {stock_code} 检测到网格信号: {grid_signal_type}")
+                        except Exception as e:
+                            logger.error(f"[GRID] {stock_code} 网格信号检测异常: {e}")
 
                     # 更新最高价（如果当前价格更高）
                     try:

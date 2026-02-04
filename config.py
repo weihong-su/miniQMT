@@ -18,13 +18,18 @@ LOG_BACKUP_COUNT = 5  # 保留5个备份文件
 # ======================= 功能开关 =======================
 ENABLE_SIMULATION_MODE = True   # 模拟交易模式开关（True=模拟，False=实盘）
 ENABLE_MONITORING = False       # 控制前端UI监控状态
-ENABLE_AUTO_TRADING = False     # 自动交易总开关：控制是否执行交易决策并形成交易记录
+ENABLE_AUTO_TRADING = False     # 动态止盈止损自动执行开关（不影响网格交易）
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作
 ENABLE_ALLOW_SELL = True        # 是否允许卖出操作
 
 # 策略功能模块开关(独立控制)
-ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关
+ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关（信号检测）
 # ENABLE_GRID_TRADING 已移至第470行的新网格交易配置区域
+
+# 重要说明：
+# - ENABLE_AUTO_TRADING：控制止盈止损信号的自动执行
+# - ENABLE_GRID_TRADING：控制网格交易的检测和执行（独立开关，互不影响）
+# - ENABLE_DYNAMIC_STOP_PROFIT：控制止盈止损信号的检测
 
 # 其他功能开关
 ENABLE_DATA_SYNC = True             # 是否启用数据同步
@@ -479,7 +484,9 @@ SELL_ALERT_CONFIG = {
 
 # ======================= 网格交易高级配置 (2026-01-24) =======================
 
-# 网格交易总开关
+# ⭐ 网格交易总开关（独立控制，与ENABLE_AUTO_TRADING互不影响）
+# - ENABLE_GRID_TRADING = True：启用网格交易检测和执行
+# - ENABLE_GRID_TRADING = False：完全禁用网格交易功能
 ENABLE_GRID_TRADING = True  # 启用后才能使用网格交易功能
 
 # 回调触发机制
