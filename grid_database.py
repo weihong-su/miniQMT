@@ -152,9 +152,32 @@ class DatabaseManager:
                 stop_reason TEXT,
 
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+                -- ⚠️ 新增字段: 风险等级和模板名称
+                risk_level TEXT DEFAULT 'moderate',
+                template_name TEXT
             )
         """)
+
+        # 数据库迁移: 为已存在的表添加新字段
+        try:
+            cursor.execute("ALTER TABLE grid_trading_sessions ADD COLUMN risk_level TEXT DEFAULT 'moderate'")
+            logger.info("数据库迁移: 添加 risk_level 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass  # 字段已存在,跳过
+            else:
+                raise
+
+        try:
+            cursor.execute("ALTER TABLE grid_trading_sessions ADD COLUMN template_name TEXT")
+            logger.info("数据库迁移: 添加 template_name 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass  # 字段已存在,跳过
+            else:
+                raise
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_grid_sessions_stock
@@ -274,8 +297,8 @@ class DatabaseManager:
                 (stock_code, status, center_price, current_center_price,
                  price_interval, position_ratio, callback_ratio,
                  max_investment, max_deviation, target_profit, stop_loss,
-                 start_time, end_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 start_time, end_time, risk_level, template_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_data['stock_code'],
                 'active',
@@ -289,7 +312,9 @@ class DatabaseManager:
                 session_data['target_profit'],
                 session_data['stop_loss'],
                 session_data['start_time'],
-                session_data['end_time']
+                session_data['end_time'],
+                session_data.get('risk_level', 'moderate'),
+                session_data.get('template_name')
             ))
             self.conn.commit()
             session_id = cursor.lastrowid
@@ -554,6 +579,87 @@ class DatabaseManager:
             """, (datetime.now().isoformat(), template_name))
             self.conn.commit()
             logger.debug(f"模板使用统计已更新: {template_name}")
+
+    def init_risk_level_templates(self):
+        """初始化三档风险等级预设模板
+
+        ⚠️ 重要: 止损比例已调整
+        - 激进型: -15% (容忍大回撤)
+        - 稳健型: -10% (平衡)
+        - 保守型: -8% (快速止损)
+        """
+        logger.info("=" * 60)
+        logger.info("开始初始化风险等级模板...")
+        logger.info("=" * 60)
+
+        templates = [
+            {
+                'template_name': '激进型网格',
+                'price_interval': 0.03,
+                'position_ratio': 0.30,
+                'callback_ratio': 0.003,
+                'max_deviation': 0.10,
+                'target_profit': 0.15,
+                'stop_loss': -0.15,  # ⚠️ 调整后: 容忍大回撤
+                'duration_days': 7,
+                'max_investment_ratio': 0.5,
+                'description': '适合高波动成长股,档位密集(3%),容忍大回撤(-15%),追求高收益(+15%)',
+                'is_default': False
+            },
+            {
+                'template_name': '稳健型网格',
+                'price_interval': 0.05,
+                'position_ratio': 0.25,
+                'callback_ratio': 0.005,
+                'max_deviation': 0.15,
+                'target_profit': 0.10,
+                'stop_loss': -0.10,
+                'duration_days': 7,
+                'max_investment_ratio': 0.5,
+                'description': '适合主流蓝筹股,平衡风险收益,默认推荐策略',
+                'is_default': True  # 默认模板
+            },
+            {
+                'template_name': '保守型网格',
+                'price_interval': 0.08,
+                'position_ratio': 0.20,
+                'callback_ratio': 0.008,
+                'max_deviation': 0.20,
+                'target_profit': 0.08,
+                'stop_loss': -0.08,  # ⚠️ 调整后: 快速止损
+                'duration_days': 7,
+                'max_investment_ratio': 0.5,
+                'description': '适合低波动指数或大盘股,档位稀疏(8%),快速止损(-8%),稳健盈利(+8%)',
+                'is_default': False
+            }
+        ]
+
+        initialized_count = 0
+        skipped_count = 0
+
+        for template in templates:
+            try:
+                # 检查是否已存在,避免重复插入
+                existing = self.get_grid_template(template['template_name'])
+                if existing:
+                    logger.info(f"⏭️  模板已存在,跳过: {template['template_name']}")
+                    skipped_count += 1
+                    continue
+
+                self.save_grid_template(template)
+                logger.info(f"✅ 初始化模板成功: {template['template_name']}")
+                logger.info(f"   - 档位间隔: {template['price_interval']*100}%")
+                logger.info(f"   - 目标盈利: {template['target_profit']*100}%")
+                logger.info(f"   - 止损比例: {template['stop_loss']*100}%")
+                initialized_count += 1
+            except Exception as e:
+                logger.error(f"❌ 初始化模板失败: {template['template_name']}, 错误: {str(e)}")
+
+        logger.info("=" * 60)
+        logger.info(f"风险等级模板初始化完成: 新增{initialized_count}个, 跳过{skipped_count}个")
+        logger.info("=" * 60)
+
+        return initialized_count
 
     def close(self):
         """关闭数据库连接"""

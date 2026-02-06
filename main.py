@@ -226,6 +226,20 @@ def main():
                 # logger.info(f"[DEBUG main.py] 调用init_grid_manager后，grid_manager={position_manager.grid_manager}")
                 # logger.info(f"[DEBUG main.py] grid_manager类型: {type(position_manager.grid_manager)}")
                 logger.info("✓ 网格交易管理器初始化完成")
+
+                # ⚠️ 新增: 初始化风险等级模板(仅首次运行或更新时)
+                try:
+                    logger.info("开始初始化风险等级模板...")
+                    # 从position_manager获取db_manager
+                    db_mgr = position_manager.db_manager
+                    initialized_count = db_mgr.init_risk_level_templates()
+                    if initialized_count > 0:
+                        logger.info(f"✓ 新增 {initialized_count} 个风险等级模板")
+                    else:
+                        logger.info("✓ 风险等级模板已存在,无需初始化")
+                except Exception as e:
+                    logger.warning(f"初始化风险等级模板失败(不影响系统运行): {str(e)}")
+
             except Exception as e:
                 logger.error(f"网格交易管理器初始化失败: {str(e)}")
                 logger.info("系统继续运行(网格交易功能不可用)")

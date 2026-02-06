@@ -1330,13 +1330,13 @@ class PositionManager:
                         latest_quote = self.data_manager.get_latest_data(stock_code)
                         if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
                             current_price = float(latest_quote['lastPrice'])
-                            
+
                             # 只有价格有显著变化时才更新
                             old_price = safe_numeric_values['current_price']
                             if abs(current_price - old_price) / max(old_price, 0.01) > 0.003:  # 防止除零
                                 # 使用安全转换后的值来更新
                                 self.update_position(
-                                    stock_code=stock_code, 
+                                    stock_code=stock_code,
                                     volume=safe_numeric_values['volume'],
                                     cost_price=safe_numeric_values['cost_price'],
                                     available=safe_numeric_values['available'],
@@ -1349,23 +1349,23 @@ class PositionManager:
                                 )
                                 logger.debug(f"更新 {stock_code} 的最新价格为 {current_price:.2f}")
 
-                                # 检测网格交易信号
-                                if self.grid_manager and config.ENABLE_GRID_TRADING:
-                                    try:
-                                        grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
-                                        if grid_signal:
-                                            logger.info(f"检测到网格信号: {grid_signal}")
-                                            # 将信号添加到队列(由strategy线程处理)
-                                            # 统一网格信号格式，与止盈止损信号保持一致
-                                            grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
-                                            with self.signal_lock:
-                                                self.latest_signals[stock_code] = {
-                                                    'type': grid_signal_type,
-                                                    'info': grid_signal,
-                                                    'timestamp': datetime.now()
-                                                }
-                                    except Exception as e:
-                                        logger.error(f"检测网格信号失败: {str(e)}")
+                            # 检测网格交易信号（独立执行，不受价格变化阈值限制）
+                            if self.grid_manager and config.ENABLE_GRID_TRADING:
+                                try:
+                                    grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
+                                    if grid_signal:
+                                        logger.info(f"检测到网格信号: {grid_signal}")
+                                        # 将信号添加到队列(由strategy线程处理)
+                                        # 统一网格信号格式，与止盈止损信号保持一致
+                                        grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
+                                        with self.signal_lock:
+                                            self.latest_signals[stock_code] = {
+                                                'type': grid_signal_type,
+                                                'info': grid_signal,
+                                                'timestamp': datetime.now()
+                                            }
+                                except Exception as e:
+                                    logger.error(f"检测网格信号失败: {str(e)}")
                     except Exception as e:
                         logger.error(f"获取 {stock_code} 最新价格时出错: {str(e)}")
                         continue  # 跳过这只股票，继续处理其他股票
@@ -3035,7 +3035,8 @@ class PositionManager:
                     # ===== 网格交易信号检测 =====
                     if not signal_type and self.grid_manager and config.ENABLE_GRID_TRADING:
                         try:
-                            # 复用已获取的latest_quote，避免重复调用
+                            # 主动获取latest_quote
+                            latest_quote = self.data_manager.get_latest_data(stock_code)
                             if latest_quote:
                                 current_price = float(latest_quote.get('lastPrice', 0))
                                 if current_price > 0:

@@ -175,6 +175,211 @@
         .simulation-mode-warning svg {
             margin-right: 0.5rem;
         }
+
+        /* 风险等级选择器样式 */
+        .risk-level-selector {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          padding: 15px;
+          border-radius: 8px;
+          color: white;
+          margin-bottom: 20px;
+        }
+
+        .risk-level-selector label {
+          color: white !important;
+          margin-bottom: 8px;
+          display: block;
+        }
+
+        .risk-select {
+          width: 100%;
+          padding: 10px;
+          font-size: 14px;
+          border: 2px solid #ddd;
+          border-radius: 6px;
+          background: white;
+          color: #333;
+          cursor: pointer;
+          transition: all 0.3s;
+        }
+
+        .risk-select:hover {
+          border-color: #667eea;
+          box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .risk-select:focus {
+          outline: none;
+          border-color: #667eea;
+          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .risk-description {
+          margin-top: 10px;
+          padding: 10px;
+          background: rgba(255,255,255,0.2);
+          border-radius: 4px;
+          font-size: 13px;
+          line-height: 1.5;
+          backdrop-filter: blur(10px);
+        }
+
+        .tooltip-icon {
+          cursor: help;
+          margin-left: 5px;
+          font-size: 16px;
+          position: relative;
+          display: inline-block;
+        }
+
+        .tooltip-icon:hover::after {
+          content: attr(data-tooltip);
+          position: absolute;
+          bottom: 125%;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: 8px 12px;
+          background: rgba(0,0,0,0.9);
+          color: white;
+          font-size: 12px;
+          white-space: nowrap;
+          border-radius: 4px;
+          z-index: 1000;
+          pointer-events: none;
+        }
+
+        .tooltip-icon:hover::before {
+          content: "";
+          position: absolute;
+          bottom: 115%;
+          left: 50%;
+          transform: translateX(-50%);
+          border: 5px solid transparent;
+          border-top-color: rgba(0,0,0,0.9);
+          z-index: 1000;
+        }
+
+        /* 视觉反馈动画 */
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .risk-level-selector.pulsing {
+          animation: pulse 0.5s;
+        }
+
+        /* 网格状态Tooltip */
+        .grid-tooltip {
+          display: none;
+          position: absolute;
+          background: white;
+          border: 2px solid #667eea;
+          border-radius: 8px;
+          padding: 12px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+          z-index: 9999;
+          min-width: 280px;
+          max-width: 350px;
+          pointer-events: none;
+          font-size: 13px;
+        }
+
+        .tooltip-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #e0e0e0;
+        }
+
+        .tooltip-stock-code {
+          font-weight: bold;
+          font-size: 14px;
+          color: #333;
+        }
+
+        .tooltip-risk-badge {
+          font-size: 11px;
+          padding: 3px 10px;
+          border-radius: 12px;
+          color: white;
+          font-weight: bold;
+        }
+
+        .tooltip-risk-badge.aggressive {
+          background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+        }
+
+        .tooltip-risk-badge.moderate {
+          background: linear-gradient(135deg, #4ecdc4, #44a3a3);
+        }
+
+        .tooltip-risk-badge.conservative {
+          background: linear-gradient(135deg, #95e1d3, #7fccc4);
+          color: #333;
+        }
+
+        .tooltip-body {
+          margin-bottom: 10px;
+        }
+
+        .tooltip-row {
+          display: flex;
+          justify-content: space-between;
+          margin: 6px 0;
+          padding: 4px 0;
+        }
+
+        .tooltip-label {
+          color: #666;
+        }
+
+        .tooltip-value {
+          font-weight: bold;
+          color: #333;
+        }
+
+        .tooltip-value.profit {
+          color: #2ecc71;
+        }
+
+        .tooltip-value.loss {
+          color: #e74c3c;
+        }
+
+        .tooltip-value.warning {
+          color: #f39c12;
+        }
+
+        .tooltip-footer {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid #e0e0e0;
+          text-align: center;
+          font-size: 11px;
+          color: #667eea;
+        }
+
+        /* Tooltip箭头 */
+        .grid-tooltip::before {
+          content: "";
+          position: absolute;
+          top: -8px;
+          left: 20px;
+          border: 8px solid transparent;
+          border-bottom-color: #667eea;
+        }
+
+        .grid-tooltip::after {
+          content: "";
+          position: absolute;
+          top: -6px;
+          left: 22px;
+          border: 6px solid transparent;
+          border-bottom-color: white;
+        }
     </style>
 </head>
 <body class="bg-gray-100 p-4">
@@ -417,6 +622,33 @@
             </div>
 
             <h3 class="text-lg font-semibold mb-4">网格交易配置</h3>
+
+            <!-- ⚠️ 新增: 风险等级选择器 -->
+            <div class="form-group risk-level-selector">
+              <label for="riskLevel">
+                <strong>🎯 风险等级</strong>
+                <span class="tooltip-icon" data-tooltip="选择风险等级将自动填充推荐参数,您仍可手动微调">ℹ️</span>
+              </label>
+              <select id="riskLevel" class="risk-select" onchange="applyRiskTemplate()">
+                <option value="conservative">
+                  🛡️ 保守型 - 稳健低风险,快速止损(-8%)
+                </option>
+                <option value="moderate" selected>
+                  ⚖️ 稳健型 - 平衡收益,推荐策略(默认)
+                </option>
+                <option value="aggressive">
+                  🚀 激进型 - 高风险高收益,容忍大回撤(-15%)
+                </option>
+              </select>
+
+              <!-- 风险描述提示 -->
+              <div id="riskDescription" class="risk-description">
+                平衡风险收益,适合主流蓝筹股,默认推荐策略
+              </div>
+            </div>
+
+            <hr style="margin: 15px 0; border-color: #e0e0e0;">
+
             <div class="mb-4">
                 <p class="text-sm text-gray-600">股票代码: <span id="gridStockCode" class="font-semibold"></span></p>
 
@@ -437,21 +669,6 @@
                 </div>
             </div>
 
-            <!-- 模板选择区域 -->
-            <div class="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <label class="text-sm font-medium text-gray-700">配置模板:</label>
-                    <select id="gridTemplateSelect" class="flex-1 px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">自定义配置</option>
-                    </select>
-                    <button id="gridSaveTemplateBtn" class="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700" title="保存当前配置为模板">
-                        💾 保存模板
-                    </button>
-                    <button id="gridManageTemplatesBtn" class="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700" title="管理所有模板">
-                        ⚙️ 管理
-                    </button>
-                </div>
-            </div>
 
             <div class="grid grid-cols-2 gap-4 mb-6">
                 <!-- 网格价格间隔 -->
@@ -542,46 +759,39 @@
         </div>
     </div>
 
-    <!-- 保存模板对话框 -->
-    <div id="saveTemplateDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-white rounded-lg p-6 w-[400px]">
-            <h3 class="text-lg font-semibold mb-4">保存配置模板</h3>
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-2">模板名称</label>
-                <input type="text" id="saveTemplateName" placeholder="例如: 高波动股网格"
-                       class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
-            </div>
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-2">模板描述</label>
-                <textarea id="saveTemplateDesc" placeholder="适用场景和特点说明" rows="3"
-                          class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-            </div>
-            <div class="mb-4">
-                <label class="flex items-center">
-                    <input type="checkbox" id="saveTemplateDefault" class="mr-2">
-                    <span class="text-sm text-gray-700">设为默认模板</span>
-                </label>
-            </div>
-            <div class="flex justify-end space-x-2">
-                <button id="saveTemplateCancel" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">取消</button>
-                <button id="saveTemplateConfirm" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">保存</button>
-            </div>
-        </div>
-    </div>
 
-    <!-- 模板管理对话框 -->
-    <div id="manageTemplatesDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-white rounded-lg p-6 w-[700px] max-w-4xl">
-            <h3 class="text-lg font-semibold mb-4">网格配置模板管理</h3>
-            <div class="mb-4">
-                <div id="templatesList" class="space-y-2 max-h-[400px] overflow-y-auto">
-                    <!-- 模板列表将动态填充 -->
-                </div>
-            </div>
-            <div class="flex justify-end">
-                <button id="manageTemplatesClose" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">关闭</button>
-            </div>
+
+    <!-- 全局网格状态Tooltip -->
+    <div id="gridTooltip" class="grid-tooltip">
+      <div class="tooltip-header">
+        <span id="tooltipStockCode" class="tooltip-stock-code"></span>
+        <span class="tooltip-risk-badge" id="tooltipRiskLevel"></span>
+      </div>
+      <div class="tooltip-body">
+        <div class="tooltip-row">
+          <span class="tooltip-label">运行时长:</span>
+          <span class="tooltip-value" id="tooltipDuration"></span>
         </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">网格盈亏:</span>
+          <span class="tooltip-value profit" id="tooltipProfit"></span>
+        </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">交易次数:</span>
+          <span class="tooltip-value" id="tooltipTrades"></span>
+        </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">资金使用:</span>
+          <span class="tooltip-value" id="tooltipInvestment"></span>
+        </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">中心价偏离:</span>
+          <span class="tooltip-value" id="tooltipDeviation"></span>
+        </div>
+      </div>
+      <div class="tooltip-footer">
+        点击复选框查看详细信息
+      </div>
     </div>
 
     <script src="script.js"></script>

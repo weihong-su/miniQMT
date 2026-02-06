@@ -1427,6 +1427,9 @@ def start_grid_trading():
 
         logger.info(f"[DEBUG] grid_manager检查通过，继续处理请求")
 
+        # ⚠️ 新增: 获取风险等级参数
+        risk_level = data.get('risk_level', 'moderate')  # 默认稳健型
+
         # 从嵌套的config对象中提取参数（兼容前端发送的数据结构）
         frontend_config = data.get('config', {})
 
@@ -1440,24 +1443,52 @@ def start_grid_trading():
             logger.warning("[DEBUG] frontend_config为空，将使用默认值")
 
         # 调试日志
-        logger.info(f"启动网格交易请求: stock_code={stock_code}, has_config={bool(frontend_config)}")
+        logger.info(f"启动网格交易请求: stock_code={stock_code}, risk_level={risk_level}, has_config={bool(frontend_config)}")
         if frontend_config:
             logger.debug(f"前端config参数: {frontend_config}")
 
-        # 用户配置（优先使用config对象中的值，否则使用顶层值）
-        # 注意：前端发送的是百分比格式（已经除以100），直接使用
-        user_config = {
-            'stock_code': stock_code,
-            'center_price': data.get('center_price'),  # ⭐ 新增: 读取前端传入的中心价格
-            'price_interval': frontend_config.get('price_interval') or data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
-            'position_ratio': frontend_config.get('position_ratio') or data.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
-            'callback_ratio': frontend_config.get('callback_ratio') or data.get('callback_ratio', config.GRID_CALLBACK_RATIO),
-            'max_investment': frontend_config.get('max_investment') or data.get('max_investment'),
-            'max_deviation': frontend_config.get('max_deviation') or data.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
-            'target_profit': frontend_config.get('target_profit') or data.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
-            'stop_loss': frontend_config.get('stop_loss') or data.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
-            'duration_days': int(data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS))
+        # ⚠️ 新增: 根据risk_level自动应用模板参数
+        template_name_map = {
+            'aggressive': '激进型网格',
+            'moderate': '稳健型网格',
+            'conservative': '保守型网格'
         }
+
+        template_name = template_name_map.get(risk_level, '稳健型网格')
+        db_manager = position_manager.db_manager
+        template = db_manager.get_grid_template(template_name)
+
+        if template:
+            logger.info(f"应用风险模板: {template_name}, risk_level={risk_level}")
+            # 模板参数作为默认值，用户自定义参数优先
+            user_config = {
+                'stock_code': stock_code,
+                'center_price': data.get('center_price'),  # ⭐ 新增: 读取前端传入的中心价格
+                'price_interval': frontend_config.get('price_interval') or data.get('price_interval') or template['price_interval'],
+                'position_ratio': frontend_config.get('position_ratio') or data.get('position_ratio') or template['position_ratio'],
+                'callback_ratio': frontend_config.get('callback_ratio') or data.get('callback_ratio') or template['callback_ratio'],
+                'max_investment': frontend_config.get('max_investment') or data.get('max_investment'),  # 必需参数
+                'max_deviation': frontend_config.get('max_deviation') or data.get('max_deviation') or template['max_deviation'],
+                'target_profit': frontend_config.get('target_profit') or data.get('target_profit') or template['target_profit'],
+                'stop_loss': frontend_config.get('stop_loss') or data.get('stop_loss') or template['stop_loss'],
+                'duration_days': int(data.get('duration_days', template['duration_days']))
+            }
+        else:
+            logger.warning(f"风险模板不存在: {template_name}, 使用用户自定义参数或默认值")
+            # 用户配置（优先使用config对象中的值，否则使用顶层值）
+            # 注意：前端发送的是百分比格式（已经除以100），直接使用
+            user_config = {
+                'stock_code': stock_code,
+                'center_price': data.get('center_price'),  # ⭐ 新增: 读取前端传入的中心价格
+                'price_interval': frontend_config.get('price_interval') or data.get('price_interval', config.GRID_DEFAULT_PRICE_INTERVAL),
+                'position_ratio': frontend_config.get('position_ratio') or data.get('position_ratio', config.GRID_DEFAULT_POSITION_RATIO),
+                'callback_ratio': frontend_config.get('callback_ratio') or data.get('callback_ratio', config.GRID_CALLBACK_RATIO),
+                'max_investment': frontend_config.get('max_investment') or data.get('max_investment'),
+                'max_deviation': frontend_config.get('max_deviation') or data.get('max_deviation', config.GRID_MAX_DEVIATION_RATIO),
+                'target_profit': frontend_config.get('target_profit') or data.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
+                'stop_loss': frontend_config.get('stop_loss') or data.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
+                'duration_days': int(data.get('duration_days', config.GRID_DEFAULT_DURATION_DAYS))
+            }
 
         logger.debug(f"解析后的user_config: {user_config}")
 
@@ -1495,9 +1526,11 @@ def start_grid_trading():
         return jsonify({
             'success': True,
             'session_id': session.id,
+            'risk_level': risk_level,  # ⚠️ 新增: 返回风险等级
+            'template_name': template_name if template else None,  # ⚠️ 新增: 返回模板名称
             'warning': '已自动停止旧的网格会话' if had_old_session else None,
             'old_session_id': old_session_id,
-            'message': f'网格交易会话启动成功 (ID: {session.id})',
+            'message': f'网格交易会话启动成功 ({template_name if template else "自定义配置"}, ID: {session.id})',
             'config': {
                 'stock_code': session.stock_code,
                 'center_price': session.center_price,
@@ -1655,11 +1688,18 @@ def get_grid_session_status(stock_code):
             #            f"position_ratio={session.position_ratio} ({session.position_ratio*100:.1f}%), "
             #            f"stop_loss={session.stop_loss} ({session.stop_loss*100:.1f}%)")
 
+            # ⚠️ 新增: 从数据库获取risk_level (内存GridSession对象没有此字段)
+            db_session = position_manager.db_manager.get_grid_session_by_stock(stock_code)
+            risk_level = db_session.get('risk_level', 'moderate') if db_session else 'moderate'
+            template_name = db_session.get('template_name') if db_session else None
+
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
                 'success': True,
                 'has_session': True,
                 'session_id': session.id,
+                'risk_level': risk_level,  # ⚠️ 新增
+                'template_name': template_name,  # ⚠️ 新增
                 'config': {
                     'center_price': session.center_price,  # ⭐ 新增: 中心价格，用于前端回显
                     'price_interval': session.price_interval,  # ⭐ 小数格式，前端乘以100显示
@@ -2188,6 +2228,68 @@ def set_default_grid_template(template_name):
 
     except Exception as e:
         logger.error(f"设置默认网格配置模板失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== ⚠️ 新增接口: 获取风险等级模板 ====================
+@app.route('/api/grid/risk-templates', methods=['GET'])
+def get_risk_level_templates():
+    """
+    获取三档风险等级模板
+
+    返回格式:
+    {
+        "success": true,
+        "templates": {
+            "aggressive": { /* 激进型配置 */ },
+            "moderate": { /* 稳健型配置 */ },
+            "conservative": { /* 保守型配置 */ }
+        }
+    }
+    """
+    try:
+        position_manager = get_position_manager_instance()
+        if not position_manager.db_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        db_manager = position_manager.db_manager
+
+        # 获取三档模板
+        templates = {
+            'aggressive': db_manager.get_grid_template('激进型网格'),
+            'moderate': db_manager.get_grid_template('稳健型网格'),
+            'conservative': db_manager.get_grid_template('保守型网格')
+        }
+
+        # 简化返回数据，移除不必要的字段
+        simplified_templates = {}
+        for key, template in templates.items():
+            if template:
+                simplified_templates[key] = {
+                    'template_name': template['template_name'],
+                    'price_interval': template['price_interval'],
+                    'position_ratio': template['position_ratio'],
+                    'callback_ratio': template['callback_ratio'],
+                    'max_deviation': template['max_deviation'],
+                    'target_profit': template['target_profit'],
+                    'stop_loss': template['stop_loss'],
+                    'duration_days': template['duration_days'],
+                    'max_investment_ratio': template.get('max_investment_ratio', 0.5),
+                    'description': template.get('description', '')
+                }
+            else:
+                logger.warning(f"风险模板不存在: {key}")
+                simplified_templates[key] = None
+
+        logger.info(f"[API] 获取风险模板成功，返回 {len([t for t in simplified_templates.values() if t])} 个模板")
+
+        return jsonify({
+            'success': True,
+            'templates': simplified_templates
+        })
+
+    except Exception as e:
+        logger.error(f"获取风险模板失败: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

@@ -80,6 +80,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // 网格交易状态存储
     let gridTradingStatus = {};  // 格式: { stock_code: { sessionId, status, config, lastUpdate } }
 
+    // ============ 网格分级策略: 全局变量 ============
+    let riskTemplates = {};  // 缓存风险模板数据
+
+    // ============ 网格Tooltip: 数据缓存 ============
+    let tooltipDataCache = {};  // 缓存tooltip数据
+    const TOOLTIP_CACHE_TIME = 30000;  // 30秒缓存
+
     // --- DOM Element References ---
     const elements = {
         messageArea: document.getElementById('messageArea'),
@@ -1049,7 +1056,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <input type="checkbox" class="holding-checkbox"
                        data-id="${stock.id || stock.stock_code}"
                        data-stock-code="${stock.stock_code}"
-                       ${hasActiveGrid ? 'checked' : ''}>
+                       ${hasActiveGrid ? 'checked' : ''}
+                       onmouseenter="showGridTooltip(event, '${stock.stock_code}')"
+                       onmouseleave="hideGridTooltip()">
             </td>
             <td class="border p-2">${stock.stock_code || '--'}</td>
             <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>
@@ -2276,6 +2285,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ============ 加载风险模板 ============
+    async function loadRiskTemplates() {
+        try {
+            const response = await fetch('/api/grid/risk-templates');
+            const data = await response.json();
+
+            if (data.success) {
+                riskTemplates = data.templates;
+                console.log('✅ 风险模板加载成功', riskTemplates);
+            } else {
+                console.error('❌ 风险模板加载失败:', data.error);
+            }
+        } catch (error) {
+            console.error('❌ 加载风险模板异常:', error);
+        }
+    }
+
+    // ============ 风险等级切换时自动填充参数 ============
+    function applyRiskTemplate() {
+        const riskLevel = document.getElementById('riskLevel').value;
+        const template = riskTemplates[riskLevel];
+
+        if (!template) {
+            console.warn('模板不存在:', riskLevel);
+            return;
+        }
+
+        console.log('应用风险模板:', riskLevel, template);
+
+        // 自动填充表单参数 (小数转百分比)
+        document.getElementById('gridPriceInterval').value = (template.price_interval * 100).toFixed(1);
+        document.getElementById('gridPositionRatio').value = (template.position_ratio * 100).toFixed(0);
+        document.getElementById('gridCallbackRatio').value = (template.callback_ratio * 100).toFixed(2);
+        document.getElementById('gridMaxDeviation').value = (template.max_deviation * 100).toFixed(0);
+        document.getElementById('gridTargetProfit').value = (template.target_profit * 100).toFixed(0);
+        document.getElementById('gridStopLoss').value = (template.stop_loss * 100).toFixed(0);
+        document.getElementById('gridDurationDays').value = template.duration_days;
+
+        // 更新风险描述
+        const descriptions = {
+            'aggressive': '🚀 适合高波动成长股,档位密集(3%),容忍大回撤(-15%),追求高收益(+15%)',
+            'moderate': '⚖️ 适合主流蓝筹股,平衡风险收益,默认推荐策略',
+            'conservative': '🛡️ 适合低波动指数或大盘股,档位稀疏(8%),快速止损(-8%),稳健盈利(+8%)'
+        };
+        document.getElementById('riskDescription').textContent = descriptions[riskLevel] || template.description;
+
+        // 视觉反馈动画
+        const selector = document.querySelector('.risk-level-selector');
+        selector.classList.add('pulsing');
+        setTimeout(() => selector.classList.remove('pulsing'), 500);
+    }
+
     /**
      * 启动网格交易会话
      * @param {string} stockCode - 股票代码
@@ -2285,6 +2346,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // 收集配置参数(转换百分比为小数)
             const config = {
+                risk_level: document.getElementById('riskLevel').value,  // ⚠️ 新增风险等级
                 price_interval: parseFloat(document.getElementById('gridPriceInterval').value) / 100,
                 position_ratio: parseFloat(document.getElementById('gridPositionRatio').value) / 100,
                 callback_ratio: parseFloat(document.getElementById('gridCallbackRatio').value) / 100,
@@ -2348,7 +2410,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(result.error || '启动网格交易失败');
             }
 
-            showMessage(`网格交易启动成功! 会话ID: ${result.session_id}`, 'success');
+            // ⚠️ 新增: 显示风险等级信息
+            const riskNames = {
+                'aggressive': '激进型',
+                'moderate': '稳健型',
+                'conservative': '保守型'
+            };
+            showMessage(`✅ ${result.message || '网格交易启动成功'}\n会话ID: ${result.session_id}\n风险等级: ${riskNames[result.risk_level] || result.risk_level}`, 'success');
 
             // 关闭对话框
             document.getElementById('gridConfigDialog').classList.add('hidden');
@@ -2562,310 +2630,156 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ======================= 网格模板管理功能 (v1.1) =======================
+    // ======================= 网格模板管理功能已移除 =======================
 
-    /**
-     * 加载网格配置模板列表
-     */
-    async function loadGridTemplates() {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/grid/templates`);
-            if (!response.ok) throw new Error('加载模板列表失败');
+    // ======================= 网格Tooltip功能 =======================
 
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '加载模板列表失败');
+    // ============ 显示Tooltip ============
+    async function showGridTooltip(event, stockCode) {
+        const tooltip = document.getElementById('gridTooltip');
 
-            const select = document.getElementById('gridTemplateSelect');
-            // 清空现有选项（保留"自定义配置"）
-            select.innerHTML = '<option value="">自定义配置</option>';
+        // 检查缓存
+        const cached = tooltipDataCache[stockCode];
+        const now = Date.now();
 
-            // 添加模板选项
-            result.templates.forEach(tpl => {
-                const option = document.createElement('option');
-                option.value = tpl.template_name;
-                option.textContent = `${tpl.template_name}${tpl.is_default ? ' (默认)' : ''}`;
-                if (tpl.usage_count > 0) {
-                    option.textContent += ` [已用${tpl.usage_count}次]`;
+        if (cached && (now - cached.timestamp < TOOLTIP_CACHE_TIME)) {
+            // 使用缓存数据
+            updateTooltipContent(cached.data);
+        } else {
+            // 请求新数据
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
+                const data = await response.json();
+
+                if (!data.success || !data.has_session) {
+                    return;  // 无会话,不显示tooltip
                 }
-                select.appendChild(option);
-            });
 
-            return result.templates;
-        } catch (error) {
-            console.error('加载模板列表失败:', error);
-            showMessage('加载模板列表失败: ' + error.message, 'error');
-            return [];
-        }
-    }
+                // 缓存数据
+                tooltipDataCache[stockCode] = {
+                    data: data,
+                    timestamp: now
+                };
 
-    /**
-     * 应用选中的模板
-     */
-    async function applyGridTemplate(templateName) {
-        if (!templateName) return;
-
-        try {
-            // 调用使用模板API（更新统计）
-            const response = await fetch(`${API_BASE_URL}/api/grid/template/use`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({template_name: templateName})
-            });
-
-            if (!response.ok) throw new Error('应用模板失败');
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '应用模板失败');
-
-            const tpl = result.template;
-
-            // 填充表单
-            document.getElementById('gridPriceInterval').value = (tpl.price_interval * 100).toFixed(2);
-            document.getElementById('gridPositionRatio').value = (tpl.position_ratio * 100).toFixed(2);
-            document.getElementById('gridCallbackRatio').value = (tpl.callback_ratio * 100).toFixed(2);
-            document.getElementById('gridDurationDays').value = tpl.duration_days;
-            document.getElementById('gridMaxDeviation').value = (tpl.max_deviation * 100).toFixed(0);
-            document.getElementById('gridTargetProfit').value = (tpl.target_profit * 100).toFixed(0);
-            document.getElementById('gridStopLoss').value = (tpl.stop_loss * 100).toFixed(0);  // ⭐ 前端也用负数，直接乘以100
-
-            showMessage(`已应用模板: ${templateName}`, 'success');
-        } catch (error) {
-            console.error('应用模板失败:', error);
-            showMessage('应用模板失败: ' + error.message, 'error');
-        }
-    }
-
-    /**
-     * 显示保存模板对话框
-     */
-    function showSaveTemplateDialog() {
-        document.getElementById('saveTemplateDialog').classList.remove('hidden');
-        document.getElementById('saveTemplateName').value = '';
-        document.getElementById('saveTemplateDesc').value = '';
-        document.getElementById('saveTemplateDefault').checked = false;
-    }
-
-    /**
-     * 保存模板
-     */
-    async function saveGridTemplate() {
-        const name = document.getElementById('saveTemplateName').value.trim();
-        const desc = document.getElementById('saveTemplateDesc').value.trim();
-        const isDefault = document.getElementById('saveTemplateDefault').checked;
-
-        if (!name) {
-            showMessage('请输入模板名称', 'error');
-            return;
-        }
-
-        try {
-            // 收集当前配置
-            const templateData = {
-                template_name: name,
-                price_interval: parseFloat(document.getElementById('gridPriceInterval').value) / 100,
-                position_ratio: parseFloat(document.getElementById('gridPositionRatio').value) / 100,
-                callback_ratio: parseFloat(document.getElementById('gridCallbackRatio').value) / 100,
-                duration_days: parseInt(document.getElementById('gridDurationDays').value),
-                max_deviation: parseFloat(document.getElementById('gridMaxDeviation').value) / 100,
-                target_profit: parseFloat(document.getElementById('gridTargetProfit').value) / 100,
-                stop_loss: parseFloat(document.getElementById('gridStopLoss').value) / 100,  // ⭐ 前端也用负数，直接除以100
-                description: desc,
-                is_default: isDefault
-            };
-
-            const response = await fetch(`${API_BASE_URL}/api/grid/template/save`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(templateData)
-            });
-
-            if (!response.ok) throw new Error('保存模板失败');
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '保存模板失败');
-
-            showMessage(`模板"${name}"保存成功`, 'success');
-            document.getElementById('saveTemplateDialog').classList.add('hidden');
-
-            // 重新加载模板列表
-            await loadGridTemplates();
-        } catch (error) {
-            console.error('保存模板失败:', error);
-            showMessage('保存模板失败: ' + error.message, 'error');
-        }
-    }
-
-    /**
-     * 显示模板管理对话框
-     */
-    async function showManageTemplatesDialog() {
-        document.getElementById('manageTemplatesDialog').classList.remove('hidden');
-        await refreshTemplatesList();
-    }
-
-    /**
-     * 刷新模板列表
-     */
-    async function refreshTemplatesList() {
-        try {
-            const templates = await loadGridTemplates();
-            const container = document.getElementById('templatesList');
-
-            if (templates.length === 0) {
-                container.innerHTML = '<p class="text-gray-500 text-center py-4">暂无保存的模板</p>';
+                updateTooltipContent(data);
+            } catch (error) {
+                console.error('加载Tooltip数据失败:', error);
                 return;
             }
-
-            container.innerHTML = '';
-
-            templates.forEach(tpl => {
-                const item = document.createElement('div');
-                item.className = 'border border-gray-200 rounded p-3 flex items-center justify-between hover:bg-gray-50';
-
-                const info = document.createElement('div');
-                info.className = 'flex-1';
-
-                const title = document.createElement('div');
-                title.className = 'font-semibold';
-                title.textContent = tpl.template_name;
-                if (tpl.is_default) {
-                    const badge = document.createElement('span');
-                    badge.className = 'ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded';
-                    badge.textContent = '默认';
-                    title.appendChild(badge);
-                }
-
-                const details = document.createElement('div');
-                details.className = 'text-sm text-gray-600 mt-1';
-                details.innerHTML = `
-                    价格间隔: ${(tpl.price_interval * 100).toFixed(1)}% |
-                    档位比例: ${(tpl.position_ratio * 100).toFixed(0)}% |
-                    使用次数: ${tpl.usage_count || 0}
-                `;
-
-                if (tpl.description) {
-                    const desc = document.createElement('div');
-                    desc.className = 'text-sm text-gray-500 mt-1';
-                    desc.textContent = tpl.description;
-                    info.appendChild(title);
-                    info.appendChild(details);
-                    info.appendChild(desc);
-                } else {
-                    info.appendChild(title);
-                    info.appendChild(details);
-                }
-
-                const actions = document.createElement('div');
-                actions.className = 'flex gap-2';
-
-                if (!tpl.is_default) {
-                    const setDefaultBtn = document.createElement('button');
-                    setDefaultBtn.className = 'px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700';
-                    setDefaultBtn.textContent = '设为默认';
-                    setDefaultBtn.onclick = () => setDefaultTemplate(tpl.template_name);
-                    actions.appendChild(setDefaultBtn);
-                }
-
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700';
-                deleteBtn.textContent = '删除';
-                deleteBtn.onclick = () => deleteTemplate(tpl.template_name);
-                actions.appendChild(deleteBtn);
-
-                item.appendChild(info);
-                item.appendChild(actions);
-                container.appendChild(item);
-            });
-        } catch (error) {
-            console.error('刷新模板列表失败:', error);
         }
+
+        // 定位tooltip
+        const rect = event.target.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + window.scrollX}px`;
+        tooltip.style.top = `${rect.bottom + window.scrollY + 10}px`;
+        tooltip.style.display = 'block';
     }
 
-    /**
-     * 设置默认模板
-     */
-    async function setDefaultTemplate(templateName) {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/grid/template/${templateName}/default`, {
-                method: 'PUT'
-            });
+    // ============ 更新Tooltip内容 ============
+    function updateTooltipContent(data) {
+        // 风险等级徽章
+        const riskLevel = data.risk_level || 'moderate';
+        const riskNames = {
+            'aggressive': '激进型',
+            'moderate': '稳健型',
+            'conservative': '保守型'
+        };
 
-            if (!response.ok) throw new Error('设置默认模板失败');
+        const badgeElement = document.getElementById('tooltipRiskLevel');
+        badgeElement.textContent = riskNames[riskLevel];
+        badgeElement.className = `tooltip-risk-badge ${riskLevel}`;
 
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '设置默认模板失败');
+        // 股票代码
+        document.getElementById('tooltipStockCode').textContent = data.config?.stock_code || '未知';
 
-            showMessage(`已将"${templateName}"设为默认模板`, 'success');
-            await refreshTemplatesList();
-        } catch (error) {
-            console.error('设置默认模板失败:', error);
-            showMessage('设置默认模板失败: ' + error.message, 'error');
+        // 运行时长
+        if (data.stats && data.stats.start_time) {
+            const duration = calculateDuration(data.stats.start_time, new Date());
+            document.getElementById('tooltipDuration').textContent = duration;
+        } else {
+            document.getElementById('tooltipDuration').textContent = '计算中...';
         }
-    }
 
-    /**
-     * 删除模板
-     */
-    async function deleteTemplate(templateName) {
-        if (!confirm(`确定删除模板"${templateName}"吗？`)) return;
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/grid/template/${templateName}`, {
-                method: 'DELETE'
-            });
-
-            if (!response.ok) throw new Error('删除模板失败');
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '删除模板失败');
-
-            showMessage(`模板"${templateName}"已删除`, 'success');
-            await refreshTemplatesList();
-        } catch (error) {
-            console.error('删除模板失败:', error);
-            showMessage('删除模板失败: ' + error.message, 'error');
+        // 网格盈亏
+        if (data.stats) {
+            const profitRatio = data.stats.profit_ratio || 0;
+            const profitElement = document.getElementById('tooltipProfit');
+            const profitSign = profitRatio >= 0 ? '+' : '';
+            profitElement.textContent = `${profitSign}${profitRatio.toFixed(2)}%`;
+            profitElement.className = profitRatio >= 0 ? 'tooltip-value profit' : 'tooltip-value loss';
         }
-    }
 
-    /**
-     * 初始化模板管理事件监听器
-     */
-    function initGridTemplateListeners() {
-        // 模板选择变化
-        document.getElementById('gridTemplateSelect').addEventListener('change', (e) => {
-            if (e.target.value) {
-                applyGridTemplate(e.target.value);
+        // 交易次数
+        if (data.stats) {
+            const buyCount = data.stats.buy_count || 0;
+            const sellCount = data.stats.sell_count || 0;
+            const total = data.stats.trade_count || (buyCount + sellCount);
+            document.getElementById('tooltipTrades').textContent = `${total}次 (买${buyCount}/卖${sellCount})`;
+        }
+
+        // 资金使用
+        if (data.stats && data.config) {
+            const used = data.stats.current_investment || 0;
+            const max = data.config.max_investment || 1;
+            const percent = ((used / max) * 100).toFixed(0);
+            document.getElementById('tooltipInvestment').textContent = `${percent}% (${used.toFixed(0)}/${max.toFixed(0)}元)`;
+        }
+
+        // 中心价偏离
+        if (data.stats) {
+            const deviation = calculateDeviation(
+                data.stats.center_price,
+                data.stats.current_center_price
+            );
+            const deviationElement = document.getElementById('tooltipDeviation');
+            deviationElement.textContent = `${deviation >= 0 ? '+' : ''}${deviation.toFixed(2)}%`;
+
+            // 根据偏离度设置颜色
+            if (Math.abs(deviation) > 10) {
+                deviationElement.className = 'tooltip-value warning';
+            } else {
+                deviationElement.className = 'tooltip-value';
             }
-        });
-
-        // 保存模板按钮
-        document.getElementById('gridSaveTemplateBtn').addEventListener('click', showSaveTemplateDialog);
-
-        // 管理模板按钮
-        document.getElementById('gridManageTemplatesBtn').addEventListener('click', showManageTemplatesDialog);
-
-        // 保存模板对话框
-        document.getElementById('saveTemplateConfirm').addEventListener('click', saveGridTemplate);
-        document.getElementById('saveTemplateCancel').addEventListener('click', () => {
-            document.getElementById('saveTemplateDialog').classList.add('hidden');
-        });
-
-        // 关闭模板管理对话框
-        document.getElementById('manageTemplatesClose').addEventListener('click', () => {
-            document.getElementById('manageTemplatesDialog').classList.add('hidden');
-        });
+        }
     }
 
-    // 在页面加载时初始化模板功能
-    document.addEventListener('DOMContentLoaded', () => {
-        initGridTemplateListeners();
-        loadGridTemplates(); // 加载模板列表到下拉框
-    });
+    // ============ 隐藏Tooltip ============
+    function hideGridTooltip() {
+        document.getElementById('gridTooltip').style.display = 'none';
+    }
 
-    // ======================= 网格模板管理功能结束 =======================
+    // ============ 辅助函数 ============
+    function calculateDuration(startTime, currentTime) {
+        const diff = currentTime - new Date(startTime);
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        return `${days}天${hours}小时`;
+    }
+
+    function calculateDeviation(centerPrice, currentPrice) {
+        if (!centerPrice || centerPrice === 0) return 0;
+        return ((currentPrice - centerPrice) / centerPrice) * 100;
+    }
+
+    // 定时清空缓存(可选)
+    setInterval(() => {
+        tooltipDataCache = {};
+        console.log('Tooltip缓存已清空');
+    }, 60000);  // 每分钟清空一次
+
+    // ======================= 网格Tooltip功能结束 =======================
 
     console.log("Adding event listeners and fetching initial data...");
+
+    // ⚠️ 新增: 加载风险模板
+    loadRiskTemplates();
+
     fetchAllData(); // 脚本运行时加载初始数据
+
+    // 暴露函数到全局作用域供HTML内联事件处理器使用
+    window.applyRiskTemplate = applyRiskTemplate;
+    window.showGridTooltip = showGridTooltip;
+    window.hideGridTooltip = hideGridTooltip;
 });
 
 console.log("Script loaded");

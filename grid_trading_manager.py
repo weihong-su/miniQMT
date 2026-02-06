@@ -373,7 +373,9 @@ class GridTradingManager:
             'target_profit': user_config.get('target_profit', config.GRID_TARGET_PROFIT_RATIO),
             'stop_loss': user_config.get('stop_loss', config.GRID_STOP_LOSS_RATIO),
             'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat()
+            'end_time': end_time.isoformat(),
+            'risk_level': user_config.get('risk_level', 'moderate'),
+            'template_name': user_config.get('template_name')
         }
         logger.info(f"[GRID] start_grid_session: [阶段1] 完成，预构建会话数据完成")
 
