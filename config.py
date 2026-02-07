@@ -15,6 +15,12 @@ LOG_FILE = "qmt_trading.log"
 LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 5  # 保留5个备份文件
 
+# Web访问日志配置
+ENABLE_WEB_ACCESS_LOG = True  # 是否启用web访问日志
+WEB_ACCESS_LOG_LEVEL = "WARNING"  # web访问日志级别（DEBUG/INFO/WARNING）
+WEB_ACCESS_LOG_EXCLUDE_PATHS = ["/api/sse", "/api/positions/stream", "/<path:filename>"]  # 排除的路径（静态文件、SSE长连接等）
+WEB_ACCESS_LOG_INCLUDE_TIMING = True  # 是否包含请求耗时统计
+
 # ======================= 功能开关 =======================
 ENABLE_SIMULATION_MODE = True   # 模拟交易模式开关（True=模拟，False=实盘）
 ENABLE_MONITORING = False       # 控制前端UI监控状态

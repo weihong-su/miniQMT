@@ -800,6 +800,11 @@ class GridTradingManager:
         trigger_price = signal['trigger_price']
         logger.info(f"[GRID] _execute_grid_buy: 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
 
+        # 0. 检查 max_investment 有效性
+        if session.max_investment <= 0:
+            logger.error(f"[GRID] _execute_grid_buy: {stock_code} max_investment={session.max_investment} 无效，无法执行买入")
+            return False
+
         # 1. 检查投入限额
         logger.debug(f"[GRID] _execute_grid_buy: 检查投入限额 current_investment={session.current_investment:.2f}, max_investment={session.max_investment:.2f}")
         if session.current_investment >= session.max_investment:

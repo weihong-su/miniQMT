@@ -36,6 +36,70 @@ app = Flask(__name__, static_folder=webpage_dir, static_url_path='')
 # 允许跨域请求
 CORS(app)
 
+# ======================= Web访问日志中间件 =======================
+@app.before_request
+def log_request_start():
+    """记录请求开始时间"""
+    if config.ENABLE_WEB_ACCESS_LOG:
+        from flask import g
+        g.request_start_time = time.time()
+
+@app.after_request
+def log_request_end(response):
+    """记录请求完成信息"""
+    try:
+        # 检查是否启用访问日志
+        if not config.ENABLE_WEB_ACCESS_LOG:
+            return response
+
+        # 获取请求信息
+        method = request.method
+        path = request.path
+        status_code = response.status_code
+
+        # 检查是否在排除列表中
+        for exclude_path in config.WEB_ACCESS_LOG_EXCLUDE_PATHS:
+            # 处理通配符路径（如 "/<path:filename>"）
+            if exclude_path.startswith("/<path:"):
+                # 静态文件路径，检查是否以常见静态文件扩展名结尾
+                if any(path.endswith(ext) for ext in ['.html', '.css', '.js', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2', '.ttf']):
+                    return response
+            elif path.startswith(exclude_path):
+                return response
+
+        # 计算请求耗时
+        elapsed_ms = None
+        if config.WEB_ACCESS_LOG_INCLUDE_TIMING:
+            from flask import g
+            if hasattr(g, 'request_start_time'):
+                elapsed_ms = int((time.time() - g.request_start_time) * 1000)
+
+        # 构建日志消息
+        if elapsed_ms is not None:
+            log_msg = f"[WEB] {method} {path} {status_code} {elapsed_ms}ms"
+        else:
+            log_msg = f"[WEB] {method} {path} {status_code}"
+
+        # 根据配置的日志级别和状态码决定记录方式
+        log_level = config.WEB_ACCESS_LOG_LEVEL.upper()
+
+        if log_level == "DEBUG":
+            # DEBUG级别：记录所有请求的详细信息
+            logger.debug(log_msg)
+        elif log_level == "INFO":
+            # INFO级别：记录所有请求的基本信息
+            logger.info(log_msg)
+        elif log_level == "WARNING":
+            # WARNING级别：仅记录4xx/5xx错误
+            if status_code >= 400:
+                logger.warning(log_msg)
+
+    except Exception as e:
+        # 中间件异常不应影响业务逻辑
+        logger.error(f"访问日志中间件异常: {str(e)}")
+
+    return response
+
 # 获取各个模块的实例
 # 注意: position_manager通过set_position_manager由main.py传入
 # 原因: 单例模式在多线程+Flask debug环境下不可靠
@@ -2480,6 +2544,14 @@ def start_web_server(position_manager=None):
     sync_auto_trading_status()
 
     start_push_thread()
+
+    # 禁用Flask默认的Werkzeug访问日志（使用自定义中间件）
+    import logging
+    werkzeug_logger = logging.getLogger('werkzeug')
+    if config.ENABLE_WEB_ACCESS_LOG:
+        # 如果启用了自定义访问日志，禁用Werkzeug的访问日志
+        werkzeug_logger.setLevel(logging.ERROR)
+
     app.run(host=config.WEB_SERVER_HOST, port=config.WEB_SERVER_PORT, debug=config.WEB_SERVER_DEBUG, use_reloader=False)
 
 if __name__ == '__main__':

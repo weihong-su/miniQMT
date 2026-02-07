@@ -3017,12 +3017,18 @@ class PositionManager:
 
                     with self.signal_lock:
                         if signal_type:
-                            self.latest_signals[stock_code] = {
-                                'type': signal_type,
-                                'info': signal_info,
-                                'timestamp': datetime.now()
-                            }
-                            logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
+                            # 检查是否已有网格信号
+                            existing_signal = self.latest_signals.get(stock_code)
+                            if existing_signal and existing_signal.get('type') in ['grid_buy', 'grid_sell']:
+                                # 已有网格信号，不覆盖（网格交易优先）
+                                logger.info(f"{stock_code} 已有网格信号 {existing_signal.get('type')}，跳过止盈止损信号 {signal_type}")
+                            else:
+                                self.latest_signals[stock_code] = {
+                                    'type': signal_type,
+                                    'info': signal_info,
+                                    'timestamp': datetime.now()
+                                }
+                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
                         else:
                             # 清除已不存在的信号（但保留网格信号，网格信号由网格检测逻辑管理）
                             with self.signal_lock:
@@ -3033,7 +3039,8 @@ class PositionManager:
                                     self.latest_signals.pop(stock_code, None)
 
                     # ===== 网格交易信号检测 =====
-                    if not signal_type and self.grid_manager and config.ENABLE_GRID_TRADING:
+                    # 网格信号检测应该独立于止盈止损信号
+                    if self.grid_manager and config.ENABLE_GRID_TRADING:
                         try:
                             # 主动获取latest_quote
                             latest_quote = self.data_manager.get_latest_data(stock_code)
