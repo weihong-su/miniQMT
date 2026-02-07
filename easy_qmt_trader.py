@@ -480,6 +480,8 @@ class easy_qmt_trader:
                 df['持仓市值']=[asset.market_value]
                 df['总资产']=[asset.total_asset]
                 return df
+            # ===== 新增：asset为空时返回空DataFrame而非隐式None =====
+            return df
         except:
             print('获取账户失败，读取上次数据，谨慎使用')
             df=pd.DataFrame()

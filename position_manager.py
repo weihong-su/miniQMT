@@ -1413,8 +1413,9 @@ class PositionManager:
 
             # 使用qmt_trader获取账户信息
             account_df = self.qmt_trader.balance()
-            
-            if account_df.empty:
+
+            # ===== 新增：None检查和类型检查 =====
+            if account_df is None or not isinstance(account_df, pd.DataFrame) or account_df.empty:
                 return None
             
             # 转换为字典格式
