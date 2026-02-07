@@ -337,8 +337,9 @@ class GridTradingManager:
             logger.warning(f"[GRID] start_grid_session: [阶段1] 未持有{stock_code}, 拒绝启动")
             raise ValueError(f"未持有{stock_code}")
 
-        if not position.get('profit_triggered'):
-            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}未触发止盈, 拒绝启动")
+        # 检查是否要求已触发止盈（可配置）
+        if config.GRID_REQUIRE_PROFIT_TRIGGERED and not position.get('profit_triggered'):
+            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}未触发止盈, 拒绝启动 (GRID_REQUIRE_PROFIT_TRIGGERED=True)")
             raise ValueError(f"{stock_code}未触发止盈,无法启动网格交易")
 
         logger.debug(f"[GRID] start_grid_session: [阶段1] 前置条件验证通过, volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
@@ -873,7 +874,7 @@ class GridTradingManager:
             'volume': volume,
             'amount': actual_amount,
             'valley_price': signal.get('valley_price'),
-            'callback_ratio': signal.get('callback_ratio'),
+            'callback_ratio': round(signal.get('callback_ratio'), 4) if signal.get('callback_ratio') else None,  # 保留4位小数
             'trade_id': trade_id,
             'trade_time': datetime.now().isoformat(),
             'grid_center_before': session.current_center_price,
@@ -985,7 +986,7 @@ class GridTradingManager:
             'volume': sell_volume,
             'amount': sell_amount,
             'peak_price': signal.get('peak_price'),
-            'callback_ratio': signal.get('callback_ratio'),
+            'callback_ratio': round(signal.get('callback_ratio'), 4) if signal.get('callback_ratio') else None,  # 保留4位小数
             'trade_id': trade_id,
             'trade_time': datetime.now().isoformat(),
             'grid_center_before': session.current_center_price,

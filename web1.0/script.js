@@ -2119,7 +2119,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // ⭐ 显示实时市场价（移除来源说明，界面已明确标注）
             const centerPriceInput = document.getElementById('gridCenterPriceInput');
-            if (centerPrice > 0) {
+
+            // ⭐ 优化: 如果有active session，输入框显示已保存的center_price，否则显示实时市场价
+            if (hasActiveSession && config && config.center_price) {
+                // 有active session: 显示已保存的配置
+                document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)}`;
+                centerPriceInput.value = parseFloat(config.center_price).toFixed(2);
+            } else if (centerPrice > 0) {
+                // 无active session: 显示实时市场价
                 document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)}`;
                 centerPriceInput.value = centerPrice.toFixed(2);
             } else {

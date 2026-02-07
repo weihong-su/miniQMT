@@ -501,6 +501,9 @@ GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易
 # 档位冷却时间(秒)
 GRID_LEVEL_COOLDOWN = 60  # 同一档位60秒内不重复触发
 
+# 启动条件配置
+GRID_REQUIRE_PROFIT_TRIGGERED = True  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
+
 # 混合退出机制 - 默认值
 GRID_MAX_DEVIATION_RATIO = 0.15    # 网格中心最大偏离±15%
 GRID_TARGET_PROFIT_RATIO = 0.10    # 目标盈利10%
