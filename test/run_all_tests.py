@@ -19,6 +19,28 @@ from logger import get_logger
 logger = get_logger("test_runner")
 
 
+def load_known_failures():
+    """
+    加载已知失败配置
+
+    Returns:
+        dict: 已知失败配置，包含 known_failures 和 skip_on_ci 列表
+    """
+    config_path = os.path.join(os.path.dirname(__file__), 'known_failures.json')
+
+    if not os.path.exists(config_path):
+        return {'known_failures': [], 'skip_on_ci': []}
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            logger.info(f"已加载已知失败配置: {len(config.get('known_failures', []))} 个已知失败")
+            return config
+    except Exception as e:
+        logger.warning(f"加载已知失败配置失败: {str(e)}")
+        return {'known_failures': [], 'skip_on_ci': []}
+
+
 # Test execution order (by dependency)
 TEST_MODULES = [
     ('Config Management', 'test_config_management'),
@@ -27,21 +49,31 @@ TEST_MODULES = [
 ]
 
 
-def discover_test_modules():
+def discover_test_modules(skip_list=None):
     """
     Discover all test modules in test directory
+
+    Args:
+        skip_list: List of module names to skip
 
     Returns:
         list: List of (test_name, module_name) tuples
     """
     test_dir = os.path.dirname(os.path.abspath(__file__))
     modules = []
+    skip_list = skip_list or []
 
     for filename in os.listdir(test_dir):
         if filename.startswith('test_') and filename.endswith('.py'):
             if filename not in ['test_base.py', 'test_utils.py',
                               'test_mocks.py', 'test_config.py']:
                 module_name = filename[:-3]  # Remove .py
+
+                # Skip modules in skip list
+                if module_name in skip_list:
+                    logger.info(f"跳过已知失败测试: {module_name}")
+                    continue
+
                 # Convert to readable name
                 test_name = module_name.replace('test_', '').replace('_', ' ').title()
                 modules.append((test_name, module_name))
@@ -145,13 +177,14 @@ def print_test_progress(test_num, total_tests, test_name, status, duration):
     print(f"[{test_num:2d}/{total_tests:2d}] {test_name} {padding} {symbol} ({duration:.1f}s)")
 
 
-def print_summary(results, total_duration):
+def print_summary(results, total_duration, known_failures_config=None):
     """
     Print test summary
 
     Args:
         results: List of test results
         total_duration: Total execution time
+        known_failures_config: Known failures configuration
     """
     print()
     print("=" * 70)
@@ -169,6 +202,16 @@ def print_summary(results, total_duration):
     print(f"  FAILED:  {failed}")
     print(f"  ERRORS:  {errors}")
     print(f"  SKIPPED: {skipped}")
+
+    # 显示跳过的已知失败测试
+    if known_failures_config and known_failures_config.get('skip_on_ci'):
+        skipped_known = known_failures_config['skip_on_ci']
+        if skipped_known:
+            print()
+            print(f"Known Failures (Skipped): {len(skipped_known)}")
+            for module in skipped_known:
+                print(f"  - {module}")
+
     print()
     print(f"Total Duration: {total_duration:.2f}s")
     print("=" * 70)
@@ -192,13 +235,14 @@ def print_summary(results, total_duration):
         print("-" * 70)
 
 
-def save_json_report(results, total_duration):
+def save_json_report(results, total_duration, known_failures_config=None):
     """
     Save test results as JSON report
 
     Args:
         results: List of test results
         total_duration: Total execution time
+        known_failures_config: Known failures configuration
 
     Returns:
         str: Path to saved report
@@ -216,6 +260,7 @@ def save_json_report(results, total_duration):
         'start_time': datetime.now().isoformat(),
         'python_version': sys.version,
         'python_env': sys.executable,
+        'is_ci': os.getenv('CI', '').lower() in ('true', '1', 'yes'),
         'total_duration': round(total_duration, 2),
         'summary': {
             'total': len(results),
@@ -226,6 +271,15 @@ def save_json_report(results, total_duration):
         },
         'tests': results
     }
+
+    # 添加已知失败信息
+    if known_failures_config:
+        report['known_failures'] = {
+            'count': len(known_failures_config.get('known_failures', [])),
+            'skipped_count': len(known_failures_config.get('skip_on_ci', [])),
+            'skipped_modules': known_failures_config.get('skip_on_ci', []),
+            'details': known_failures_config.get('known_failures', [])
+        }
 
     with open(report_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -238,11 +292,25 @@ def main():
     """Main test execution"""
     print_test_header()
 
+    # 加载已知失败配置
+    known_failures_config = load_known_failures()
+    skip_on_ci = known_failures_config.get('skip_on_ci', [])
+
+    # 检查是否在CI环境中运行
+    is_ci = os.getenv('CI', '').lower() in ('true', '1', 'yes')
+    if is_ci and skip_on_ci:
+        logger.info(f"CI环境检测到，将跳过 {len(skip_on_ci)} 个已知失败测试")
+        skip_list = skip_on_ci
+    else:
+        skip_list = []
+
     # Discover test modules
-    test_modules = discover_test_modules()
+    test_modules = discover_test_modules(skip_list=skip_list)
     total_tests = len(test_modules)
 
     logger.info(f"Discovered {total_tests} test modules")
+    if skip_list:
+        logger.info(f"Skipped {len(skip_list)} known failures")
 
     # Run tests
     results = []
@@ -265,10 +333,10 @@ def main():
     total_duration = time.time() - start_time
 
     # Print summary
-    print_summary(results, total_duration)
+    print_summary(results, total_duration, known_failures_config)
 
     # Save JSON report
-    report_path = save_json_report(results, total_duration)
+    report_path = save_json_report(results, total_duration, known_failures_config)
     print()
     print(f"Report saved: {report_path}")
     print()

@@ -14,6 +14,16 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🌐 Web前端实时监控界面
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
 
+**环境要求**:
+- Python 3.8+ (推荐 3.9)
+- 操作系统: Windows (QMT仅支持Windows)
+- QMT客户端: 实盘交易需要安装并登录QMT
+
+**依赖安装**:
+```bash
+pip install -r utils/requirements.txt
+```
+
 ## ⚠️ 关键约束 - 违反将导致系统故障
 
 **执行任何代码修改前必须遵守**:
@@ -28,10 +38,32 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 
 ## 快速开始
 
+### 环境准备(推荐)
+```bash
+# 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
+
+# 安装依赖
+pip install -r utils/requirements.txt
+
+# 验证安装
+python utils/check_dependencies.py
+```
+
+### 配置文件
+创建 `account_config.json` 和 `stock_pool.json` (参见文档末尾)
+
 ### 启动系统
 ```bash
 python main.py
 ```
+**首次运行**: 系统会自动创建 `data/positions.db` 数据库文件
 
 ### 运行测试(推荐顺序)
 ```bash
@@ -43,20 +75,12 @@ python test/comprehensive_test.py
 
 # 3. 止盈止损测试
 python test/test_stop_loss_buy_param.py
-
-# 4. Web数据刷新测试
-python test/test_web_data_refresh.py
-
-# 5. 盘前同步测试
-python test/test_premarket_sync_performance.py
 ```
 
-### 前端访问
-```
-http://localhost:5000
-```
+### Web前端
+浏览器访问: `http://localhost:5000`
 
-### 关键配置检查
+### 系统诊断工具
 ```bash
 # 检查系统状态
 python test/check_system_status.py
@@ -64,8 +88,9 @@ python test/check_system_status.py
 # 诊断QMT连接
 python test/diagnose_qmt_connection.py
 
-# 诊断系统问题
-python test/diagnose_system_issues.py
+# 查看实时日志
+tail -f logs/qmt_trading.log  # Linux/Mac
+Get-Content logs/qmt_trading.log -Wait  # Windows PowerShell
 ```
 
 ## 核心架构
@@ -568,10 +593,40 @@ thread_monitor.get_status()
 ]
 ```
 
-## 环境要求
+## 调试技巧
 
-- Python 3.8+ (推荐 3.9)
-- 依赖包: `pandas`, `numpy`, `flask`, `flask-cors`, `xtquant`, `mootdx`, `sqlite3`
-- QMT客户端 (实盘交易时需要)
+### 启用详细日志
+```python
+# config.py
+DEBUG = True
+LOG_LEVEL = "DEBUG"
+```
 
+### 测试模拟交易
+```python
+# config.py
+ENABLE_SIMULATION_MODE = True
+DEBUG_SIMU_STOCK_DATA = True  # 绕过交易时间限制
+```
 
+### 监控关键数据
+```python
+# 查看内存持仓
+position_manager.get_all_positions()
+
+# 查看待执行信号
+position_manager.get_pending_signals()
+
+# 检查账户信息
+position_manager.get_account_info()
+
+# 查看信号队列
+position_manager.latest_signals
+
+# 查看线程监控状态
+thread_monitor.get_status()
+```
+
+---
+
+**ALWAYS RESPOND IN SIMPLIFIED CHINESE!!!**

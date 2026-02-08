@@ -216,6 +216,9 @@ python test/test_web_data_refresh.py
 ### 系统诊断工具
 
 ```bash
+# 检查依赖安装
+python utils/check_dependencies.py
+
 # 检查系统状态
 python test/check_system_status.py
 

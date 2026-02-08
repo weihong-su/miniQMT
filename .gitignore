@@ -71,10 +71,14 @@ logs/
 /*_TEST_REPORT.md
 /test_*.py
 
-# 中间过程的临时文档和测试脚本(不纳入版本管理)
+# 中间过程的临时文档(不纳入版本管理)
 docs/*
 !docs/plans/
-test/
+
+# 注意：test/ 目录已改为跟踪，包含正式的回归测试套件
+# 如需忽略test目录下的临时文件，请使用具体规则，如：
+# test/*.tmp
+# test/reports/*.json (测试报告除外)
 
 
 __pycache__/config.cpython-38.pyc
