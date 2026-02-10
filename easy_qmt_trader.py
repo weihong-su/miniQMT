@@ -781,7 +781,7 @@ class easy_qmt_trader:
                 return pd.DataFrame(columns=columns)
 
             positions = self.xt_trader.query_stock_positions(self.acc)
-            print("easy_qmt_trader.position-持仓数量:", len(positions))
+            # print("easy_qmt_trader.position-持仓数量:", len(positions))
             
             # 一次性构建数据列表，再创建DataFrame
             if len(positions) > 0:
