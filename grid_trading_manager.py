@@ -179,16 +179,16 @@ class GridTradingManager:
 
     def _load_active_sessions(self):
         """系统启动时从数据库加载活跃会话(保守恢复策略)"""
-        logger.info("[GRID] _load_active_sessions: 系统重启 - 开始恢复网格交易会话")
+        logger.info("[GRID] 系统重启 - 开始恢复网格交易会话")
 
         try:
             active_sessions = self.db.get_active_grid_sessions()
-            logger.info(f"[GRID] _load_active_sessions: 从数据库查询到 {len(active_sessions)} 个活跃会话")
+            logger.info(f"[GRID] 从数据库查询到 {len(active_sessions)} 个活跃会话")
 
             # 详细日志：打印所有查询到的会话
             for idx, s in enumerate(active_sessions):
                 s_dict = dict(s)
-                logger.info(f"[GRID] _load_active_sessions: 数据库会话#{idx+1}: id={s_dict.get('id')}, "
+                logger.info(f"[GRID] 数据库会话#{idx+1}: id={s_dict.get('id')}, "
                            f"stock={s_dict.get('stock_code')}, status={s_dict.get('status')}, "
                            f"end_time={s_dict.get('end_time')}")
 
@@ -200,7 +200,7 @@ class GridTradingManager:
                 session_dict = dict(session_data)
                 stock_code = session_dict['stock_code']
                 session_id = session_dict['id']
-                logger.info(f"[GRID] _load_active_sessions: >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}")
+                logger.info(f"[GRID] >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}")
 
                 try:
                     # 1. 检查会话是否已过期
@@ -208,7 +208,7 @@ class GridTradingManager:
                     end_time = datetime.fromisoformat(session_dict['end_time'])
                     if datetime.now() > end_time:
                         self.db.stop_grid_session(session_id, 'expired')
-                        logger.info(f"[GRID] _load_active_sessions: 会话{session_id}({stock_code})已过期,自动停止")
+                        logger.info(f"[GRID] 会话{session_id}({stock_code})已过期,自动停止")
                         stopped_count += 1
                         continue
 
@@ -218,10 +218,10 @@ class GridTradingManager:
                     position = None
                     # BUG FIX: 使用session_dict.get()而不是session_data.get()
                     current_price = session_dict.get('current_center_price', session_dict['center_price'])
-                    logger.debug(f"[GRID] _load_active_sessions: 跳过持仓检查以避免阻塞, 使用数据库价格: {current_price:.2f}")
+                    logger.debug(f"[GRID] 跳过持仓检查以避免阻塞, 使用数据库价格: {current_price:.2f}")
 
                     # 3. 恢复GridSession对象
-                    logger.debug(f"[GRID] _load_active_sessions: 恢复会话对象 session_id={session_id}")
+                    logger.debug(f"[GRID] 恢复会话对象 session_id={session_id}")
                     session = GridSession(
                         id=session_dict['id'],
                         stock_code=session_dict['stock_code'],
@@ -252,7 +252,7 @@ class GridTradingManager:
                         current_price = position.get('current_price')
                     else:
                         current_price = session.current_center_price
-                    logger.debug(f"[GRID] _load_active_sessions: 创建PriceTracker session_id={session_id}, current_price={current_price:.2f}")
+                    logger.debug(f"[GRID] 创建PriceTracker session_id={session_id}, current_price={current_price:.2f}")
                     self.trackers[session_id] = PriceTracker(
                         session_id=session_id,
                         last_price=current_price,
@@ -266,12 +266,12 @@ class GridTradingManager:
                     # 5. 清除档位冷却
                     cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
                     if cooldown_keys:
-                        logger.debug(f"[GRID] _load_active_sessions: 清除 {len(cooldown_keys)} 个档位冷却记录")
+                        logger.debug(f"[GRID] 清除 {len(cooldown_keys)} 个档位冷却记录")
                     for key in cooldown_keys:
                         del self.level_cooldowns[key]
 
                     # 6. 记录恢复信息（简化版，避免调用get_profit_ratio导致阻塞）
-                    logger.info(f"[GRID] _load_active_sessions: 恢复会话: {stock_code}")
+                    logger.info(f"[GRID] 恢复会话: {stock_code}")
                     logger.info(f"[GRID]   - 会话ID: {session_id}")
                     logger.info(f"[GRID]   - 原始中心价: {session.center_price:.2f}元(锁定)")
                     logger.info(f"[GRID]   - 当前中心价: {session.current_center_price:.2f}元")
@@ -290,19 +290,19 @@ class GridTradingManager:
                     recovered_count += 1
 
                 except Exception as e:
-                    logger.error(f"[GRID] _load_active_sessions: 恢复会话{session_id}失败: {str(e)}, 自动停止会话")
+                    logger.error(f"[GRID] 恢复会话{session_id}失败: {str(e)}, 自动停止会话")
                     try:
                         self.db.stop_grid_session(session_id, 'init_error')
                         stopped_count += 1
                     except:
                         pass
 
-            logger.info(f"[GRID] _load_active_sessions: 网格会话恢复完成: 恢复{recovered_count}个, 自动停止{stopped_count}个")
+            logger.info(f"[GRID] 网格会话恢复完成: 恢复{recovered_count}个, 自动停止{stopped_count}个")
 
             return recovered_count
 
         except Exception as e:
-            logger.error(f"[GRID] _load_active_sessions: 加载活跃会话失败: {str(e)}")
+            logger.error(f"[GRID] 加载活跃会话失败: {str(e)}")
             return 0
 
     def start_grid_session(self, stock_code: str, user_config: dict) -> GridSession:
