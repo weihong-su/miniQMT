@@ -1349,23 +1349,6 @@ class PositionManager:
                                 )
                                 logger.debug(f"更新 {stock_code} 的最新价格为 {current_price:.2f}")
 
-                            # 检测网格交易信号（独立执行，不受价格变化阈值限制）
-                            if self.grid_manager and config.ENABLE_GRID_TRADING:
-                                try:
-                                    grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
-                                    if grid_signal:
-                                        logger.info(f"检测到网格信号: {grid_signal}")
-                                        # 将信号添加到队列(由strategy线程处理)
-                                        # 统一网格信号格式，与止盈止损信号保持一致
-                                        grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
-                                        with self.signal_lock:
-                                            self.latest_signals[stock_code] = {
-                                                'type': grid_signal_type,
-                                                'info': grid_signal,
-                                                'timestamp': datetime.now()
-                                            }
-                                except Exception as e:
-                                    logger.error(f"检测网格信号失败: {str(e)}")
                     except Exception as e:
                         logger.error(f"获取 {stock_code} 最新价格时出错: {str(e)}")
                         continue  # 跳过这只股票，继续处理其他股票
@@ -1641,13 +1624,14 @@ class PositionManager:
 
     # ========== 新增：统一的止盈止损检查逻辑 ==========
     
-    def check_trading_signals(self, stock_code):
+    def check_trading_signals(self, stock_code, current_price=None):
         """
         检查交易信号 - 修复字段映射错乱版本
-        
+
         参数:
         stock_code (str): 股票代码
-        
+        current_price (float, optional): 当前价格,如果提供则跳过行情查询以避免重复调用
+
         返回:
         tuple: (信号类型, 详细信息) - ('stop_loss'/'take_profit_half'/'take_profit_full', {...}) 或 (None, None)
         """
@@ -1665,10 +1649,13 @@ class PositionManager:
                 logger.debug(f"{stock_code} 持仓已清空(volume=0, available=0)，跳过信号检测")
                 return None, None
 
-            # 2. 获取最新行情数据
-            latest_quote = self.data_manager.get_latest_data(stock_code)
-            if not latest_quote:
-                latest_quote = {'lastPrice': position.get('current_price', 0)}
+            # 2. 获取最新行情数据 (优化: 如果已提供current_price则跳过API调用)
+            if current_price is None:
+                latest_quote = self.data_manager.get_latest_data(stock_code)
+                if not latest_quote:
+                    latest_quote = {'lastPrice': position.get('current_price', 0)}
+            else:
+                latest_quote = {'lastPrice': current_price}
 
             # 3. 🔑 安全的数据类型转换和验证
             try:
@@ -3010,81 +2997,103 @@ class PositionManager:
                 for _, position_row in positions_df.iterrows():
                     stock_code = position_row['stock_code']
 
-                    # 调试日志
-                    logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号")
+                    # 🔑 优化: 一次性获取行情数据,避免重复调用API
+                    try:
+                        latest_quote = self.data_manager.get_latest_data(stock_code)
+                        if not latest_quote:
+                            logger.warning(f"{stock_code} 获取行情失败,跳过本次检查")
+                            continue
 
-                    # 使用统一的信号检查函数
-                    signal_type, signal_info = self.check_trading_signals(stock_code)
+                        current_price = float(latest_quote.get('lastPrice', 0))
+                        if current_price <= 0:
+                            logger.warning(f"{stock_code} 价格无效: {current_price},跳过本次检查")
+                            continue
+                    except Exception as e:
+                        logger.error(f"{stock_code} 获取行情异常: {e}")
+                        continue
+
+                    # 调试日志
+                    logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号 (价格: {current_price:.2f})")
+
+                    # 使用统一的信号检查函数 (传入价格,避免内部重复调用API)
+                    signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
 
                     with self.signal_lock:
                         if signal_type:
-                            # 检查是否已有网格信号
                             existing_signal = self.latest_signals.get(stock_code)
-                            if existing_signal and existing_signal.get('type') in ['grid_buy', 'grid_sell']:
-                                # 已有网格信号，不覆盖（网格交易优先）
-                                logger.info(f"{stock_code} 已有网格信号 {existing_signal.get('type')}，跳过止盈止损信号 {signal_type}")
+
+                            # 🔑 信号优先级体系: stop_loss > grid_* > take_profit_*
+                            # 止损信号优先级最高,可以覆盖任何信号
+                            if signal_type == 'stop_loss':
+                                self.latest_signals[stock_code] = {
+                                    'type': signal_type,
+                                    'info': signal_info,
+                                    'timestamp': datetime.now()
+                                }
+                                logger.info(f"🔔 {stock_code} 检测到止损信号(最高优先级),覆盖已有信号")
+                            # 普通止盈信号不能覆盖网格信号
+                            elif existing_signal and existing_signal.get('type') in ['grid_buy', 'grid_sell']:
+                                logger.info(f"{stock_code} 已有网格信号 {existing_signal.get('type')},跳过止盈信号 {signal_type}")
                             else:
                                 self.latest_signals[stock_code] = {
                                     'type': signal_type,
                                     'info': signal_info,
                                     'timestamp': datetime.now()
                                 }
-                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type}，等待策略处理")
+                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type},等待策略处理")
                         else:
                             # 清除已不存在的信号（但保留网格信号，网格信号由网格检测逻辑管理）
-                            with self.signal_lock:
-                                existing = self.latest_signals.get(stock_code)
-                                if existing and existing.get('type', '').startswith('grid_'):
-                                    pass  # 保留网格信号，不清除
-                                else:
-                                    self.latest_signals.pop(stock_code, None)
+                            # 已在锁保护范围内，无需再次获取
+                            existing = self.latest_signals.get(stock_code)
+                            if existing and existing.get('type', '').startswith('grid_'):
+                                pass  # 保留网格信号，不清除
+                            else:
+                                self.latest_signals.pop(stock_code, None)
 
-                    # ===== 网格交易信号检测 =====
+                    # ===== 网格交易信号检测 (使用已获取的价格) =====
                     # 网格信号检测应该独立于止盈止损信号
                     if self.grid_manager and config.ENABLE_GRID_TRADING:
                         try:
-                            # 主动获取latest_quote
-                            latest_quote = self.data_manager.get_latest_data(stock_code)
-                            if latest_quote:
-                                current_price = float(latest_quote.get('lastPrice', 0))
-                                if current_price > 0:
-                                    grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
-                                    if grid_signal:
-                                        # 转换信号格式：'BUY' -> 'grid_buy', 'SELL' -> 'grid_sell'
-                                        grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
-                                        with self.signal_lock:
-                                            self.latest_signals[stock_code] = {
-                                                'type': grid_signal_type,
-                                                'info': grid_signal,
-                                                'timestamp': datetime.now()
-                                            }
+                            grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
+                            if grid_signal:
+                                # 转换信号格式：'BUY' -> 'grid_buy', 'SELL' -> 'grid_sell'
+                                grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
+                                with self.signal_lock:
+                                    # 🔑 信号优先级保护: stop_loss > grid_* > take_profit_*
+                                    existing = self.latest_signals.get(stock_code)
+                                    # 止损信号优先级最高,不被网格信号覆盖
+                                    if existing and existing.get('type') == 'stop_loss':
+                                        logger.warning(f"[GRID] {stock_code} 已有止损信号,网格信号 {grid_signal_type} 不覆盖")
+                                    else:
+                                        self.latest_signals[stock_code] = {
+                                            'type': grid_signal_type,
+                                            'info': grid_signal,
+                                            'timestamp': datetime.now()
+                                        }
                                         logger.info(f"[GRID] {stock_code} 检测到网格信号: {grid_signal_type}")
                         except Exception as e:
                             logger.error(f"[GRID] {stock_code} 网格信号检测异常: {e}")
 
-                    # 更新最高价（如果当前价格更高）
+                    # 更新最高价（如果当前价格更高,使用已获取的价格）
                     try:
-                        latest_quote = self.data_manager.get_latest_data(stock_code)
-                        if latest_quote:
-                            current_price = float(latest_quote.get('lastPrice', 0))
-                            highest_price = float(position_row.get('highest_price', 0))
+                        highest_price = float(position_row.get('highest_price', 0))
 
-                            if current_price > highest_price:
-                                new_highest_price = current_price
-                                new_stop_loss_price = self.calculate_stop_loss_price(
-                                    float(position_row.get('cost_price', 0)),
-                                    new_highest_price,
-                                    bool(position_row.get('profit_triggered', False))
-                                )
-                                self.update_position(
-                                    stock_code=stock_code,
-                                    volume=int(position_row.get('volume', 0)),
-                                    cost_price=float(position_row.get('cost_price', 0)),
-                                    highest_price=new_highest_price,
-                                    profit_triggered=bool(position_row.get('profit_triggered', False)),
-                                    open_date=position_row.get('open_date'),
-                                    stop_loss_price=new_stop_loss_price
-                                )
+                        if current_price > highest_price:
+                            new_highest_price = current_price
+                            new_stop_loss_price = self.calculate_stop_loss_price(
+                                float(position_row.get('cost_price', 0)),
+                                new_highest_price,
+                                bool(position_row.get('profit_triggered', False))
+                            )
+                            self.update_position(
+                                stock_code=stock_code,
+                                volume=int(position_row.get('volume', 0)),
+                                cost_price=float(position_row.get('cost_price', 0)),
+                                highest_price=new_highest_price,
+                                profit_triggered=bool(position_row.get('profit_triggered', False)),
+                                open_date=position_row.get('open_date'),
+                                stop_loss_price=new_stop_loss_price
+                            )
                     except (TypeError, ValueError) as e:
                         logger.error(f"更新最高价时类型转换错误 - {stock_code}: {e}")
 

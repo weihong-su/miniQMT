@@ -112,6 +112,8 @@ logger = logging.getLogger('miniQMT')
 logger.setLevel(getattr(logging, config.LOG_LEVEL))
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+# 🔧 关键修复: 禁止向根logger传播，避免重复输出
+logger.propagate = False
 
 # 设置调试模式下的详细日志
 if config.DEBUG:
