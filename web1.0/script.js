@@ -1239,13 +1239,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         dateStr = `${month}-${day} ${hours}:${minutes}:${seconds}`;
                     }                   
                     // 转换交易类型
-                    const actionType = entry.trade_type === 'BUY' ? '买入' : 
-                                    (entry.trade_type === 'SELL' ? '卖出' : entry.trade_type);
+                    const actionType = entry.trade_type === 'BUY' ? '买' : 
+                                    (entry.trade_type === 'SELL' ? '卖' : entry.trade_type);
                     
                     // 格式化为要求的格式
                     const formattedPrice = entry.price ? Number(entry.price).toFixed(2) : '';
                     const formattedVolume = entry.volume ? Number(entry.volume).toFixed(0) : '';
-                    return `${dateStr}, ${entry.stock_code || ''}, ${entry.stock_name || ''}, ${actionType}, 价格: ${formattedPrice}, 数量: ${formattedVolume}, 策略: ${entry.strategy || ''}`;
+                    return `${dateStr}, ${entry.stock_code || ''}, ${entry.stock_name || ''}, ${actionType}, 价: ${formattedPrice}, 量: ${formattedVolume}, 策略: ${entry.strategy || ''}`;
                 } else {
                     return String(entry); // 如果不是对象，直接转换为字符串
                 }
@@ -1652,7 +1652,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const throttledSyncParameter = throttle(syncParameterToBackend, 500);
 
     async function handleClearLogs() {
-        if (!confirm("确定要清空所有日志吗？此操作不可撤销。")) return;
+        if (!confirm("⚠️ 确定要清空所有日志吗？\n\n此操作不可撤销！")) return;
         showMessage("清空日志中...", 'loading', 0);
         elements.clearLogBtn.disabled = true;
         try {
@@ -1678,7 +1678,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 初始化持仓数据函数
     async function handleInitHoldings() {
-        if (!confirm("确定要初始化持仓数据吗？")) return;
+        if (!confirm("⚠️ 危险操作警告！\n\n确定要初始化持仓数据吗？\n此操作将从QMT重新同步所有持仓数据。")) return;
+
+        // 二次确认
+        if (!confirm("再次确认：您真的要执行初始化持仓数据吗？")) return;
 
         // 更新API基础URL
         updateApiBaseUrl();
@@ -1961,13 +1964,20 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.clearCurrentDataBtn.addEventListener('click', () => handleGenericAction(
         elements.clearCurrentDataBtn,
         API_ENDPOINTS.clearCurrentData,
-        "确定要清空当前数据吗？"
+        "⚠️ 警告：确定要清空当前数据吗？\n\n此操作不可撤销！"
     ));
-    elements.clearBuySellDataBtn.addEventListener('click', () => handleGenericAction(
-        elements.clearBuySellDataBtn,
-        API_ENDPOINTS.clearBuySellData,
-        "确定要清空买入/卖出数据吗？"
-    ));
+    elements.clearBuySellDataBtn.addEventListener('click', async () => {
+        // 危险操作：需要二次确认
+        if (!confirm("⚠️⚠️⚠️ 危险操作警告！⚠️⚠️⚠️\n\n您即将清空所有买入/卖出数据！\n这将删除所有交易记录和持仓信息。\n\n此操作不可撤销！确定继续吗？")) return;
+
+        if (!confirm("最后确认：您真的要清空所有买入/卖出数据吗？")) return;
+
+        await handleGenericAction(
+            elements.clearBuySellDataBtn,
+            API_ENDPOINTS.clearBuySellData,
+            null // 已经确认过了，不需要再次确认
+        );
+    });
     elements.importDataBtn.addEventListener('click', () => handleGenericAction(
         elements.importDataBtn,
         API_ENDPOINTS.importSavedData,

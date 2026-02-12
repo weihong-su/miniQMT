@@ -188,9 +188,20 @@ class GridTradingManager:
             # 详细日志：打印所有查询到的会话
             for idx, s in enumerate(active_sessions):
                 s_dict = dict(s)
-                logger.info(f"[GRID] 数据库会话#{idx+1}: id={s_dict.get('id')}, "
-                           f"stock={s_dict.get('stock_code')}, status={s_dict.get('status')}, "
-                           f"end_time={s_dict.get('end_time')}")
+                end_time_str = s_dict.get('end_time', '')
+                # 格式化时间：只显示到秒
+                if end_time_str:
+                    try:
+                        end_time_dt = datetime.fromisoformat(end_time_str)
+                        end_time_display = end_time_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        end_time_display = end_time_str
+                else:
+                    end_time_display = 'N/A'
+
+                logger.info(f"[GRID] 会话#{idx+1}: id={s_dict.get('id')}, "
+                           f"stock={s_dict.get('stock_code')}, "
+                           f"end_time={end_time_display}")
 
             recovered_count = 0
             stopped_count = 0

@@ -383,7 +383,7 @@ class TradingExecutor:
             # 获取股票名称
             stock_name = self.data_manager.get_stock_name(stock_code)
             
-            logger.info(f"保存交易记录: {stock_code}({stock_name}) {trade_type} 价格:{price:.2f} 数量:{volume} 金额:{amount:.2f} 策略:{strategy}")
+            logger.info(f"保存交易记录: {stock_code}({stock_name}) {trade_type} 价:{price:.2f} 量:{volume} 金额:{amount:.2f} 策略:{strategy}")
             
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -393,7 +393,7 @@ class TradingExecutor:
             """, (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy))
             
             self.conn.commit()
-            logger.info(f"保存交易记录成功: {stock_code}({stock_name}), {trade_type}, 价格: {price}, 数量: {volume}, 策略: {strategy}")
+            logger.info(f"保存交易记录成功: {stock_code}({stock_name}), {trade_type}, 价: {price}, 量: {volume}, 策略: {strategy}")
             return True
         
         except Exception as e:
