@@ -16,8 +16,8 @@ def factor_reversion(symbol: str, method: str = 'qfq', raw: pd.DataFrame = None)
 
         data = pd.concat([raw, factor.loc[raw.index[0]: raw.index[-1], ['factor']]], axis=1)
         # data.factor = data.factor.fillna(method=('ffill', 'bfill')[method == 'qfq'], axis=0) --Weihong 250426
-        # Use infer_objects to avoid the FutureWarning
-        data = data.infer_objects(copy=False)
+        # Use infer_objects to avoid the FutureWarning (pandas 1.5.3 compatible)
+        data = data.infer_objects()
 
         if method == 'qfq':
             data.factor = data.factor.ffill(axis=0).bfill(axis=0)
