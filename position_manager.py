@@ -3107,7 +3107,7 @@ class PositionManager:
                 loop_end = time.time()
                 loop_duration = loop_end - loop_start
                 if loop_duration > 7:  # 循环超过7秒告警
-                    logger.warning(f"⚠ [MONITOR_SLOW] 本次监控循环耗时 {loop_duration:.2f}秒（超过7秒），"
+                    logger.warning(f"⚠ [MONITOR_SLOW] 耗时 {loop_duration:.2f}秒（超7秒），"
                                  f"已处理{len(positions_df)}只股票")
                 last_loop_time = loop_end
 

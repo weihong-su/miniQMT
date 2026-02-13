@@ -1235,8 +1235,13 @@ def sse():
                 }
 
                 # 🔧 修改：始终添加持仓更新通知（无论是否变化）
-                version_changed = current_version > last_positions_version
+                # 🔴 BUG修复：检测版本号任何变化（包括回退），防止系统重启后页面冻结
+                version_changed = current_version != last_positions_version
                 if version_changed:
+                    # 检测版本回退（系统可能重启）
+                    if current_version < last_positions_version:
+                        logger.warning(f"⚠️ 检测到版本号回退: v{last_positions_version} → v{current_version} (系统可能已重启)")
+
                     current_data['positions_update'] = {
                         'version': current_version,
                         'changed': True
