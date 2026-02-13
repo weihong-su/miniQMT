@@ -461,8 +461,11 @@ class PositionManager:
 
 
                     sync_db_conn.commit()
-                    if update_count > 0 or insert_count > 0:
-                        logger.info(f"SQLite:更{update_count}插{insert_count}")
+                    # 只在有实际变化时输出日志
+                    if insert_count > 0:
+                        logger.info(f"SQLite同步: 更新{update_count}条, 插入{insert_count}条新记录")
+                    elif (update_count > 0) and (config.VERBOSE_LOOP_LOGGING or config.DEBUG):
+                        logger.debug(f"SQLite同步: 更新{update_count}条持仓数据")
 
             except Exception as e:
                 logger.error(f"独立连接同步失败: {str(e)}")

@@ -778,10 +778,12 @@ class DataManager:
             try:
                 # 判断是否在交易时间
                 if config.is_trade_time():
-                    logger.info("开始更新所有股票数据")
+                    if config.VERBOSE_LOOP_LOGGING or config.DEBUG:
+                        logger.debug("开始更新所有股票数据")
                     self.update_all_stock_data()
-                    logger.info("股票数据更新完成")
-                
+                    if config.VERBOSE_LOOP_LOGGING or config.DEBUG:
+                        logger.debug("股票数据更新完成")
+
                 # 等待下一次更新
                 for _ in range(config.UPDATE_INTERVAL):
                     if self.stop_flag:

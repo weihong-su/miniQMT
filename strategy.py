@@ -852,7 +852,8 @@ class TradingStrategy:
             try:
                 # 判断是否在交易时间
                 if config.is_trade_time():
-                    logger.info("开始执行交易策略")
+                    if config.VERBOSE_LOOP_LOGGING or config.DEBUG:
+                        logger.debug("开始执行交易策略")
 
                     # 🔑 修复: 优先处理所有持仓股票 (止盈止损信号优先级最高)
                     positions = self.position_manager.get_all_positions()
@@ -873,7 +874,8 @@ class TradingStrategy:
                             self.check_and_execute_strategies(stock_code)
                             time.sleep(1)
 
-                    logger.info("交易策略执行完成")
+                    if config.VERBOSE_LOOP_LOGGING or config.DEBUG:
+                        logger.debug("交易策略执行完成")
 
                 # 等待下一次策略执行
                 for _ in range(10):  # 每10s执行一次策略

@@ -588,9 +588,9 @@ class DatabaseManager:
         - 稳健型: -10% (平衡)
         - 保守型: -8% (快速止损)
         """
-        logger.info("=" * 60)
+        logger.info("=" * 50)
         logger.info("开始初始化风险等级模板...")
-        logger.info("=" * 60)
+        logger.info("=" * 50)
 
         templates = [
             {
@@ -655,9 +655,9 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"❌ 初始化模板失败: {template['template_name']}, 错误: {str(e)}")
 
-        logger.info("=" * 60)
+        logger.info("=" * 50)
         logger.info(f"风险等级模板初始化完成: 新增{initialized_count}个, 跳过{skipped_count}个")
-        logger.info("=" * 60)
+        logger.info("=" * 50)
 
         return initialized_count
 

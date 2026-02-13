@@ -25,6 +25,8 @@ logger = get_logger("main")
 # 全局变量
 threads = []
 stop_event = threading.Event()
+system_start_time = None  # 系统启动时间
+heartbeat_thread = None  # 心跳日志线程
 
 def signal_handler(sig, frame):
     """信号处理函数，用于捕获退出信号"""
@@ -65,6 +67,75 @@ def init_system():
 
     logger.info("✓ 系统初始化完成")
     return data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy
+
+def heartbeat_logger():
+    """系统心跳日志 - 定期输出运行状态摘要"""
+    while not stop_event.is_set():
+        try:
+            # 等待指定间隔
+            if stop_event.wait(config.HEARTBEAT_INTERVAL):
+                break  # 收到停止信号
+
+            # 计算运行时长
+            if system_start_time:
+                uptime = datetime.now() - system_start_time
+                hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                uptime_str = f"{hours}h{minutes}m{seconds}s"
+            else:
+                uptime_str = "未知"
+
+            # 获取持仓信息
+            try:
+                position_manager = get_position_manager()
+                positions = position_manager.get_all_positions()
+                position_count = 0 if positions is None or positions.empty else len(positions)
+
+                # 获取账户信息
+                account_info = position_manager.get_account_info()
+                if account_info:
+                    total_asset = account_info.get('total_asset', 0)
+                    available = account_info.get('cash', 0)
+                    asset_str = f"总资产:{total_asset:.2f} 可用:{available:.2f}"
+                else:
+                    asset_str = "资产信息获取失败"
+            except Exception as e:
+                position_count = "获取失败"
+                asset_str = f"获取失败:{str(e)[:20]}"
+
+            # 输出心跳日志
+            logger.info("=" * 50)
+            logger.info(f"💓 系统心跳 - 运行时长:{uptime_str}")
+            logger.info(f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
+                       f"自动交易:{'开启' if config.ENABLE_AUTO_TRADING else '关闭'} | "
+                       f"网格交易:{'开启' if config.ENABLE_GRID_TRADING else '关闭'}")
+            logger.info(f"   持仓数量:{position_count} | {asset_str}")
+            logger.info("=" * 50)
+
+        except Exception as e:
+            logger.error(f"心跳日志出错:{str(e)[:50]}")
+            time.sleep(60)  # 出错后等待一分钟再继续
+
+def start_heartbeat_logger():
+    """启动心跳日志线程"""
+    global heartbeat_thread, system_start_time
+
+    if not config.ENABLE_HEARTBEAT_LOG:
+        logger.info("心跳日志未启用 (ENABLE_HEARTBEAT_LOG=False)")
+        return
+
+    system_start_time = datetime.now()
+    heartbeat_thread = threading.Thread(target=heartbeat_logger, daemon=True, name="HeartbeatLogger")
+    heartbeat_thread.start()
+    logger.info(f"✅ 心跳日志已启动 (间隔:{config.HEARTBEAT_INTERVAL}秒)")
+
+def stop_heartbeat_logger():
+    """停止心跳日志线程"""
+    global heartbeat_thread
+    if heartbeat_thread and heartbeat_thread.is_alive():
+        logger.info("停止心跳日志线程")
+        stop_event.set()
+        heartbeat_thread.join(timeout=2)
 
 def start_data_thread(data_manager):
     """启动数据更新线程"""
@@ -167,6 +238,12 @@ def cleanup():
             thread_monitor.stop()
         except Exception as e:
             logger.error(f"线程监控停止失败:{str(e)[:30]}")
+
+    # 第2.5步: 停止心跳日志线程
+    try:
+        stop_heartbeat_logger()
+    except Exception as e:
+        logger.error(f"心跳日志停止失败:{str(e)[:30]}")
 
     # 第3步: 停止其他业务线程
     for thread_name, stop_func in threads:
@@ -291,6 +368,9 @@ def main():
             # 启动监控
             thread_monitor.start()
             logger.info("✅ 线程监控已启动")
+
+        # ============ 新增: 启动系统心跳日志 ============
+        start_heartbeat_logger()
 
         # ============ 新增: 启动卖出监控器 ============
         if hasattr(config, 'ENABLE_SELL_MONITOR') and config.ENABLE_SELL_MONITOR:
