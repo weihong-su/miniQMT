@@ -192,20 +192,20 @@ def perform_premarket_sync():
 
     try:
         # 步骤1: 同步持久化配置
-        logger.info("[1/8] 配置同步")
+        logger.info("[1/9] 配置同步")
         config_manager = get_config_manager()
         count = config_manager.apply_configs_to_runtime()
         results['configs_synced'] = count
         logger.info(f"✓ 配置{count}项")
 
         # 步骤2: 同步特殊开关
-        logger.info("[2/8] 开关同步")
+        logger.info("[2/9] 开关同步")
         switch_count = sync_special_switches()
         results['switches_synced'] = switch_count
         logger.info(f"✓ 开关{switch_count}个")
 
         # 步骤3: 重新初始化xtquant行情接口 (可配置)
-        logger.info("[3/8] xtdata重连")
+        logger.info("[3/9] xtdata重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTDATA:
             xtdata_result = reinit_xtquant_data()
             results['xtdata_reconnected'] = xtdata_result
@@ -219,7 +219,7 @@ def perform_premarket_sync():
             results['xtdata_reconnected'] = None
 
         # 步骤4: 重新初始化xtquant交易接口 (可配置)
-        logger.info("[4/8] xttrader重连")
+        logger.info("[4/9] xttrader重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTTRADER:
             xttrader_result = reinit_xtquant_trader()
             results['xttrader_reconnected'] = xttrader_result
@@ -233,14 +233,14 @@ def perform_premarket_sync():
             results['xttrader_reconnected'] = None
 
         # 步骤5: 验证xtquant连接状态
-        logger.info("[5/8] 验证连接")
+        logger.info("[5/9] 验证连接")
         connection_status = verify_xtquant_connections()
         results['connection_status'] = connection_status
         logger.info(f"✓ xtdata:{connection_status.get('xtdata', '未知')}")
         logger.info(f"✓ xttrader:{connection_status.get('xttrader', '未知')}")
 
         # 步骤6: 同步持仓数据(仅模拟模式)
-        logger.info("[6/8] 持仓同步")
+        logger.info("[6/9] 持仓同步")
         if config.ENABLE_SIMULATION_MODE:
             from position_manager import get_position_manager
             position_manager = get_position_manager()
@@ -250,8 +250,37 @@ def perform_premarket_sync():
         else:
             logger.info("○ 跳过持仓(实盘)")
 
-        # 步骤7: 触发Web数据全量刷新 (可配置)
-        logger.info("[7/8] Web刷新")
+        # 步骤7: 网格交易初始化
+        logger.info("[7/9] 网格交易初始化")
+        if config.ENABLE_GRID_TRADING:
+            try:
+                from position_manager import get_position_manager
+                from trading_executor import get_trading_executor
+
+                position_manager = get_position_manager()
+                trading_executor = get_trading_executor()
+
+                # 检查grid_manager是否已存在
+                if hasattr(position_manager, 'grid_manager') and position_manager.grid_manager:
+                    logger.info("  → 网格交易管理器已存在,重新加载活跃会话...")
+                    # 重新加载活跃会话
+                    loaded_count = position_manager.grid_manager._load_active_sessions()
+                    logger.info(f"  ✓ 重新加载 {loaded_count} 个活跃会话")
+                    results['grid_sessions_loaded'] = loaded_count
+                else:
+                    logger.info("  → 网格交易管理器不存在,初始化...")
+                    position_manager.init_grid_manager(trading_executor)
+                    logger.info("  ✓ 网格交易管理器初始化完成")
+                    results['grid_sessions_loaded'] = 0
+            except Exception as e:
+                logger.error(f"  ✗ 网格交易初始化失败: {str(e)}")
+                results['errors'].append(f"网格交易初始化失败: {str(e)}")
+        else:
+            logger.info("  ○ 跳过网格交易(未启用)")
+            results['grid_sessions_loaded'] = None
+
+        # 步骤8: 触发Web数据全量刷新 (可配置)
+        logger.info("[8/9] Web刷新")
         if config.ENABLE_WEB_REFRESH_AFTER_REINIT:
             refresh_result = trigger_web_data_refresh(results)
             results['web_refresh'] = refresh_result
@@ -263,8 +292,8 @@ def perform_premarket_sync():
             logger.info("○ 跳过Web(已禁用)")
             results['web_refresh'] = None
 
-        # 步骤8: 记录同步历史
-        logger.info("[8/8] 记录历史")
+        # 步骤9: 记录同步历史
+        logger.info("[9/9] 记录历史")
         execution_time = int((time.time() - start_time) * 1000)
         results['execution_time_ms'] = execution_time
         record_sync_history(results)
