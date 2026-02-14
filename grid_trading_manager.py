@@ -60,14 +60,48 @@ class GridSession:
     stop_reason: Optional[str] = None
 
     def get_profit_ratio(self) -> float:
-        """计算网格盈亏率"""
-        if self.total_buy_amount == 0:
-            logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, session_id={self.id}, total_buy_amount=0, 返回0.0")
+        """
+        计算网格盈亏率（基于max_investment）
+
+        公式: (total_sell_amount - total_buy_amount) / max_investment
+
+        设计原则:
+        1. 只计算网格交易本身的现金流差额，完全隔离市场波动
+        2. 分母使用max_investment，避免除零错误，且含义清晰（投入回报率）
+        3. 无交易时返回0.0，避免误触发止盈止损
+        """
+        # max_investment为0说明配置异常，返回0.0
+        if self.max_investment <= 0:
+            logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+                        f"session_id={self.id}, max_investment={self.max_investment}, 返回0.0")
             return 0.0
-        ratio = (self.total_sell_amount - self.total_buy_amount) / self.total_buy_amount
-        logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, session_id={self.id}, "
-                    f"total_sell={self.total_sell_amount:.2f}, total_buy={self.total_buy_amount:.2f}, ratio={ratio*100:.2f}%")
+
+        # 无任何交易时返回0.0（中性状态）
+        if self.total_buy_amount == 0 and self.total_sell_amount == 0:
+            logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+                        f"session_id={self.id}, 无交易记录, 返回0.0")
+            return 0.0
+
+        # 网格累计利润 = 卖出总额 - 买入总额
+        grid_profit = self.total_sell_amount - self.total_buy_amount
+
+        # 盈亏率 = 网格累计利润 / 最大投入额度
+        ratio = grid_profit / self.max_investment
+
+        logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+                    f"session_id={self.id}, sell={self.total_sell_amount:.2f}, "
+                    f"buy={self.total_buy_amount:.2f}, grid_profit={grid_profit:.2f}, "
+                    f"max_investment={self.max_investment:.2f}, ratio={ratio*100:.2f}%")
         return ratio
+
+    def get_grid_profit(self) -> float:
+        """
+        获取网格累计利润（绝对金额）
+
+        Returns:
+            网格累计利润 = total_sell_amount - total_buy_amount
+        """
+        return self.total_sell_amount - self.total_buy_amount
 
     def get_deviation_ratio(self) -> float:
         """计算当前偏离度"""
@@ -496,6 +530,8 @@ class GridTradingManager:
         logger.info(f"[GRID]   - 总买入金额: {session.total_buy_amount:.2f}")
         logger.info(f"[GRID]   - 总卖出金额: {session.total_sell_amount:.2f}")
         logger.info(f"[GRID]   - 网格盈亏: {session.get_profit_ratio()*100:.2f}%")
+        logger.info(f"[GRID]   - 网格累计利润: {session.get_grid_profit():.2f}元")
+        logger.info(f"[GRID]   - 最大投入额度: {session.max_investment:.2f}元")
         logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
         logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
 
@@ -545,18 +581,27 @@ class GridTradingManager:
                 logger.warning(f"[GRID] _check_exit_conditions: {session.stock_code} 偏离度{deviation*100:.2f}%超过限制{session.max_deviation*100:.2f}%, 触发退出")
                 return 'deviation'
 
-        # 2. 盈亏检测
-        if session.total_buy_amount > 0:
+        # 2. 盈亏检测：严格配对模式 - 必须至少完成1次买入+1次卖出
+        if session.buy_count > 0 and session.sell_count > 0:
             profit_ratio = session.get_profit_ratio()
-            logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%")
+            logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, "
+                        f"target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%, "
+                        f"buy_count={session.buy_count}, sell_count={session.sell_count}")
+
+            # 止盈检测
             if profit_ratio >= session.target_profit:
-                logger.info(f"[GRID] _check_exit_conditions: {session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%, 触发退出")
+                logger.info(f"[GRID] {session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%, "
+                           f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'target_profit'
+
+            # 止损检测
             if profit_ratio <= session.stop_loss:
-                logger.warning(f"[GRID] _check_exit_conditions: {session.stock_code} 触发止损{profit_ratio*100:.2f}%, 触发退出")
+                logger.warning(f"[GRID] {session.stock_code} 触发止损{profit_ratio*100:.2f}%, "
+                              f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'stop_loss'
         else:
-            logger.debug(f"[GRID] _check_exit_conditions: total_buy_amount=0, 跳过盈亏检测")
+            logger.debug(f"[GRID] _check_exit_conditions: 未完成配对操作(buy_count={session.buy_count}, "
+                        f"sell_count={session.sell_count}), 跳过盈亏检测")
 
         # 3. 时间限制
         if session.end_time:
@@ -1047,6 +1092,7 @@ class GridTradingManager:
             'buy_count': session.buy_count,
             'sell_count': session.sell_count,
             'profit_ratio': session.get_profit_ratio(),
+            'grid_profit': session.get_grid_profit(),
             'deviation_ratio': session.get_deviation_ratio(),
             'current_investment': session.current_investment,
             'max_investment': session.max_investment,

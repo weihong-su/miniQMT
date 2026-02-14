@@ -1909,7 +1909,7 @@ def get_grid_sessions():
                     'buy_count': session_dict['buy_count'],
                     'sell_count': session_dict['sell_count'],
                     # 计算盈亏率
-                    'profit_ratio': (session_dict['total_sell_amount'] - session_dict['total_buy_amount']) / session_dict['total_buy_amount'] if session_dict['total_buy_amount'] > 0 else 0,
+                    'profit_ratio': (session_dict['total_sell_amount'] - session_dict['total_buy_amount']) / session_dict.get('max_investment', 0) if session_dict.get('max_investment', 0) > 0 else 0,
                     # 计算偏离度
                     'deviation_ratio': abs(session_dict['current_center_price'] - session_dict['center_price']) / session_dict['center_price'] if session_dict['center_price'] > 0 else 0,
                     'start_time': session_dict['start_time'],
