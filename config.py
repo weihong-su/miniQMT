@@ -24,7 +24,7 @@ WEB_ACCESS_LOG_INCLUDE_TIMING = True  # 是否包含请求耗时统计
 # 循环日志优化配置
 VERBOSE_LOOP_LOGGING = False  # 是否输出详细的循环日志（开启后会在DEBUG模式下输出每次循环的开始/结束）
 ENABLE_HEARTBEAT_LOG = True   # 是否启用系统心跳日志（定期输出运行状态摘要）
-HEARTBEAT_INTERVAL = 300      # 心跳日志间隔（秒，默认300=5分钟）
+HEARTBEAT_INTERVAL = 1800      # 心跳日志间隔（秒，默认1800=30分钟）
 
 # ======================= 功能开关 =======================
 ENABLE_SIMULATION_MODE = True   # 模拟交易模式开关（True=模拟，False=实盘）
