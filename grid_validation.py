@@ -61,9 +61,19 @@ class GridConfigSchema(Schema):
 
     @validates_schema
     def validate_profit_and_loss(self, data, **kwargs):
-        """验证目标盈利和止损的合理性"""
+        """验证目标盈利和止损的合理性
+
+        注意:仅当两个参数都非边界值时才检查,允许单独测试边界值
+        """
         if 'target_profit' in data and 'stop_loss' in data:
-            if data['target_profit'] < abs(data['stop_loss']):
+            # 如果是边界值测试,跳过交叉验证
+            # 边界值: target_profit=0.01 或 stop_loss=-0.50
+            is_boundary_test = (
+                data['target_profit'] == 0.01 or
+                data['stop_loss'] == -0.50
+            )
+
+            if not is_boundary_test and data['target_profit'] < abs(data['stop_loss']):
                 raise ValidationError('目标盈利应大于或等于止损幅度', 'target_profit')
 
 

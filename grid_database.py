@@ -271,6 +271,27 @@ class DatabaseManager:
         2. 如果存在,先停止旧session
         3. 创建新session
         """
+        # 检查end_time，如果为None则设置默认值
+        if session_data.get('end_time') is None:
+            from datetime import timedelta
+            start_time_str = session_data.get('start_time')
+            if start_time_str:
+                # 如果start_time是字符串，解析它
+                if isinstance(start_time_str, str):
+                    # 处理ISO格式的日期字符串
+                    if 'T' in start_time_str:
+                        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                    else:
+                        # 如果只是日期,转为datetime
+                        start_time = datetime.fromisoformat(start_time_str)
+                else:
+                    start_time = start_time_str
+            else:
+                start_time = datetime.now()
+
+            # 设置默认end_time为start_time + 30天
+            session_data['end_time'] = (start_time + timedelta(days=30)).isoformat()
+
         stock_code = session_data.get('stock_code')
         logger.debug(f"[GRID-DB] create_grid_session: 开始创建会话 stock_code={stock_code}")
         logger.debug(f"[GRID-DB] create_grid_session: session_data={session_data}")

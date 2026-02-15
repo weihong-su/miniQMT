@@ -161,20 +161,36 @@ class PriceTracker:
             logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, 未等待回调, 返回None")
             return None
 
+        # 浮点数容差:仅用于补偿浮点计算误差
+        # 设计理由:
+        # 1. 解决浮点精度问题: 0.002999999999999936 vs 0.003
+        # 2. 0.01%容差足以处理浮点运算误差,避免过度宽松
+        FLOAT_TOLERANCE = 0.0001
+
         if self.direction == 'rising':
+            if self.peak_price == 0:
+                logger.warning(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, peak_price=0, 返回None")
+                return None
             ratio = (self.peak_price - self.last_price) / self.peak_price
             logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, direction=rising, "
-                        f"peak={self.peak_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.2f}%, threshold={callback_ratio*100:.2f}%")
-            if ratio >= callback_ratio:
-                logger.debug(f"[GRID] PriceTracker.check_callback: 触发SELL信号")
+                        f"peak={self.peak_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.4f}%, "
+                        f"threshold={callback_ratio*100:.2f}%")
+            # 使用容差比较：ratio >= callback_ratio - FLOAT_TOLERANCE
+            if ratio >= (callback_ratio - FLOAT_TOLERANCE):
+                logger.debug(f"[GRID] PriceTracker.check_callback: 触发SELL信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
                 return 'SELL'
 
         elif self.direction == 'falling':
+            if self.valley_price == 0:
+                logger.warning(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, valley_price=0, 返回None")
+                return None
             ratio = (self.last_price - self.valley_price) / self.valley_price
             logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, direction=falling, "
-                        f"valley={self.valley_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.2f}%, threshold={callback_ratio*100:.2f}%")
-            if ratio >= callback_ratio:
-                logger.debug(f"[GRID] PriceTracker.check_callback: 触发BUY信号")
+                        f"valley={self.valley_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.4f}%, "
+                        f"threshold={callback_ratio*100:.2f}%")
+            # 使用容差比较：ratio >= callback_ratio - FLOAT_TOLERANCE
+            if ratio >= (callback_ratio - FLOAT_TOLERANCE):
+                logger.debug(f"[GRID] PriceTracker.check_callback: 触发BUY信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
                 return 'BUY'
 
         logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, 未触发信号")
@@ -379,13 +395,13 @@ class GridTradingManager:
 
         # 验证持仓条件
         if not position:
-            logger.warning(f"[GRID] start_grid_session: [阶段1] 未持有{stock_code}, 拒绝启动")
-            raise ValueError(f"未持有{stock_code}")
+            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}无持仓, 拒绝启动")
+            raise ValueError(f"{stock_code}无持仓，无法启动网格交易")
 
         # 检查是否要求已触发止盈（可配置）
         if config.GRID_REQUIRE_PROFIT_TRIGGERED and not position.get('profit_triggered'):
             logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}未触发止盈, 拒绝启动 (GRID_REQUIRE_PROFIT_TRIGGERED=True)")
-            raise ValueError(f"{stock_code}未触发止盈,无法启动网格交易")
+            raise ValueError(f"{stock_code}未触发首次止盈，无法启动网格交易")
 
         logger.debug(f"[GRID] start_grid_session: [阶段1] 前置条件验证通过, volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
 
@@ -437,10 +453,7 @@ class GridTradingManager:
         try:
             # 检查并停止旧session
             if stock_code in self.sessions:
-                old_session = self.sessions[stock_code]
-                old_session_id = old_session.id
-                logger.warning(f"[GRID] start_grid_session: [阶段2] {stock_code}已有活跃session(id={old_session_id}), 自动停止")
-                self._stop_grid_session_unlocked(old_session_id, 'replaced_by_user')
+                raise ValueError(f"{stock_code}已存在活跃会话，请先停止当前会话")
 
             # 创建数据库记录
             session_id = self.db.create_grid_session(session_data)
@@ -535,6 +548,20 @@ class GridTradingManager:
         logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
         logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
 
+        # 同步内存中的统计信息到数据库
+        if stock_code in self.sessions:
+            session_obj = self.sessions[stock_code]
+            updates = {
+                'trade_count': session_obj.trade_count,
+                'buy_count': session_obj.buy_count,
+                'sell_count': session_obj.sell_count,
+                'total_buy_amount': session_obj.total_buy_amount,
+                'total_sell_amount': session_obj.total_sell_amount,
+                'current_investment': session_obj.current_investment
+            }
+            self.db.update_grid_session(session_id, updates)
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 同步统计信息到数据库完成")
+
         # 更新数据库
         self.db.stop_grid_session(session_id, reason)
         logger.debug(f"[GRID] _stop_grid_session_unlocked: 数据库更新完成")
@@ -547,11 +574,16 @@ class GridTradingManager:
             del self.trackers[session_id]
             logger.debug(f"[GRID] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
 
-        # 清除冷却记录
-        cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
-        if cooldown_keys:
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys)} 个档位冷却记录")
-        for key in cooldown_keys:
+        # 清除冷却记录 (支持两种键格式)
+        cooldown_keys_by_session = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
+        cooldown_keys_by_stock = [k for k in self.level_cooldowns.keys() if k[0] == stock_code]
+        if cooldown_keys_by_session:
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys_by_session)} 个session_id档位冷却记录")
+        for key in cooldown_keys_by_session:
+            del self.level_cooldowns[key]
+        if cooldown_keys_by_stock:
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys_by_stock)} 个stock_code档位冷却记录")
+        for key in cooldown_keys_by_stock:
             del self.level_cooldowns[key]
 
         # 触发数据版本更新
@@ -747,12 +779,20 @@ class GridTradingManager:
 
         if signal_type == 'SELL':
             signal['peak_price'] = tracker.peak_price
-            signal['callback_ratio'] = (tracker.peak_price - current_price) / tracker.peak_price
+            # 防止除零错误
+            if tracker.peak_price > 0:
+                signal['callback_ratio'] = (tracker.peak_price - current_price) / tracker.peak_price
+            else:
+                signal['callback_ratio'] = 0.0
             logger.debug(f"[GRID] _create_grid_signal: SELL信号 peak_price={tracker.peak_price:.2f}, "
                         f"callback_ratio={signal['callback_ratio']*100:.2f}%")
         elif signal_type == 'BUY':
             signal['valley_price'] = tracker.valley_price
-            signal['callback_ratio'] = (current_price - tracker.valley_price) / tracker.valley_price
+            # 防止除零错误
+            if tracker.valley_price > 0:
+                signal['callback_ratio'] = (current_price - tracker.valley_price) / tracker.valley_price
+            else:
+                signal['callback_ratio'] = 0.0
             logger.debug(f"[GRID] _create_grid_signal: BUY信号 valley_price={tracker.valley_price:.2f}, "
                         f"callback_ratio={signal['callback_ratio']*100:.2f}%")
 
@@ -870,17 +910,28 @@ class GridTradingManager:
 
         # 2. 计算买入金额和数量
         remaining_investment = session.max_investment - session.current_investment
-        buy_amount = min(remaining_investment, session.max_investment * 0.2)  # 单次不超过20%
-        logger.debug(f"[GRID] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, buy_amount={buy_amount:.2f}")
+        # 单次买入金额 = min(剩余额度, 总额度的20%)
+        # 注意: 这里使用固定比例0.2而非session.position_ratio,后者用于卖出计算
+        target_buy_amount = session.max_investment * 0.2
+        buy_amount = min(remaining_investment, target_buy_amount)
+        logger.debug(f"[GRID] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, "
+                    f"target_buy_amount(20%)={target_buy_amount:.2f}, buy_amount={buy_amount:.2f}")
 
         if buy_amount < 100:  # 最小买入金额
-            logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 剩余投入额度{remaining_investment:.2f}不足100元, 跳过买入")
+            logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 可用买入金额{buy_amount:.2f}不足100元, 跳过买入")
             return False
 
-        volume = int(buy_amount / trigger_price / 100) * 100  # 向下取整到100股
-        logger.debug(f"[GRID] _execute_grid_buy: 计算买入数量 volume={volume}")
-        if volume == 0:
-            logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 买入数量不足100股, 跳过")
+        # 计算股数
+        raw_volume = buy_amount / trigger_price  # 原始股数
+
+        # 计算股数 (统一要求100股倍数)
+        volume = (int(raw_volume) // 100) * 100
+        min_volume = 100
+
+        logger.debug(f"[GRID] _execute_grid_buy: 计算买入数量 raw_volume={raw_volume:.2f}, volume={volume}, min_volume={min_volume}")
+
+        if volume < min_volume:
+            logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 买入数量{volume}不足{min_volume}股(原始={raw_volume:.2f}股), 跳过")
             return False
 
         # 3. 执行买入
