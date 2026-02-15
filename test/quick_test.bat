@@ -29,7 +29,7 @@ cd /d %~dp0..
 REM Run tests
 echo Running regression tests...
 echo.
-"%PYTHON_EXE%" test/run_all_tests.py
+"%PYTHON_EXE%" test/run_integration_regression_tests.py --all
 
 REM Store exit code
 set TEST_EXIT_CODE=%ERRORLEVEL%
