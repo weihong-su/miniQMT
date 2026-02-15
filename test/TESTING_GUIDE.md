@@ -1,6 +1,11 @@
 # 集成回归测试使用指南
 
 ## 快速开始
+Claude Code中输入以下命令以自动完成集成回归测试：
+
+```bash
+/ultraqa 请使用python的虚拟环境 "C:\Users\PC\Anaconda3\envs\python39"，参考test\integration_test_config.json，运行完整集成回归测试，确保100%通过
+```
 
 ### 1. 运行所有测试（推荐）
 
