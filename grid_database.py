@@ -218,6 +218,44 @@ class DatabaseManager:
             )
         """)
 
+        # 数据库迁移: 检查grid_trades表结构
+        try:
+            cursor.execute("SELECT session_id FROM grid_trades LIMIT 1")
+        except sqlite3.OperationalError as e:
+            if "no such column" in str(e):
+                # 旧表结构,需要重建
+                logger.warning("检测到grid_trades表结构过旧,正在重建...")
+                cursor.execute("DROP TABLE IF EXISTS grid_trades")
+                # 重新创建表
+                cursor.execute("""
+                    CREATE TABLE grid_trades (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id INTEGER NOT NULL,
+                        stock_code TEXT NOT NULL,
+
+                        trade_type TEXT NOT NULL,
+                        grid_level REAL NOT NULL,
+                        trigger_price REAL NOT NULL,
+                        volume INTEGER NOT NULL,
+                        amount REAL NOT NULL,
+
+                        peak_price REAL,
+                        valley_price REAL,
+                        callback_ratio REAL,
+
+                        trade_id TEXT,
+                        trade_time TEXT NOT NULL,
+
+                        grid_center_before REAL,
+                        grid_center_after REAL,
+
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
+                    )
+                """)
+                logger.info("grid_trades表重建完成")
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_grid_trades_session
             ON grid_trades(session_id)

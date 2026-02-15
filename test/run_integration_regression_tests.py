@@ -4,14 +4,15 @@
 集成回归测试运行器 (Integration Regression Test Runner)
 
 功能:
-1. 运行所有动态止盈止损测试
-2. 运行所有网格交易测试
-3. 生成详细的测试报告
-4. 支持选择性运行测试组
-5. 支持持续集成模式
+1. 自动准备测试环境（清理数据库、备份生产数据）
+2. 运行所有动态止盈止损测试
+3. 运行所有网格交易测试
+4. 生成详细的测试报告
+5. 支持选择性运行测试组
+6. 支持持续集成模式
 
 使用示例:
-    # 运行所有测试
+    # 运行所有测试（自动清理数据库）
     python test/run_integration_regression_tests.py --all
 
     # 运行网格交易测试
@@ -26,8 +27,18 @@
     # 失败重试
     python test/run_integration_regression_tests.py --all --retry-failed
 
+    # 跳过环境准备（不清理数据库）
+    python test/run_integration_regression_tests.py --all --skip-env-prep
+
+    # 不备份生产数据库
+    python test/run_integration_regression_tests.py --all --no-backup
+
+    # 详细输出
+    python test/run_integration_regression_tests.py --all --verbose
+
 作者: Worker 3 (Ultrapilot)
 创建时间: 2026-02-15
+更新时间: 2026-02-15 (添加环境准备功能)
 """
 
 import sys
@@ -35,6 +46,8 @@ import os
 import unittest
 import json
 import argparse
+import glob
+import shutil
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
@@ -71,6 +84,147 @@ def load_config() -> dict:
     except Exception as e:
         print(f"{Colors.FAIL}错误: 加载配置失败 - {str(e)}{Colors.ENDC}")
         sys.exit(1)
+
+
+def prepare_test_environment(clean_db: bool = True, backup_db: bool = True, verbose: bool = False):
+    """
+    准备测试环境
+
+    Args:
+        clean_db: 是否清理测试数据库
+        backup_db: 是否备份生产数据库
+        verbose: 是否显示详细信息
+
+    Returns:
+        dict: 环境准备结果
+    """
+    print(f"\n{Colors.HEADER}{'='*80}{Colors.ENDC}")
+    print(f"{Colors.HEADER}测试环境准备{Colors.ENDC}")
+    print(f"{Colors.HEADER}{'='*80}{Colors.ENDC}")
+
+    results = {
+        'cleaned_files': [],
+        'backed_up_files': [],
+        'errors': []
+    }
+
+    data_dir = os.path.join(PROJECT_ROOT, 'data')
+
+    # 1. 备份生产数据库
+    if backup_db:
+        print(f"\n{Colors.OKCYAN}[1/3] 备份生产数据库...{Colors.ENDC}")
+        production_dbs = ['trading.db', 'positions.db']
+
+        for db_name in production_dbs:
+            db_path = os.path.join(data_dir, db_name)
+            if os.path.exists(db_path) and os.path.getsize(db_path) > 0:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                backup_path = os.path.join(data_dir, f'{db_name}.backup_{timestamp}')
+                try:
+                    shutil.copy2(db_path, backup_path)
+                    results['backed_up_files'].append(backup_path)
+                    if verbose:
+                        print(f"  [OK] 已备份: {db_name} -> {os.path.basename(backup_path)}")
+                except Exception as e:
+                    error_msg = f"备份失败 {db_name}: {str(e)}"
+                    results['errors'].append(error_msg)
+                    print(f"  {Colors.WARNING}[!] {error_msg}{Colors.ENDC}")
+
+        if not results['backed_up_files'] and verbose:
+            print(f"  {Colors.OKBLUE}[i] 没有需要备份的生产数据库{Colors.ENDC}")
+
+    # 2. 清理测试数据库
+    if clean_db:
+        print(f"\n{Colors.OKCYAN}[2/3] 清理测试数据库...{Colors.ENDC}")
+
+        # 定义需要清理的数据库文件模式
+        test_db_patterns = [
+            'positions.db',           # 测试持仓数据库
+            'trading_test.db',        # 测试交易数据库
+            'grid_test*.db',          # 网格测试数据库
+            'grid_trading.db',        # 网格交易数据库
+            '*.db-journal',           # SQLite日志文件
+            '*.db-wal',               # SQLite WAL文件
+            '*.db-shm',               # SQLite共享内存文件
+        ]
+
+        for pattern in test_db_patterns:
+            pattern_path = os.path.join(data_dir, pattern)
+            matched_files = glob.glob(pattern_path)
+
+            for file_path in matched_files:
+                # 跳过生产数据库和备份文件
+                filename = os.path.basename(file_path)
+                if filename == 'trading.db' or '.backup_' in filename:
+                    continue
+
+                try:
+                    # 检查文件是否被占用
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        results['cleaned_files'].append(file_path)
+                        if verbose:
+                            print(f"  [OK] 已删除: {filename}")
+                except PermissionError:
+                    error_msg = f"文件被占用，无法删除: {filename}"
+                    results['errors'].append(error_msg)
+                    print(f"  {Colors.WARNING}[!] {error_msg}{Colors.ENDC}")
+                except Exception as e:
+                    error_msg = f"删除失败 {filename}: {str(e)}"
+                    results['errors'].append(error_msg)
+                    print(f"  {Colors.WARNING}[!] {error_msg}{Colors.ENDC}")
+
+        if results['cleaned_files']:
+            print(f"  {Colors.OKGREEN}[OK] 已清理 {len(results['cleaned_files'])} 个测试数据库文件{Colors.ENDC}")
+        else:
+            print(f"  {Colors.OKBLUE}[i] 没有需要清理的测试数据库{Colors.ENDC}")
+
+    # 3. 验证测试环境
+    print(f"\n{Colors.OKCYAN}[3/3] 验证测试环境...{Colors.ENDC}")
+
+    # 检查必要的目录
+    required_dirs = ['data', 'test', 'logs']
+    for dir_name in required_dirs:
+        dir_path = os.path.join(PROJECT_ROOT, dir_name)
+        if not os.path.exists(dir_path):
+            try:
+                os.makedirs(dir_path)
+                if verbose:
+                    print(f"  [OK] 已创建目录: {dir_name}/")
+            except Exception as e:
+                error_msg = f"创建目录失败 {dir_name}: {str(e)}"
+                results['errors'].append(error_msg)
+                print(f"  {Colors.FAIL}[X] {error_msg}{Colors.ENDC}")
+        elif verbose:
+            print(f"  [OK] 目录存在: {dir_name}/")
+
+    # 检查配置文件
+    config_files = ['config.py', 'test/integration_test_config.json']
+    for config_file in config_files:
+        config_path = os.path.join(PROJECT_ROOT, config_file)
+        if os.path.exists(config_path):
+            if verbose:
+                print(f"  [OK] 配置文件存在: {config_file}")
+        else:
+            error_msg = f"配置文件缺失: {config_file}"
+            results['errors'].append(error_msg)
+            print(f"  {Colors.FAIL}[X] {error_msg}{Colors.ENDC}")
+
+    # 打印总结
+    print(f"\n{Colors.HEADER}环境准备完成{Colors.ENDC}")
+    if results['backed_up_files']:
+        print(f"  备份文件: {len(results['backed_up_files'])} 个")
+    if results['cleaned_files']:
+        print(f"  清理文件: {len(results['cleaned_files'])} 个")
+    if results['errors']:
+        print(f"  {Colors.WARNING}警告: {len(results['errors'])} 个{Colors.ENDC}")
+        if verbose:
+            for error in results['errors']:
+                print(f"    - {error}")
+    else:
+        print(f"  {Colors.OKGREEN}[OK] 环境准备成功，无错误{Colors.ENDC}")
+
+    return results
 
 
 def discover_tests(test_modules: List[str], verbose: bool = False) -> Tuple[unittest.TestSuite, Dict]:
@@ -267,9 +421,9 @@ def generate_markdown_report(results: List[dict], config: dict, output_path: str
         f"| 测试组 | {total_groups} |",
         f"| 测试模块 | {total_modules} |",
         f"| 测试用例 | {total_tests} |",
-        f"| ✓ 通过 | {total_passed} |",
-        f"| ✗ 失败 | {total_failed} |",
-        f"| ⚠ 错误 | {total_errors} |",
+        f"| [OK] 通过 | {total_passed} |",
+        f"| [X] 失败 | {total_failed} |",
+        f"| [!] 错误 | {total_errors} |",
         f"| ⊘ 跳过 | {total_skipped} |",
         f"| 成功率 | {overall_success_rate:.2f}% |",
         f"| 总耗时 | {total_duration:.2f} 秒 |",
@@ -277,7 +431,7 @@ def generate_markdown_report(results: List[dict], config: dict, output_path: str
     ]
 
     for result in results:
-        status_icon = "✓" if result['failed'] == 0 and result['errors'] == 0 else "✗"
+        status_icon = "[OK]" if result['failed'] == 0 and result['errors'] == 0 else "[X]"
         lines.extend([
             f"### {status_icon} {result['group_display_name']}\n",
             f"**优先级**: {result['priority']} | **说明**: {result['description']}\n",
@@ -352,6 +506,9 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--retry-failed', action='store_true', help='自动重试失败的测试')
     parser.add_argument('--no-report', action='store_true', help='不生成报告文件')
+    parser.add_argument('--no-clean', action='store_true', help='不清理测试数据库')
+    parser.add_argument('--no-backup', action='store_true', help='不备份生产数据库')
+    parser.add_argument('--skip-env-prep', action='store_true', help='跳过环境准备步骤')
 
     args = parser.parse_args()
 
@@ -386,6 +543,28 @@ def main():
     else:
         parser.print_help()
         return 0
+
+    # 准备测试环境
+    if not args.skip_env_prep:
+        env_result = prepare_test_environment(
+            clean_db=not args.no_clean,
+            backup_db=not args.no_backup,
+            verbose=args.verbose
+        )
+        # 如果环境准备有严重错误（超过5个），提示用户
+        if len(env_result['errors']) > 5:
+            print(f"\n{Colors.WARNING}警告: 环境准备过程中出现 {len(env_result['errors'])} 个问题{Colors.ENDC}")
+            print(f"{Colors.WARNING}测试可能会受到影响，建议检查上述错误{Colors.ENDC}")
+            try:
+                response = input(f"\n是否继续运行测试? (y/n): ")
+                if response.lower() != 'y':
+                    print(f"{Colors.FAIL}测试已取消{Colors.ENDC}")
+                    return 1
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n{Colors.FAIL}测试已取消{Colors.ENDC}")
+                return 1
+        elif env_result['errors'] and args.verbose:
+            print(f"\n{Colors.OKBLUE}[i] 环境准备有 {len(env_result['errors'])} 个非关键警告，继续测试{Colors.ENDC}")
 
     # 打印测试计划
     print(f"\n{Colors.HEADER}{'='*80}{Colors.ENDC}")
