@@ -1,0 +1,122 @@
+{
+  "python_env": "C:\\Users\\PC\\Anaconda3\\envs\\python39",
+  "test_groups": {
+    "stop_profit": {
+      "name": "动态止盈止损测试",
+      "description": "验证动态止盈止损策略的正确性",
+      "modules": [
+        "test.test_stop_loss_profit",
+        "test.test_stop_profit_advanced_1",
+        "test.test_stop_profit_advanced_2",
+        "test.test_stop_profit_advanced_3"
+      ],
+      "priority": "high"
+    },
+    "grid_signal": {
+      "name": "网格信号检测测试",
+      "description": "验证网格交易信号的检测与追踪",
+      "modules": [
+        "test.test_grid_signal_price_tracker",
+        "test.test_grid_signal_crossing",
+        "test.test_grid_signal_callback",
+        "test.test_grid_signal_integration"
+      ],
+      "priority": "high"
+    },
+    "grid_session": {
+      "name": "网格会话管理测试",
+      "description": "验证网格交易会话的生命周期管理",
+      "modules": [
+        "test.test_grid_session_lifecycle",
+        "test.test_grid_session_recovery",
+        "test.test_grid_session_templates"
+      ],
+      "priority": "high"
+    },
+    "grid_trade": {
+      "name": "网格交易执行测试",
+      "description": "验证网格交易的买入卖出和资金管理",
+      "modules": [
+        "test.test_grid_trade_buy",
+        "test.test_grid_trade_sell",
+        "test.test_grid_trade_fund_management",
+        "test.test_grid_trade_statistics",
+        "test.test_grid_trade_rebuild"
+      ],
+      "priority": "high"
+    },
+    "grid_exit": {
+      "name": "网格退出条件测试",
+      "description": "验证网格交易的退出条件检测",
+      "modules": [
+        "test.test_grid_exit_deviation",
+        "test.test_grid_exit_profit_loss",
+        "test.test_grid_exit_time",
+        "test.test_grid_exit_position_cleared",
+        "test.test_grid_exit_integration"
+      ],
+      "priority": "high"
+    },
+    "grid_validation": {
+      "name": "网格参数验证测试",
+      "description": "验证网格参数校验和边界情况",
+      "modules": [
+        "test.test_grid_validation_params",
+        "test.test_grid_validation_edge_cases",
+        "test.test_grid_validation_exceptions"
+      ],
+      "priority": "medium"
+    },
+    "grid_comprehensive": {
+      "name": "网格综合测试",
+      "description": "网格交易综合功能测试",
+      "modules": [
+        "test.test_grid_comprehensive",
+        "test.test_grid_comprehensive_100",
+        "test.test_grid_comprehensive_ultraqa"
+      ],
+      "priority": "high"
+    },
+    "system_integration": {
+      "name": "系统集成测试",
+      "description": "验证系统整体功能",
+      "modules": [
+        "test.test_system_integration",
+        "test.test_unattended_operation",
+        "test.test_thread_monitoring"
+      ],
+      "priority": "critical"
+    },
+    "fast": {
+      "name": "快速验证测试",
+      "description": "关键功能快速验证（5分钟内完成）",
+      "modules": [
+        "test.test_grid_signal_price_tracker",
+        "test.test_grid_session_lifecycle",
+        "test.test_grid_trade_buy",
+        "test.test_grid_exit_deviation",
+        "test.test_grid_validation_params"
+      ],
+      "priority": "critical"
+    }
+  },
+  "reporting": {
+    "json_output": "test/integration_test_report.json",
+    "markdown_output": "test/integration_test_report.md",
+    "verbose": true,
+    "show_skipped": false,
+    "show_failure_details": true,
+    "color_output": true
+  },
+  "execution": {
+    "timeout_per_test_file": 300,
+    "parallel_execution": false,
+    "stop_on_first_failure": false
+  },
+  "retry": {
+    "enabled": true,
+    "max_retries": 2,
+    "retry_delay": 1,
+    "retry_on_error_only": true
+  }
+}

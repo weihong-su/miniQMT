@@ -97,6 +97,8 @@ class TestGridTradingAutomation(unittest.TestCase):
 
         # 创建测试环境
         cls.db_manager = DatabaseManager()
+        # 初始化网格交易表
+        cls.db_manager.init_grid_tables()
         cls.position_manager = MockPositionManager()
         cls.trading_executor = MockTradingExecutor()
         cls.grid_manager = GridTradingManager(

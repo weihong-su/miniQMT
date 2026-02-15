@@ -99,13 +99,13 @@ class TestGridRiskGrading(unittest.TestCase):
         risk_level_col = columns['risk_level']
         self.assertEqual(risk_level_col[2], 'TEXT', "risk_level字段类型应为TEXT")
         self.assertEqual(risk_level_col[4], "'moderate'", "risk_level默认值应为'moderate'")
-        logger.info("✓ risk_level字段验证通过: 类型=TEXT, 默认值='moderate'")
+        logger.info("[OK] risk_level字段验证通过: 类型=TEXT, 默认值='moderate'")
 
         # 验证template_name字段
         self.assertIn('template_name', columns, "grid_trading_sessions表应包含template_name字段")
         template_name_col = columns['template_name']
         self.assertEqual(template_name_col[2], 'TEXT', "template_name字段类型应为TEXT")
-        logger.info("✓ template_name字段验证通过: 类型=TEXT")
+        logger.info("[OK] template_name字段验证通过: 类型=TEXT")
 
         conn.close()
         logger.info("测试1通过: 数据库schema扩展正确")
@@ -127,7 +127,7 @@ class TestGridRiskGrading(unittest.TestCase):
         # 执行初始化
         initialized_count = self.db_manager.init_risk_level_templates()
         self.assertEqual(initialized_count, 3, "应初始化3个模板")
-        logger.info(f"✓ 初始化了{initialized_count}个风险模板")
+        logger.info(f"[OK] 初始化了{initialized_count}个风险模板")
 
         # 获取所有模板
         templates = self.db_manager.get_all_grid_templates()
@@ -142,7 +142,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertEqual(aggressive['price_interval'], 0.03, "激进型价格间隔应为3%")
         self.assertEqual(aggressive['target_profit'], 0.15, "激进型目标盈利应为15%")
         self.assertEqual(aggressive['stop_loss'], -0.15, "激进型止损比例应为-15%")
-        logger.info("✓ 激进型模板验证通过: 间隔=3%, 止损=-15%, 盈利=+15%")
+        logger.info("[OK] 激进型模板验证通过: 间隔=3%, 止损=-15%, 盈利=+15%")
 
         # 2. 稳健型模板
         moderate = template_names.get('稳健型网格')
@@ -151,7 +151,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertEqual(moderate['target_profit'], 0.10, "稳健型目标盈利应为10%")
         self.assertEqual(moderate['stop_loss'], -0.10, "稳健型止损比例应为-10%")
         self.assertTrue(moderate['is_default'], "稳健型应为默认模板")
-        logger.info("✓ 稳健型模板验证通过: 间隔=5%, 止损=-10%, 盈利=+10%")
+        logger.info("[OK] 稳健型模板验证通过: 间隔=5%, 止损=-10%, 盈利=+10%")
 
         # 3. 保守型模板
         conservative = template_names.get('保守型网格')
@@ -159,7 +159,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertEqual(conservative['price_interval'], 0.08, "保守型价格间隔应为8%")
         self.assertEqual(conservative['target_profit'], 0.08, "保守型目标盈利应为8%")
         self.assertEqual(conservative['stop_loss'], -0.08, "保守型止损比例应为-8%")
-        logger.info("✓ 保守型模板验证通过: 间隔=8%, 止损=-8%, 盈利=+8%")
+        logger.info("[OK] 保守型模板验证通过: 间隔=8%, 止损=-8%, 盈利=+8%")
 
         logger.info("测试2通过: 三档风险模板初始化正确")
 
@@ -197,7 +197,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertIn('aggressive', risk_templates, "应包含aggressive模板")
         self.assertIn('moderate', risk_templates, "应包含moderate模板")
         self.assertIn('conservative', risk_templates, "应包含conservative模板")
-        logger.info("✓ API返回3个风险等级模板")
+        logger.info("[OK] API返回3个风险等级模板")
 
         # 验证字段完整性
         for risk_level, template in risk_templates.items():
@@ -205,7 +205,7 @@ class TestGridRiskGrading(unittest.TestCase):
             self.assertIn('price_interval', template, f"{risk_level}应包含price_interval")
             self.assertIn('target_profit', template, f"{risk_level}应包含target_profit")
             self.assertIn('stop_loss', template, f"{risk_level}应包含stop_loss")
-            logger.info(f"✓ {risk_level}模板字段完整")
+            logger.info(f"[OK] {risk_level}模板字段完整")
 
         # 验证止损比例映射正确
         self.assertEqual(risk_templates['aggressive']['stop_loss'], -0.15,
@@ -214,7 +214,7 @@ class TestGridRiskGrading(unittest.TestCase):
                         "稳健型止损应为-10%")
         self.assertEqual(risk_templates['conservative']['stop_loss'], -0.08,
                         "保守型止损应为-8%")
-        logger.info("✓ 三档止损比例映射正确")
+        logger.info("[OK] 三档止损比例映射正确")
 
         logger.info("测试3通过: /api/grid/risk-templates 端点正常")
 
@@ -252,12 +252,12 @@ class TestGridRiskGrading(unittest.TestCase):
         # 创建会话 (不带risk_level,测试默认值)
         session_id_1 = self.db_manager.create_grid_session(session_data)
         self.assertIsNotNone(session_id_1, "应成功创建会话")
-        logger.info(f"✓ 创建会话成功: session_id={session_id_1}")
+        logger.info(f"[OK] 创建会话成功: session_id={session_id_1}")
 
         # 查询会话,验证默认risk_level
         session_1 = self.db_manager.get_grid_session(session_id_1)
         self.assertEqual(session_1['risk_level'], 'moderate', "默认risk_level应为'moderate'")
-        logger.info("✓ 默认risk_level为'moderate'")
+        logger.info("[OK] 默认risk_level为'moderate'")
 
         # 创建会话 (带risk_level='aggressive')
         # 注意: 需要先修改grid_database.py的create_grid_session方法支持risk_level参数
@@ -276,7 +276,7 @@ class TestGridRiskGrading(unittest.TestCase):
         session_1_updated = self.db_manager.get_grid_session(session_id_1)
         self.assertEqual(session_1_updated['risk_level'], 'aggressive', "risk_level应为'aggressive'")
         self.assertEqual(session_1_updated['template_name'], '激进型网格', "template_name应为'激进型网格'")
-        logger.info("✓ risk_level和template_name更新成功")
+        logger.info("[OK] risk_level和template_name更新成功")
 
         logger.info("测试4通过: /api/grid/start 正确处理risk_level参数")
 
@@ -333,7 +333,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertIn('template_name', session, "返回数据应包含template_name字段")
         self.assertEqual(session['risk_level'], 'conservative', "risk_level应为'conservative'")
         self.assertEqual(session['template_name'], '保守型网格', "template_name应为'保守型网格'")
-        logger.info("✓ API返回数据包含risk_level和template_name")
+        logger.info("[OK] API返回数据包含risk_level和template_name")
 
         logger.info("测试5通过: /api/grid/session 正确返回风险等级")
 
@@ -390,11 +390,11 @@ class TestGridRiskGrading(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            logger.info(f"✓ 创建会话: {stock_code}, risk_level={risk_level}")
+            logger.info(f"[OK] 创建会话: {stock_code}, risk_level={risk_level}")
 
         # 关闭数据库连接
         self.db_manager.close()
-        logger.info("✓ 数据库连接已关闭,模拟重启")
+        logger.info("[OK] 数据库连接已关闭,模拟重启")
 
         # 重新连接数据库,模拟重启
         self.db_manager = DatabaseManager(db_path=self.test_db_path)
@@ -409,7 +409,7 @@ class TestGridRiskGrading(unittest.TestCase):
                            f"{stock_code}的risk_level应为{expected_risk_level}")
             self.assertEqual(session['template_name'], expected_template_name,
                            f"{stock_code}的template_name应为{expected_template_name}")
-            logger.info(f"✓ {stock_code}: risk_level={session['risk_level']}, "
+            logger.info(f"[OK] {stock_code}: risk_level={session['risk_level']}, "
                        f"template_name={session['template_name']}")
 
         logger.info("测试6通过: risk_level数据持久化正常")
@@ -443,7 +443,7 @@ class TestGridRiskGrading(unittest.TestCase):
                         "激进型目标盈利应为15% (追求高收益)")
         self.assertEqual(aggressive['price_interval'], 0.03,
                         "激进型价格间隔应为3% (档位密集)")
-        logger.info("✓ 激进型参数正确: 止损=-15%, 盈利=+15%, 间隔=3%")
+        logger.info("[OK] 激进型参数正确: 止损=-15%, 盈利=+15%, 间隔=3%")
 
         # 验证稳健型
         moderate = template_dict['稳健型网格']
@@ -453,7 +453,7 @@ class TestGridRiskGrading(unittest.TestCase):
                         "稳健型目标盈利应为10% (平衡收益)")
         self.assertEqual(moderate['price_interval'], 0.05,
                         "稳健型价格间隔应为5%")
-        logger.info("✓ 稳健型参数正确: 止损=-10%, 盈利=+10%, 间隔=5%")
+        logger.info("[OK] 稳健型参数正确: 止损=-10%, 盈利=+10%, 间隔=5%")
 
         # 验证保守型
         conservative = template_dict['保守型网格']
@@ -463,7 +463,7 @@ class TestGridRiskGrading(unittest.TestCase):
                         "保守型目标盈利应为8% (稳健盈利)")
         self.assertEqual(conservative['price_interval'], 0.08,
                         "保守型价格间隔应为8% (档位稀疏)")
-        logger.info("✓ 保守型参数正确: 止损=-8%, 盈利=+8%, 间隔=8%")
+        logger.info("[OK] 保守型参数正确: 止损=-8%, 盈利=+8%, 间隔=8%")
 
         # 验证风险等级递进关系 (止损是负数,绝对值越大越宽松)
         # 保守型: -8% (绝对值最小,最严格)
@@ -473,7 +473,7 @@ class TestGridRiskGrading(unittest.TestCase):
                        "保守型止损应比稳健型更严格 (绝对值更小)")
         self.assertGreater(moderate['stop_loss'], aggressive['stop_loss'],
                        "稳健型止损应比激进型更严格 (绝对值更小)")
-        logger.info("✓ 风险等级递进关系正确: 保守(-8%) > 稳健(-10%) > 激进(-15%)")
+        logger.info("[OK] 风险等级递进关系正确: 保守(-8%) > 稳健(-10%) > 激进(-15%)")
 
         logger.info("测试7通过: 三档止损比例设计合理")
 
@@ -510,7 +510,7 @@ class TestGridRiskGrading(unittest.TestCase):
             elif '保守型' in template['template_name']:
                 risk_templates['conservative'] = template
 
-        logger.info(f"✓ 加载了{len(risk_templates)}个风险模板")
+        logger.info(f"[OK] 加载了{len(risk_templates)}个风险模板")
 
         # 步骤2: 用户选择"激进型"(模拟applyRiskTemplate('aggressive'))
         logger.info("步骤2: 用户选择'激进型'风险等级")
@@ -531,7 +531,7 @@ class TestGridRiskGrading(unittest.TestCase):
             'start_time': datetime.now().isoformat(),
             'end_time': (datetime.now() + timedelta(days=7)).isoformat()
         }
-        logger.info(f"✓ 参数自动填充: 止损={grid_config['stop_loss']*100}%, "
+        logger.info(f"[OK] 参数自动填充: 止损={grid_config['stop_loss']*100}%, "
                    f"盈利={grid_config['target_profit']*100}%")
 
         # 步骤3: 提交启动会话(模拟/api/grid/start)
@@ -548,7 +548,7 @@ class TestGridRiskGrading(unittest.TestCase):
         """, (selected_risk, selected_template['template_name'], session_id))
         conn.commit()
         conn.close()
-        logger.info(f"✓ 会话创建成功: session_id={session_id}, risk_level={selected_risk}")
+        logger.info(f"[OK] 会话创建成功: session_id={session_id}, risk_level={selected_risk}")
 
         # 步骤4: 刷新页面后查询会话(模拟/api/grid/session/<stock_code>)
         logger.info("步骤4: 模拟刷新页面,查询会话状态")
@@ -560,7 +560,7 @@ class TestGridRiskGrading(unittest.TestCase):
         self.assertEqual(session['template_name'], '激进型网格', "template_name应为'激进型网格'")
         self.assertEqual(session['stop_loss'], -0.15, "止损比例应为-15%")
         self.assertEqual(session['target_profit'], 0.15, "目标盈利应为15%")
-        logger.info("✓ 刷新后数据回显正确")
+        logger.info("[OK] 刷新后数据回显正确")
 
         logger.info("测试8通过: 完整工作流正常")
 

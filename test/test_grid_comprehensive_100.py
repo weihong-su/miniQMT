@@ -153,10 +153,10 @@ class GridTradingTestSuite:
         self.test_results['total'] += 1
         if passed:
             self.test_results['passed'] += 1
-            status = "✓ PASS"
+            status = "[OK] PASS"
         else:
             self.test_results['failed'] += 1
-            status = "✗ FAIL"
+            status = "[FAIL] FAIL"
 
         self.test_results['details'].append({
             'test': test_name,
