@@ -75,6 +75,12 @@ class PositionManager:
         # 新增：全量刷新控制 - 在这里添加缺失的属性
         self.last_full_refresh_time = 0
         self.full_refresh_interval = 60  # 1分钟全量刷新间隔
+        # 最高价低频校准（避免每轮阻塞）
+        self.last_update_highest_time = 0
+        self.update_highest_interval = 60  # 秒
+        # 行情缓存（用于最高价校准，避免频繁调用行情接口）
+        self.history_high_cache = {}  # {stock_code: {'high': float, 'open_date': str, 'ts': float}}
+        self.history_high_cache_ttl = 3600  # 1小时刷新一次
 
         # 新增：定期版本升级控制
         self.last_version_increment_time = time.time()
@@ -1198,6 +1204,7 @@ class PositionManager:
                 logger.debug("当前没有持仓，无需更新最高价")
                 return
 
+            now_ts = time.time()
             for _, position in positions.iterrows():
                 stock_code = position['stock_code']
 
@@ -1221,35 +1228,61 @@ class PositionManager:
                 except (ValueError, TypeError):
                     open_date_formatted = datetime.now().strftime('%Y-%m-%d')
 
-                # Format open_date to YYYY-MM-DD for getStockData
-                open_date_formatted = open_date.strftime('%Y-%m-%d')
+                # open_date_formatted 已在上方处理完成（避免解析失败导致未定义）
 
                 # Get today's date for getStockData
                 today_formatted = datetime.now().strftime('%Y-%m-%d')
 
-                # 获取从开仓日期到今天的历史数据
-                try:
-                    # Get the latest data 
-                    history_data = Methods.getStockData(
-                        code=stock_code,
-                        fields="high",
-                        start_date=open_date_formatted,
-                        freq= 'd',  # 日线
-                        adjustflag= '2'
-                    )                    
+                # ===== 使用缓存的历史最高价（避免频繁调用行情接口）=====
+                highest_price = 0.0
+                cache = self.history_high_cache.get(stock_code)
+                cache_valid = (
+                    cache
+                    and cache.get('open_date') == open_date_formatted
+                    and (now_ts - cache.get('ts', 0)) < self.history_high_cache_ttl
+                )
 
-                except Exception as e:
-                    logger.error(f"获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据时出错: {str(e)}")
-                    continue
-
-                if history_data is not None and not history_data.empty:
-                    # 找到开仓后日线数据最高价
-                    highest_price = history_data['high'].astype(float).max()
+                if cache_valid:
+                    highest_price = float(cache.get('high', 0.0) or 0.0)
                 else:
-                    highest_price = 0.0
-                    logger.warning(f"未能获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据，跳过更新最高价")
+                    # 优先使用本地数据库缓存
+                    history_df = self.data_manager.get_history_data_from_db(
+                        stock_code=stock_code,
+                        start_date=open_date_formatted
+                    )
+                    if history_df is not None and not history_df.empty and 'high' in history_df.columns:
+                        try:
+                            highest_price = history_df['high'].astype(float).max()
+                        except Exception:
+                            highest_price = 0.0
 
-                # 开盘时间，获取最新tick数据
+                    # 如果本地无数据，才尝试从行情接口拉取（日线）
+                    if highest_price <= 0:
+                        try:
+                            history_data = Methods.getStockData(
+                                code=stock_code,
+                                fields="high",
+                                start_date=open_date_formatted,
+                                freq='d',  # 日线
+                                adjustflag='2'
+                            )
+                            if history_data is not None and not history_data.empty:
+                                highest_price = history_data['high'].astype(float).max()
+                            else:
+                                highest_price = 0.0
+                                logger.warning(f"未能获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据，跳过更新最高价")
+                        except Exception as e:
+                            logger.error(f"获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据时出错: {str(e)}")
+                            highest_price = 0.0
+
+                    # 更新历史最高价缓存（1小时刷新一次）
+                    self.history_high_cache[stock_code] = {
+                        'high': highest_price,
+                        'open_date': open_date_formatted,
+                        'ts': now_ts
+                    }
+
+                # 开盘时间，直接从行情接口获取最新tick数据（不使用缓存）
                 if config.is_trade_time:
                     latest_data = self.data_manager.get_latest_data(stock_code)
                     if latest_data:
@@ -2949,20 +2982,24 @@ class PositionManager:
                         logger.error(f"❌ [MONITOR_CRITICAL] 严重阻塞 {gap:.1f}秒！")
 
                 # ⭐ 关键优化2: 更新最高价使用短超时,失败不阻塞
-                try:
-                    import concurrent.futures
-                    timeout = config.MONITOR_CALL_TIMEOUT
+                if time.time() - self.last_update_highest_time >= self.update_highest_interval:
+                    try:
+                        import concurrent.futures
+                        timeout = config.MONITOR_CALL_TIMEOUT
 
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(self.update_all_positions_highest_price)
-                        try:
-                            future.result(timeout=timeout)
-                        except concurrent.futures.TimeoutError:
-                            logger.warning(f"[MONITOR_TIMEOUT] 更新最高价超时({timeout}秒),跳过")
-                            # 不阻塞,继续执行
-                except Exception as e:
-                    logger.error(f"[MONITOR_ERROR] 更新最高价异常: {e}")
-                    # 同样不阻塞
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(self.update_all_positions_highest_price)
+                            try:
+                                future.result(timeout=timeout)
+                            except concurrent.futures.TimeoutError:
+                                logger.warning(f"[MONITOR_TIMEOUT] 更新最高价超时({timeout}秒),跳过")
+                                # 不阻塞,继续执行
+                    except Exception as e:
+                        logger.error(f"[MONITOR_ERROR] 更新最高价异常: {e}")
+                        # 同样不阻塞
+                    finally:
+                        # 无论成功与否都记录时间，避免频繁阻塞
+                        self.last_update_highest_time = time.time()
 
                 # ⭐ 关键优化3: 获取持仓使用短超时
                 try:

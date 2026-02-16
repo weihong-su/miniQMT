@@ -8,7 +8,8 @@
         "test.test_stop_loss_profit",
         "test.test_stop_profit_advanced_1",
         "test.test_stop_profit_advanced_2",
-        "test.test_stop_profit_advanced_3"
+        "test.test_stop_profit_advanced_3",
+        "test.test_highest_price_update"
       ],
       "priority": "high"
     },
