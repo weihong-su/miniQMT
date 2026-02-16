@@ -36,14 +36,17 @@ class TradingStrategy:
         self.indicator_calculator = get_indicator_calculator()
         self.position_manager = get_position_manager()
         self.trading_executor = get_trading_executor()
-        
+
         # 策略运行线程
         self.strategy_thread = None
         self.stop_flag = False
-        
+
         # 防止频繁交易的冷却时间记录
         self.last_trade_time = {}
-        
+
+        # 🔒 线程安全：添加锁保护共享数据 (修复C1)
+        self.signal_lock = threading.Lock()
+
         # 已处理的止盈止损信号记录
         self.processed_signals = set()
 
@@ -203,24 +206,19 @@ class TradingStrategy:
     def _execute_stop_loss_signal(self, stock_code, signal_info):
         """
         执行止损信号
-        
+
         参数:
         stock_code (str): 股票代码
         signal_info (dict): 信号详细信息
-        
+
         返回:
         bool: 是否执行成功
         """
         try:
-
-            # 🔑 添加信号验证 - 在执行前进行最后防护
-            if not self.position_manager.validate_trading_signal(stock_code, 'stop_loss', signal_info):
-                logger.error(f"🚨 {stock_code} 止损信号验证失败，拒绝执行")
-                return False
-        
+            # ✅ 修复C2: 删除重复验证，信号验证已在execute_trading_signal_direct()中完成
             volume = signal_info['volume']
             current_price = signal_info['current_price']
-            
+
             logger.warning(f"执行 {stock_code} 止损操作，数量: {volume}, 当前价格: {current_price:.2f}")
             
             # 检查是否为模拟交易模式
@@ -263,20 +261,16 @@ class TradingStrategy:
     def _execute_take_profit_half_signal(self, stock_code, signal_info):
         """
         执行首次止盈信号（卖出半仓）
-        
+
         参数:
         stock_code (str): 股票代码
         signal_info (dict): 信号详细信息
-        
+
         返回:
         bool: 是否执行成功
         """
         try:
-            # 🔑 添加信号验证
-            if not self.position_manager.validate_trading_signal(stock_code, 'take_profit_half', signal_info):
-                logger.error(f"🚨 {stock_code} 首次止盈信号验证失败，拒绝执行")
-                return False
-
+            # ✅ 修复C2: 删除重复验证，信号验证已在execute_trading_signal_direct()中完成
 
             total_volume = signal_info['volume']
             current_price = signal_info['current_price']
@@ -287,7 +281,7 @@ class TradingStrategy:
             # 计算卖出数量
             sell_volume = int(total_volume * sell_ratio / 100) * 100
             sell_volume = max(sell_volume, 100)  # 至少100股
-            
+
             logger.info(f"执行 {stock_code} 首次止盈，卖出半仓，数量: {sell_volume}, 价格: {current_price:.2f}")
             if breakout_highest_price > 0:
                 logger.info(f"  - 突破后最高价: {breakout_highest_price:.2f}, 回撤幅度: {pullback_ratio:.2%}")            
@@ -353,24 +347,21 @@ class TradingStrategy:
     def _execute_take_profit_full_signal(self, stock_code, signal_info):
         """
         执行动态止盈信号（卖出剩余仓位）
-        
+
         参数:
         stock_code (str): 股票代码
         signal_info (dict): 信号详细信息
-        
+
         返回:
         bool: 是否执行成功
         """
         try:
-            # 🔑 添加信号验证
-            if not self.position_manager.validate_trading_signal(stock_code, 'take_profit_full', signal_info):
-                logger.error(f"🚨 {stock_code} 动态止盈信号验证失败，拒绝执行")
-                return False
+            # ✅ 修复C2: 删除重复验证，信号验证已在execute_trading_signal_direct()中完成
 
             volume = signal_info['volume']
             current_price = signal_info['current_price']
             dynamic_take_profit_price = signal_info['dynamic_take_profit_price']
-            
+
             logger.info(f"执行 {stock_code} 动态止盈，卖出剩余仓位，数量: {volume}, "
                        f"当前价格: {current_price:.2f}, 止盈位: {dynamic_take_profit_price:.2f}")
             
@@ -631,26 +622,33 @@ class TradingStrategy:
                         if signal_type in ['take_profit_half', 'take_profit_full']:
                             logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
                             retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                            retry_count = self.retry_counts.get(retry_key, 0)
 
-                            if retry_count >= 3:
-                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
-                                self.position_manager.mark_signal_processed(stock_code)
-                                return
+                            # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                            with self.signal_lock:
+                                retry_count = self.retry_counts.get(retry_key, 0)
+
+                                if retry_count >= 3:
+                                    logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    return
 
                             if config.ENABLE_AUTO_TRADING:
                                 success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
                                 if success:
                                     self.position_manager.mark_signal_processed(stock_code)
-                                    self.retry_counts.pop(retry_key, None)
+                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                                    with self.signal_lock:
+                                        self.retry_counts.pop(retry_key, None)
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
                                     return  # 止盈执行成功后直接返回
                                 else:
-                                    self.retry_counts[retry_key] = retry_count + 1
-                                    if retry_count + 1 >= 3:
-                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
-                                        self.position_manager.mark_signal_processed(stock_code)
-                                        self.retry_counts.pop(retry_key, None)
+                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                                    with self.signal_lock:
+                                        self.retry_counts[retry_key] = retry_count + 1
+                                        if retry_count + 1 >= 3:
+                                            logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                            self.position_manager.mark_signal_processed(stock_code)
+                                            self.retry_counts.pop(retry_key, None)
                             else:
                                 logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                                 self.position_manager.mark_signal_processed(stock_code)
@@ -733,26 +731,33 @@ class TradingStrategy:
                         if signal_type in ['take_profit_half', 'take_profit_full']:
                             logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
                             retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                            retry_count = self.retry_counts.get(retry_key, 0)
 
-                            if retry_count >= 3:
-                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
-                                self.position_manager.mark_signal_processed(stock_code)
-                                return
+                            # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                            with self.signal_lock:
+                                retry_count = self.retry_counts.get(retry_key, 0)
+
+                                if retry_count >= 3:
+                                    logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
+                                    self.position_manager.mark_signal_processed(stock_code)
+                                    return
 
                             if config.ENABLE_AUTO_TRADING:
                                 success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
                                 if success:
                                     self.position_manager.mark_signal_processed(stock_code)
-                                    self.retry_counts.pop(retry_key, None)
+                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                                    with self.signal_lock:
+                                        self.retry_counts.pop(retry_key, None)
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
                                     return
                                 else:
-                                    self.retry_counts[retry_key] = retry_count + 1
-                                    if retry_count + 1 >= 3:
-                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
-                                        self.position_manager.mark_signal_processed(stock_code)
-                                        self.retry_counts.pop(retry_key, None)
+                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
+                                    with self.signal_lock:
+                                        self.retry_counts[retry_key] = retry_count + 1
+                                        if retry_count + 1 >= 3:
+                                            logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                            self.position_manager.mark_signal_processed(stock_code)
+                                            self.retry_counts.pop(retry_key, None)
                             else:
                                 logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
                                 self.position_manager.mark_signal_processed(stock_code)
@@ -947,9 +952,11 @@ class TradingStrategy:
             logger.info("正在关闭交易策略...")
             # 策略线程已经通过stop_strategy_thread()停止
             # 这里只需要清理资源
-            self.processed_signals.clear()
+            # 🔒 线程安全：使用锁保护共享数据清理 (修复C1)
+            with self.signal_lock:
+                self.processed_signals.clear()
+                self.retry_counts.clear()
             self.last_trade_time.clear()
-            self.retry_counts.clear()
             logger.info("交易策略已关闭")
         except Exception as e:
             logger.error(f"关闭交易策略时出错: {str(e)}")
