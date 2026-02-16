@@ -55,6 +55,8 @@ class PositionManager:
 
         # 创建内存数据库
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        # 🔒 C2修复：添加内存数据库连接线程安全锁
+        self.memory_conn_lock = threading.Lock()
         self._create_memory_table()
         self._sync_db_to_memory()
 
@@ -137,28 +139,29 @@ class PositionManager:
 
     def _create_memory_table(self):
         """创建内存数据库表结构"""
-        cursor = self.memory_conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS positions (
-            stock_code TEXT PRIMARY KEY,
-            stock_name TEXT,
-            volume REAL,
-            available REAL,           
-            cost_price REAL,
-            base_cost_price REAL,
-            current_price REAL,
-            market_value REAL,
-            profit_ratio REAL,
-            last_update TIMESTAMP,
-            open_date TIMESTAMP,
-            profit_triggered BOOLEAN DEFAULT FALSE,
-            highest_price REAL,
-            stop_loss_price REAL,
-            profit_breakout_triggered BOOLEAN DEFAULT FALSE,
-            breakout_highest_price REAL                                
-        )
-        ''')
-        self.memory_conn.commit()
+        with self.memory_conn_lock:
+            cursor = self.memory_conn.cursor()
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS positions (
+                stock_code TEXT PRIMARY KEY,
+                stock_name TEXT,
+                volume REAL,
+                available REAL,
+                cost_price REAL,
+                base_cost_price REAL,
+                current_price REAL,
+                market_value REAL,
+                profit_ratio REAL,
+                last_update TIMESTAMP,
+                open_date TIMESTAMP,
+                profit_triggered BOOLEAN DEFAULT FALSE,
+                highest_price REAL,
+                stop_loss_price REAL,
+                profit_breakout_triggered BOOLEAN DEFAULT FALSE,
+                breakout_highest_price REAL
+            )
+            ''')
+            self.memory_conn.commit()
         logger.info("内存表已创建")
 
     def _sync_real_positions_to_memory(self, real_positions_df):
@@ -353,8 +356,9 @@ class PositionManager:
                     db_positions['base_cost_price'] = db_positions['cost_price']
                     logger.warning("SQLite数据库中缺少base_cost_price字段，使用cost_price作为默认值")
 
-                db_positions.to_sql("positions", self.memory_conn, if_exists="replace", index=False)
-                self.memory_conn.commit()
+                with self.memory_conn_lock:
+                    db_positions.to_sql("positions", self.memory_conn, if_exists="replace", index=False)
+                    self.memory_conn.commit()
                 logger.info("DB→内存同步完成")
         except Exception as e:
             logger.error(f"数据库数据同步到内存数据库时出错: {str(e)}")
@@ -378,15 +382,15 @@ class PositionManager:
 
             try:
                 # 获取内存数据库中的所有股票代码
-                # memory_positions = pd.read_sql_query("SELECT stock_code, stock_name, open_date, profit_triggered, highest_price, stop_loss_price FROM positions", self.memory_conn)
-                memory_positions = pd.read_sql_query("SELECT * FROM positions", self.memory_conn)
+                with self.memory_conn_lock:
+                    memory_positions = pd.read_sql_query("SELECT * FROM positions", self.memory_conn)
                 memory_stock_codes = set(memory_positions['stock_code'].tolist()) if not memory_positions.empty else set()
-                
+
                 # 获取SQLite数据库中的所有股票代码
                 cursor = sync_db_conn.cursor()
                 cursor.execute("SELECT stock_code FROM positions")
                 sqlite_stock_codes = {row[0] for row in cursor.fetchall() if row[0] is not None}
-                
+
                 # 删除SQLite中存在但内存数据库中不存在的记录
                 stocks_to_delete = sqlite_stock_codes - memory_stock_codes
                 if stocks_to_delete:
@@ -399,7 +403,7 @@ class PositionManager:
                                 logger.info(f"从SQLite删除持仓记录: {stock_code}")
                         except Exception as e:
                             logger.error(f"删除SQLite中的 {stock_code} 记录时出错: {str(e)}")
-                    
+
                     if deleted_count > 0:
                         logger.info(f"SQLite同步：删除了 {deleted_count} 个过期的持仓记录")
 
@@ -421,7 +425,7 @@ class PositionManager:
                         base_cost_price = row['base_cost_price']
                         profit_breakout_triggered = row['profit_breakout_triggered']
                         breakout_highest_price = row['breakout_highest_price']
-                        
+
                         # 查询数据库中的对应记录
                         cursor.execute("SELECT stock_name, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price FROM positions WHERE stock_code=?", (stock_code,))
                         db_row = cursor.fetchone()
@@ -434,16 +438,17 @@ class PositionManager:
                                 if db_open_date != open_date:
                                     open_date = db_open_date
                                     # row['open_date'] = open_date  # 更新内存数据库中的 open_date
-                                    memory_cursor = self.memory_conn.cursor()
-                                    memory_cursor.execute("UPDATE positions SET open_date=? WHERE stock_code=?", (open_date, stock_code))
-                                    self.memory_conn.commit()
+                                    with self.memory_conn_lock:
+                                        memory_cursor = self.memory_conn.cursor()
+                                        memory_cursor.execute("UPDATE positions SET open_date=? WHERE stock_code=?", (open_date, stock_code))
+                                        self.memory_conn.commit()
 
                                 if db_profit_triggered != profit_triggered:
-                                    logger.info(f"---内存数据库的 {stock_code} 的profit_triggered与sqlite不一致---")   
+                                    logger.info(f"---内存数据库的 {stock_code} 的profit_triggered与sqlite不一致---")
                                 # 更新数据库，确保所有字段都得到更新
                                 cursor.execute("""
-                                    UPDATE positions 
-                                    SET stock_name=?, open_date=?, profit_triggered=?, highest_price=?, stop_loss_price=?, profit_breakout_triggered=?, breakout_highest_price=?, last_update=? 
+                                    UPDATE positions
+                                    SET stock_name=?, open_date=?, profit_triggered=?, highest_price=?, stop_loss_price=?, profit_breakout_triggered=?, breakout_highest_price=?, last_update=?
                                     WHERE stock_code=?
                                 """, (stock_name, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now, stock_code))
                                 update_count += 1
@@ -455,14 +460,15 @@ class PositionManager:
                                 INSERT INTO positions (stock_code, stock_name, volume, available, cost_price, base_cost_price, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, last_update)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (stock_code, stock_name, volume, available, cost_price, base_cost_price, current_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now))
-                            
+
                             insert_count += 1
                             # 插入新记录后，立即从数据库读取 open_date，以确保内存数据库与数据库一致
                             cursor.execute("SELECT open_date FROM positions WHERE stock_code=?", (stock_code,))
                             db_open_date = cursor.fetchone()[0]
-                            memory_cursor = self.memory_conn.cursor()
-                            memory_cursor.execute("UPDATE positions SET open_date=? WHERE stock_code=?", (db_open_date, stock_code))
-                            self.memory_conn.commit()
+                            with self.memory_conn_lock:
+                                memory_cursor = self.memory_conn.cursor()
+                                memory_cursor.execute("UPDATE positions SET open_date=? WHERE stock_code=?", (db_open_date, stock_code))
+                                self.memory_conn.commit()
                             logger.info(f"插入新的SQLite记录: {stock_code}, 使用日期: {current_date}")
 
 
@@ -478,14 +484,14 @@ class PositionManager:
                 sync_db_conn.rollback()
                 raise
             finally:
-                sync_db_conn.close()            
+                sync_db_conn.close()
 
         except Exception as e:
             logger.error(f"内存数据库数据同步到数据库时出错: {str(e)}")
             # 添加重试机制
             if not hasattr(self, '_sync_retry_count'):
                 self._sync_retry_count = 0
-            
+
             self._sync_retry_count += 1
             if self._sync_retry_count <= 2:  # 最多重试2次
                 logger.info(f"安排第 {self._sync_retry_count} 次同步重试，5秒后执行")
@@ -568,8 +574,9 @@ class PositionManager:
         try:
             # 模拟模式：直接从内存数据库返回，不调用实盘API
             if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
-                query = "SELECT * FROM positions"
-                positions_df = pd.read_sql_query(query, self.memory_conn)
+                with self.memory_conn_lock:
+                    query = "SELECT * FROM positions"
+                    positions_df = pd.read_sql_query(query, self.memory_conn)
 
                 # 确保数值列类型正确
                 if not positions_df.empty:
@@ -594,7 +601,7 @@ class PositionManager:
                 # 获取实盘持仓数据
                 try:
                     real_positions_df = self.qmt_trader.position()
-                    
+
                     # 检查实盘数据
                     if real_positions_df is None:
                         logger.warning("实盘持仓数据获取失败，返回None")
@@ -606,33 +613,34 @@ class PositionManager:
                             real_positions_df = pd.DataFrame(real_positions_df)
                         except:
                             real_positions_df = pd.DataFrame()  # 转换失败则使用空DataFrame
-                    
+
                     # 同步实盘持仓数据到内存数据库
                     if not real_positions_df.empty:
                         self._sync_real_positions_to_memory(real_positions_df)
-                    
+
                     # 更新缓存和时间戳
-                    query = "SELECT * FROM positions"
-                    self.positions_cache = pd.read_sql_query(query, self.memory_conn)
-                    
+                    with self.memory_conn_lock:
+                        query = "SELECT * FROM positions"
+                        self.positions_cache = pd.read_sql_query(query, self.memory_conn)
+
                     # 确保所有列都有合适的默认值
                     if not self.positions_cache.empty:
                         # 确保数值列为数值类型
-                        numeric_columns = ['volume', 'available', 'cost_price', 'current_price', 
+                        numeric_columns = ['volume', 'available', 'cost_price', 'current_price',
                                             'market_value', 'profit_ratio', 'highest_price', 'stop_loss_price','breakout_highest_price']
                         for col in numeric_columns:
                             if col in self.positions_cache.columns:
                                 # 转换为数值，无效值替换为0
                                 self.positions_cache[col] = pd.to_numeric(self.positions_cache[col], errors='coerce').fillna(0)
-                        
+
                         # 确保布尔列为布尔类型
                         if 'profit_triggered' in self.positions_cache.columns:
                             self.positions_cache['profit_triggered'] = self.positions_cache['profit_triggered'].fillna(False)
 
                         # 确保布尔列为布尔类型
                         if 'profit_breakout_triggered' in self.positions_cache.columns:
-                            self.positions_cache['profit_breakout_triggered'] = self.positions_cache['profit_breakout_triggered'].fillna(False)    
-                    
+                            self.positions_cache['profit_breakout_triggered'] = self.positions_cache['profit_breakout_triggered'].fillna(False)
+
                     self.last_position_update_time = current_time
                     logger.debug(f"更新持仓缓存，共 {len(self.positions_cache)} 条记录")
                 except Exception as e:
@@ -640,7 +648,7 @@ class PositionManager:
                     # 如果出错，返回上次的缓存，或者空DataFrame
                     if self.positions_cache is None:
                         self.positions_cache = pd.DataFrame()
-                
+
             # 返回缓存数据的副本
             return self.positions_cache.copy() if self.positions_cache is not None else pd.DataFrame()
         except Exception as e:
@@ -911,8 +919,8 @@ class PositionManager:
         except Exception as e:
             logger.error(f"更新出错 {self.stock_positions_file}: {str(e)}")
 
-    def update_position(self, stock_code, volume, cost_price, current_price=None, 
-                   profit_ratio=None, market_value=None, available=None, open_date=None, 
+    def update_position(self, stock_code, volume, cost_price, current_price=None,
+                   profit_ratio=None, market_value=None, available=None, open_date=None,
                    profit_triggered=None, highest_price=None, stop_loss_price=None,
                    stock_name=None,base_cost_price=None):
         """
@@ -950,9 +958,10 @@ class PositionManager:
                 else:
                     # 从数据库获取最后的有效成本价
                     try:
-                        db_cursor = self.memory_conn.cursor()
-                        db_cursor.execute("SELECT cost_price, base_cost_price FROM positions WHERE stock_code=?", (stock_code,))
-                        db_row = db_cursor.fetchone()
+                        with self.memory_conn_lock:
+                            db_cursor = self.memory_conn.cursor()
+                            db_cursor.execute("SELECT cost_price, base_cost_price FROM positions WHERE stock_code=?", (stock_code,))
+                            db_row = db_cursor.fetchone()
                         if db_row:
                             db_cost = db_row[0]
                             db_base_cost = db_row[1]
@@ -990,9 +999,6 @@ class PositionManager:
             else:
                 # 如果base_cost_price无效,尝试使用final_cost_price
                 p_base_cost_price = final_cost_price if final_cost_price > 0 else None
-            # if p_volume <= 0 or final_cost_price <= 0:
-            #     logger.error(f"跳过 {stock_code} 无效数据: volume={volume}, cost_price={cost_price}")
-            #     return False
 
             final_current_price = float(current_price) if current_price is not None else final_cost_price
             final_highest_price = float(current_price) if current_price is not None else final_cost_price
@@ -1006,137 +1012,139 @@ class PositionManager:
             else:
                 # 成本价为0时，盈亏率也设为0
                 p_profit_ratio = 0.0
-                
+
             # profit_triggered 布尔值转换
             if isinstance(profit_triggered, str):
                 p_profit_triggered = profit_triggered.lower() in ['true', '1', 't', 'y', 'yes']
             else:
                 p_profit_triggered = bool(profit_triggered)
-                
+
             p_profit_triggered = bool(profit_triggered) if profit_triggered is not None else False
 
-            
+
             # 获取当前时间
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-            cursor = self.memory_conn.cursor()
-            
-            # 【关键修改】设置row_factory为字典模式，然后立即恢复
-            original_row_factory = self.memory_conn.row_factory
-            self.memory_conn.row_factory = sqlite3.Row
-            
-            try:
-                # 【关键修改】使用字典查询替代位置索引
-                dict_cursor = self.memory_conn.cursor()
-                dict_cursor.execute("SELECT open_date, profit_triggered, highest_price, cost_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
-                result_row = dict_cursor.fetchone()
-                              
-                if result_row:
-                    # 更新持仓 - 【关键修改】使用字典访问替代位置索引
-                    if open_date is None:
-                        open_date = result_row['open_date']  # 替代 result[0]
-                    
-                    # 保护profit_triggered状态 - 【关键修改】
-                    existing_profit_triggered = bool(result_row['profit_triggered']) if result_row['profit_triggered'] is not None else False  # 替代 result[1]
-                    final_profit_triggered = p_profit_triggered if p_profit_triggered == True else existing_profit_triggered
-                    
-                    # 更新最高价 - 【关键修改】增加异常处理
-                    try:
-                        old_db_highest_price = float(result_row['highest_price']) if result_row['highest_price'] is not None else None  # 替代 result[2]
-                    except (ValueError, TypeError):
-                        logger.warning(f"{stock_code} 数据库中的最高价数据异常，重置为None")
-                        old_db_highest_price = None
-                    
-                    if old_db_highest_price is not None and old_db_highest_price > 0:
-                        final_highest_price = max(old_db_highest_price, final_current_price)
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+
+                # 【关键修改】设置row_factory为字典模式，然后立即恢复
+                original_row_factory = self.memory_conn.row_factory
+                self.memory_conn.row_factory = sqlite3.Row
+
+                try:
+                    # 【关键修改】使用字典查询替代位置索引
+                    dict_cursor = self.memory_conn.cursor()
+                    dict_cursor.execute("SELECT open_date, profit_triggered, highest_price, cost_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
+                    result_row = dict_cursor.fetchone()
+
+                    if result_row:
+                        # 更新持仓 - 【关键修改】使用字典访问替代位置索引
+                        if open_date is None:
+                            open_date = result_row['open_date']  # 替代 result[0]
+
+                        # 保护profit_triggered状态 - 【关键修改】
+                        existing_profit_triggered = bool(result_row['profit_triggered']) if result_row['profit_triggered'] is not None else False  # 替代 result[1]
+                        final_profit_triggered = p_profit_triggered if p_profit_triggered == True else existing_profit_triggered
+
+                        # 更新最高价 - 【关键修改】增加异常处理
+                        try:
+                            old_db_highest_price = float(result_row['highest_price']) if result_row['highest_price'] is not None else None  # 替代 result[2]
+                        except (ValueError, TypeError):
+                            logger.warning(f"{stock_code} 数据库中的最高价数据异常，重置为None")
+                            old_db_highest_price = None
+
+                        if old_db_highest_price is not None and old_db_highest_price > 0:
+                            final_highest_price = max(old_db_highest_price, final_current_price)
+                        else:
+                            final_highest_price = max(final_cost_price, final_current_price)
+
+                        # 【修复变量赋值逻辑】先处理传入的stop_loss_price参数
+                        if stop_loss_price is not None:
+                            final_stop_loss_price = round(float(stop_loss_price), 2)
+                        else:
+                            final_stop_loss_price = None
+
+                        # 获取数据库中的旧成本价
+                        old_db_cost_price = float(result_row['cost_price']) if result_row['cost_price'] is not None else None
+
+                        # 如果最高价发生变化，强制重新计算止损价格
+                        if old_db_highest_price != final_highest_price:
+                            logger.info(f"{stock_code} 最高价变化：{old_db_highest_price} -> {final_highest_price}，重新计算止损价格")
+                            calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
+                            final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
+
+                        # 🔑 如果成本价发生变化（补仓摊薄），也强制重新计算止损价格
+                        elif old_db_cost_price is not None and abs(old_db_cost_price - final_cost_price) > 0.01:
+                            logger.info(f"{stock_code} 成本价变化：{old_db_cost_price:.2f} -> {final_cost_price:.2f}，重新计算止损价格")
+                            calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
+                            final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
+
+                        elif final_stop_loss_price is None:
+                            # 如果没有传入止损价且最高价没变化，则重新计算
+                            calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
+                            final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
+
+
+                        # 使用普通cursor执行更新（保持原有UPDATE语句不变）
+                        cursor.execute("""
+                            UPDATE positions
+                            SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
+                                profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?, profit_triggered=?, stock_name=?
+                            WHERE stock_code=?
+                        """, (int(p_volume), final_cost_price, final_current_price, p_market_value, int(p_available),
+                            p_profit_ratio, now, final_highest_price, final_stop_loss_price, final_profit_triggered, stock_name, stock_code))
+
+                        # 【关键修改】使用字典访问记录变化
+                        if final_profit_triggered != existing_profit_triggered:
+                            logger.info(f"更新 {stock_code} 持仓: 首次止盈触发: 从 {existing_profit_triggered} 到 {final_profit_triggered}")
+                        elif abs(final_highest_price - (old_db_highest_price or 0)) > 0.01:
+                            logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {old_db_highest_price} 到 {final_highest_price}")
+                        elif final_stop_loss_price != (float(result_row['stop_loss_price']) if result_row['stop_loss_price'] is not None else None):  # 替代 result[3]
+                            logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {result_row['stop_loss_price']} 到 {final_stop_loss_price}")
+
                     else:
-                        final_highest_price = max(final_cost_price, final_current_price)
-                    
-                    # 【修复变量赋值逻辑】先处理传入的stop_loss_price参数
-                    if stop_loss_price is not None:
-                        final_stop_loss_price = round(float(stop_loss_price), 2)
-                    else:
-                        final_stop_loss_price = None
-                    
-                    # 获取数据库中的旧成本价
-                    old_db_cost_price = float(result_row['cost_price']) if result_row['cost_price'] is not None else None
+                        # 新增持仓（保持原有逻辑不变）
+                        if open_date is None:
+                            open_date = now  # 新建仓时记录当前时间为open_date
+                        profit_triggered = False
+                        if final_highest_price is None:
+                            final_highest_price = final_current_price
+                        if p_base_cost_price is None:
+                            p_base_cost_price = final_cost_price
 
-                    # 如果最高价发生变化，强制重新计算止损价格
-                    if old_db_highest_price != final_highest_price:
-                        logger.info(f"{stock_code} 最高价变化：{old_db_highest_price} -> {final_highest_price}，重新计算止损价格")
-                        calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
+                        # 计算止损价格
+                        calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, profit_triggered)
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
-                    # 🔑 如果成本价发生变化（补仓摊薄），也强制重新计算止损价格
-                    elif old_db_cost_price is not None and abs(old_db_cost_price - final_cost_price) > 0.01:
-                        logger.info(f"{stock_code} 成本价变化：{old_db_cost_price:.2f} -> {final_cost_price:.2f}，重新计算止损价格")
-                        calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
-                        final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
+                        if stock_name is None:
+                            stock_name = stock_code
 
-                    elif final_stop_loss_price is None:
-                        # 如果没有传入止损价且最高价没变化，则重新计算
-                        calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
-                        final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
-                    
-                    
-                    # 使用普通cursor执行更新（保持原有UPDATE语句不变）
-                    cursor.execute("""
-                        UPDATE positions 
-                        SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
-                            profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?, profit_triggered=?, stock_name=?
-                        WHERE stock_code=?
-                    """, (int(p_volume), final_cost_price, final_current_price, p_market_value, int(p_available), 
-                        p_profit_ratio, now, final_highest_price, final_stop_loss_price, final_profit_triggered, stock_name, stock_code))
+                        cursor.execute("""
+                            INSERT INTO positions
+                            (stock_code, stock_name, volume, cost_price, base_cost_price, current_price, market_value, available, profit_ratio, last_update, open_date, profit_triggered, highest_price, stop_loss_price)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (stock_code, stock_name, int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value,
+                            int(p_available), p_profit_ratio, now, open_date, profit_triggered, final_highest_price, final_stop_loss_price))
 
-                    # 【关键修改】使用字典访问记录变化
-                    if final_profit_triggered != existing_profit_triggered:
-                        logger.info(f"更新 {stock_code} 持仓: 首次止盈触发: 从 {existing_profit_triggered} 到 {final_profit_triggered}")
-                    elif abs(final_highest_price - (old_db_highest_price or 0)) > 0.01:
-                        logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {old_db_highest_price} 到 {final_highest_price}")
-                    elif final_stop_loss_price != (float(result_row['stop_loss_price']) if result_row['stop_loss_price'] is not None else None):  # 替代 result[3]
-                        logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {result_row['stop_loss_price']} 到 {final_stop_loss_price}")
+                        logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={final_cost_price}, 最高价={final_highest_price}, 止损价={final_stop_loss_price}")
 
-                else:
-                    # 新增持仓（保持原有逻辑不变）
-                    if open_date is None:
-                        open_date = now  # 新建仓时记录当前时间为open_date
-                    profit_triggered = False
-                    if final_highest_price is None:
-                        final_highest_price = final_current_price
-                    if p_base_cost_price is None:
-                        p_base_cost_price = final_cost_price
+                finally:
+                    # 【关键修改】确保恢复原始row_factory
+                    self.memory_conn.row_factory = original_row_factory
 
-                    # 计算止损价格
-                    calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, profit_triggered)
-                    final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
-                    
-                    if stock_name is None:
-                        stock_name = stock_code
+                self.memory_conn.commit()
 
-                    cursor.execute("""
-                        INSERT INTO positions 
-                        (stock_code, stock_name, volume, cost_price, base_cost_price, current_price, market_value, available, profit_ratio, last_update, open_date, profit_triggered, highest_price, stop_loss_price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (stock_code, stock_name, int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value, 
-                        int(p_available), p_profit_ratio, now, open_date, profit_triggered, final_highest_price, final_stop_loss_price))
-                    
-                    logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={final_cost_price}, 最高价={final_highest_price}, 止损价={final_stop_loss_price}")
-
-            finally:
-                # 【关键修改】确保恢复原始row_factory
-                self.memory_conn.row_factory = original_row_factory
-            
-            self.memory_conn.commit()
-            
             # 强制触发版本更新（保持原有逻辑）
             self._increment_data_version()
-            
+
             return True
 
         except Exception as e:
             logger.error(f"更新 {stock_code} 持仓Error: {str(e)}")
             try:
-                self.memory_conn.rollback()
+                with self.memory_conn_lock:
+                    self.memory_conn.rollback()
             except:
                 pass
             return False
@@ -1144,10 +1152,10 @@ class PositionManager:
     def remove_position(self, stock_code):
         """
         删除持仓记录
-        
+
         参数:
         stock_code (str): 股票代码
-        
+
         返回:
         bool: 是否删除成功
         """
@@ -1157,28 +1165,30 @@ class PositionManager:
             if position:
                 profit_triggered = position.get('profit_triggered', False)
                 profit_ratio = position.get('profit_ratio', 0)
-                
+
                 if profit_triggered:
                     logger.warning(f"⚠️  删除已触发止盈的持仓 {stock_code}，盈亏率: {profit_ratio:.2f}%")
                 else:
                     logger.info(f"删除持仓 {stock_code}，盈亏率: {profit_ratio:.2f}%")
 
-            cursor = self.memory_conn.cursor()
-            cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
-            self.memory_conn.commit()
-            
-            if cursor.rowcount > 0:
-                # 触发持仓数据版本更新
-                self._increment_data_version()
-                logger.info(f"已删除 {stock_code} 的持仓记录")
-                return True
-            else:
-                logger.warning(f"未找到 {stock_code} 的持仓记录，无需删除")
-                return False
-                
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+                cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
+                self.memory_conn.commit()
+
+                if cursor.rowcount > 0:
+                    # 触发持仓数据版本更新
+                    self._increment_data_version()
+                    logger.info(f"已删除 {stock_code} 的持仓记录")
+                    return True
+                else:
+                    logger.warning(f"未找到 {stock_code} 的持仓记录，无需删除")
+                    return False
+
         except Exception as e:
             logger.error(f"删除 {stock_code} 的持仓记录时出错: {str(e)}")
-            self.memory_conn.rollback()
+            with self.memory_conn_lock:
+                self.memory_conn.rollback()
             return False
 
 
@@ -1283,7 +1293,7 @@ class PositionManager:
                     }
 
                 # 开盘时间，直接从行情接口获取最新tick数据（不使用缓存）
-                if config.is_trade_time:
+                if config.is_trade_time():
                     latest_data = self.data_manager.get_latest_data(stock_code)
                     if latest_data:
                         current_price = latest_data.get('lastPrice')
@@ -2266,12 +2276,12 @@ class PositionManager:
             logger.error(f"模拟买入 {stock_code} 时出错: {str(e)}")
             return False
 
-    def _simulate_update_position(self, stock_code, volume, cost_price, available=None, 
-                                current_price=None, profit_triggered=False, highest_price=None, 
+    def _simulate_update_position(self, stock_code, volume, cost_price, available=None,
+                                current_price=None, profit_triggered=False, highest_price=None,
                                 open_date=None, stop_loss_price=None, stock_name=None):
         """
         模拟交易专用的持仓更新方法 - 只更新内存数据库
-        
+
         这个方法确保模拟交易的数据变更只影响内存数据库，不会同步到SQLite
         """
         try:
@@ -2290,7 +2300,7 @@ class PositionManager:
             p_available = int(float(available)) if available is not None else p_volume
             p_highest_price = float(highest_price) if highest_price is not None else p_current_price
             p_stop_loss_price = float(stop_loss_price) if stop_loss_price is not None else None
-            
+
             # 布尔值转换
             if isinstance(profit_triggered, str):
                 p_profit_triggered = profit_triggered.lower() in ['true', '1', 't', 'y', 'yes']
@@ -2304,67 +2314,69 @@ class PositionManager:
                     p_current_price = float(latest_data['lastPrice'])
                 else:
                     p_current_price = p_cost_price
-            
+
             # 计算市值和收益率
             p_market_value = round(p_volume * p_current_price, 2)
-            
+
             if p_cost_price > 0:
                 p_profit_ratio = round(100 * (p_current_price - p_cost_price) / p_cost_price, 2)
             else:
                 p_profit_ratio = 0.0
-            
+
             # 处理止损价格
             if p_stop_loss_price is None:
                 calculated_slp = self.calculate_stop_loss_price(p_cost_price, p_highest_price, p_profit_triggered)
                 p_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
-            
+
             # 获取当前时间
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
+
             if open_date is None:
                 open_date = now
-            
-            # 检查是否已有持仓记录
-            cursor = self.memory_conn.cursor()
-            cursor.execute("SELECT open_date FROM positions WHERE stock_code=?", (stock_code,))
-            result = cursor.fetchone()
-            
-            if result:
-                # 更新持仓 - 保持原开仓日期
-                original_open_date = result[0]
-                cursor.execute("""
-                    UPDATE positions 
-                    SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
-                        profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?, 
-                        profit_triggered=?, stock_name=?
-                    WHERE stock_code=?
-                """, (p_volume, round(p_cost_price, 2), round(p_current_price, 2), p_market_value, 
-                    p_available, p_profit_ratio, now, round(p_highest_price, 2), 
-                    round(p_stop_loss_price, 2) if p_stop_loss_price else None, 
-                    p_profit_triggered, stock_name, stock_code))
-            else:
-                # 新增持仓
-                cursor.execute("""
-                    INSERT INTO positions 
-                    (stock_code, stock_name, volume, cost_price, current_price, market_value, 
-                    available, profit_ratio, last_update, open_date, profit_triggered, 
-                    highest_price, stop_loss_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (stock_code, stock_name, p_volume, round(p_cost_price, 2), 
-                    round(p_current_price, 2), p_market_value, p_available, p_profit_ratio, 
-                    now, open_date, p_profit_triggered, round(p_highest_price, 2), 
-                    round(p_stop_loss_price, 2) if p_stop_loss_price else None))
-            
-            self.memory_conn.commit()
-            
+
+            with self.memory_conn_lock:
+                # 检查是否已有持仓记录
+                cursor = self.memory_conn.cursor()
+                cursor.execute("SELECT open_date FROM positions WHERE stock_code=?", (stock_code,))
+                result = cursor.fetchone()
+
+                if result:
+                    # 更新持仓 - 保持原开仓日期
+                    original_open_date = result[0]
+                    cursor.execute("""
+                        UPDATE positions
+                        SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
+                            profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?,
+                            profit_triggered=?, stock_name=?
+                        WHERE stock_code=?
+                    """, (p_volume, round(p_cost_price, 2), round(p_current_price, 2), p_market_value,
+                        p_available, p_profit_ratio, now, round(p_highest_price, 2),
+                        round(p_stop_loss_price, 2) if p_stop_loss_price else None,
+                        p_profit_triggered, stock_name, stock_code))
+                else:
+                    # 新增持仓
+                    cursor.execute("""
+                        INSERT INTO positions
+                        (stock_code, stock_name, volume, cost_price, current_price, market_value,
+                        available, profit_ratio, last_update, open_date, profit_triggered,
+                        highest_price, stop_loss_price)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (stock_code, stock_name, p_volume, round(p_cost_price, 2),
+                        round(p_current_price, 2), p_market_value, p_available, p_profit_ratio,
+                        now, open_date, p_profit_triggered, round(p_highest_price, 2),
+                        round(p_stop_loss_price, 2) if p_stop_loss_price else None))
+
+                self.memory_conn.commit()
+
             # 注意：这里不调用 _increment_data_version()，由调用方决定何时触发
             self._increment_data_version()
             logger.debug(f"[模拟交易] 内存数据库更新成功: {stock_code}")
             return True
-            
+
         except Exception as e:
             logger.error(f"模拟更新 {stock_code} 持仓时出错: {str(e)}")
-            self.memory_conn.rollback()
+            with self.memory_conn_lock:
+                self.memory_conn.rollback()
             return False
 
     def simulate_sell_position(self, stock_code, sell_volume, sell_price, sell_type='partial'):
@@ -2533,28 +2545,30 @@ class PositionManager:
     def _simulate_remove_position(self, stock_code):
         """
         模拟交易专用：从内存数据库删除持仓记录
-        
+
         参数:
         stock_code (str): 股票代码
-        
+
         返回:
         bool: 是否删除成功
         """
         try:
-            cursor = self.memory_conn.cursor()
-            cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
-            self.memory_conn.commit()
-            
-            if cursor.rowcount > 0:
-                logger.info(f"[模拟交易] 已从内存数据库删除 {stock_code} 的持仓记录")
-                return True
-            else:
-                logger.warning(f"[模拟交易] 未找到 {stock_code} 的持仓记录，无需删除")
-                return False
-                
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+                cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
+                self.memory_conn.commit()
+
+                if cursor.rowcount > 0:
+                    logger.info(f"[模拟交易] 已从内存数据库删除 {stock_code} 的持仓记录")
+                    return True
+                else:
+                    logger.warning(f"[模拟交易] 未找到 {stock_code} 的持仓记录，无需删除")
+                    return False
+
         except Exception as e:
             logger.error(f"删除 {stock_code} 的模拟持仓记录时出错: {str(e)}")
-            self.memory_conn.rollback()
+            with self.memory_conn_lock:
+                self.memory_conn.rollback()
             return False
 
     def _save_simulated_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, strategy='simu'):

@@ -8,6 +8,9 @@ import math
 import json
 import math
 import config
+from logger import get_logger
+
+logger = get_logger("easy_qmt_trader")
 def conv_time(ct):
     '''
     conv_time(1476374400000) --> '20161014000000.000'
@@ -26,63 +29,56 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         连接断开
         :return:
         """
-        print("connection lost")
+        logger.error("QMT连接断开，请检查连接状态")
     def on_stock_order(self, order):
         """
         委托回报推送
         :param order: XtOrder对象
         :return:
         """
-        print("on order callback:")
-        print(order.stock_code, order.order_status, order.order_sysid)
+        logger.info(f"委托回报: 股票代码={order.stock_code}, 委托状态={order.order_status}, 系统订单号={order.order_sysid}")
     def on_stock_asset(self, asset):
         """
         资金变动推送
         :param asset: XtAsset对象
         :return:
         """
-        print("on asset callback")
-        print(asset.account_id, asset.cash, asset.total_asset)
+        logger.info(f"资金变动: 账户={asset.account_id}, 可用资金={asset.cash}, 总资产={asset.total_asset}")
     def on_stock_trade(self, trade):
         """
         成交变动推送
         :param trade: XtTrade对象
         :return:
         """
-        print("on trade callback")
-        print(trade.account_id, trade.stock_code, trade.order_id)
+        logger.info(f"成交回报: 账户={trade.account_id}, 股票代码={trade.stock_code}, 订单号={trade.order_id}")
     def on_stock_position(self, position):
         """
         持仓变动推送
         :param position: XtPosition对象
         :return:
         """
-        print("on position callback")
-        print(position.stock_code, position.volume)
+        logger.info(f"持仓变动: 股票代码={position.stock_code}, 持仓数量={position.volume}")
     def on_order_error(self, order_error):
         """
         委托失败推送
         :param order_error:XtOrderError 对象
         :return:
         """
-        print("on order_error callback")
-        print(order_error.order_id, order_error.error_id, order_error.error_msg)
+        logger.error(f"委托失败: 订单号={order_error.order_id}, 错误码={order_error.error_id}, 错误信息={order_error.error_msg}")
     def on_cancel_error(self, cancel_error):
         """
         撤单失败推送
         :param cancel_error: XtCancelError 对象
         :return:
         """
-        print("on cancel_error callback")
-        print(cancel_error.order_id, cancel_error.error_id, cancel_error.error_msg)
+        logger.error(f"撤单失败: 订单号={cancel_error.order_id}, 错误码={cancel_error.error_id}, 错误信息={cancel_error.error_msg}")
     def on_order_stock_async_response(self, response):
         """
         异步下单回报推送
         :param response: XtOrderResponse 对象
         :return:
         """
-        print("on_order_stock_async_response")
-        print(response.account_id, response.order_id, response.seq)
+        logger.info(f"异步下单回报: 账户={response.account_id}, 订单号={response.order_id}, 请求序号={response.seq}")
         self.order_id_map[response.seq] = response.order_id
 
 class easy_qmt_trader:
@@ -105,7 +101,7 @@ class easy_qmt_trader:
         self.order_id_map = {}  # 新增：用于存储下单请求序号和qmt订单编号的映射关系
         self.xtdata = None  # 初始化xtdata属性
         self.xtdata_connected = False  # 初始化连接状态
-        print('操作方式,登录qmt,选择行情加交易选,择极简模式')
+        logger.info('操作提示: 请登录QMT,选择行情加交易选项,选择极简模式')
         
     def random_session_id(self):
         '''
@@ -159,7 +155,7 @@ class easy_qmt_trader:
             else:
                 return False    
         else:
-            print('周末')
+            logger.debug('今天是周末，非交易时间')
             return False
     def select_data_type(self,stock='600031'):
         '''
@@ -205,10 +201,10 @@ class easy_qmt_trader:
         market_value=account['持仓市值'].tolist()[-1]
         total_asset=account['总资产'].tolist()[-1]
         if cash>=value:
-            print('允许买入{} 可用现金{}大于买入金额{} 价格{} 数量{}'.format(stock,cash,value,price,amount))
+            logger.info(f'允许买入 股票={stock}, 可用现金={cash}大于买入金额={value}, 价格={price}, 数量={amount}')
             return True
         else:
-            print('不允许买入{} 可用现金{}小于买入金额{} 价格{} 数量{}'.format(stock,cash,value,price,amount))
+            logger.warning(f'不允许买入 股票={stock}, 可用现金={cash}小于买入金额={value}, 价格={price}, 数量={amount}')
             return False
     def check_stock_is_av_sell(self,stock='128036',amount=10):
         '''
@@ -234,13 +230,13 @@ class easy_qmt_trader:
         if stock in stock_list:
             hold_num=hold_data[hold_data['证券代码']==stock]['可用余额'].tolist()[-1]
             if hold_num>=amount:
-                print('允许卖出：{} 持股{} 卖出{}'.format(stock,hold_num,amount))
+                logger.info(f'允许卖出 股票={stock}, 持股={hold_num}, 卖出={amount}')
                 return True
             else:
-                print('不允许卖出持股不足：{} 持股{} 卖出{}'.format(stock,hold_num,amount))
+                logger.warning(f'不允许卖出,持股不足 股票={stock}, 持股={hold_num}, 卖出={amount}')
                 return False
         else:
-            print('不允许卖出没有持股：{} 持股{} 卖出{}'.format(stock,0,amount))
+            logger.warning(f'不允许卖出,没有持股 股票={stock}, 持股=0, 卖出={amount}')
             return False
     def connect(self):
         '''
@@ -250,7 +246,7 @@ class easy_qmt_trader:
         account账户,
         account_type账户内类型
         '''
-        print('链接qmt')
+        logger.info('正在连接QMT交易接口...')
         # path为mini qmt客户端安装目录下userdata_mini路径
         path = self.path
         # session_id为会话编号，策略使用方对于不同的Python策略需要使用不同的会话编号
@@ -270,12 +266,12 @@ class easy_qmt_trader:
         if connect_result==0:
             # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
             subscribe_result = xt_trader.subscribe(acc)
-            print(subscribe_result)
+            logger.info(f'QMT交易接口连接成功, 订阅结果={subscribe_result}')
             self.xt_trader=xt_trader
             self.acc=acc
             return xt_trader,acc
         else:
-            print('qmt连接失败')
+            logger.error(f'QMT连接失败, 连接结果={connect_result}')
             # 🔧 修复：连接失败时返回None，方便调用方检测
             return None
     def order_stock(self,stock_code='600031.SH', order_type=xtconstant.STOCK_BUY,
@@ -292,10 +288,10 @@ class easy_qmt_trader:
                 :param order_remark: 委托备注
                 :return: 返回下单请求序号, 成功委托后的下单请求序号为大于0的正整数, 如果为-1表示委托失败
             '''
-        
+
             # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
             subscribe_result = self.xt_trader.subscribe(self.acc)
-            print(self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result))
+            logger.debug(f'查询资产回调结果={self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result)}')
             #print(subscribe_result)
             stock_code = self.adjust_stock(stock=stock_code)
             price=self.select_slippage(stock=stock_code,price=price,trader_type=order_type)
@@ -303,7 +299,7 @@ class easy_qmt_trader:
             fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-            print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+            logger.info(f'下单成功 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
             return fix_result_order_id
     def buy(self,security='600031.SH', order_type=xtconstant.STOCK_BUY,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -313,7 +309,7 @@ class easy_qmt_trader:
         '''
         # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
         subscribe_result = self.xt_trader.subscribe(self.acc)
-        print(self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result))
+        logger.debug(f'查询资产回调结果={self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result)}')
         #print(subscribe_result)
         stock_code =self.adjust_stock(stock=security)
         price=self.select_slippage(stock=security,price=price,trader_type='buy')
@@ -325,17 +321,18 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                logger.info(f'买入成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                print('交易类型{} 代码{} 价格{} 数量{} 请求序号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                logger.info(f'买入请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
-            print('买入 标的{} 价格{} 委托数量{}小于0有问题'.format(stock_code,price,order_volume))
+            logger.error(f'买入参数错误 标的={stock_code}, 价格={price}, 委托数量={order_volume}小于0')
+            return None
     def sell(self,security='600031.SH', order_type=xtconstant.STOCK_SELL,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
         '''
@@ -344,7 +341,7 @@ class easy_qmt_trader:
         '''
         # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
         subscribe_result = self.xt_trader.subscribe(self.acc)
-        print(self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result))
+        logger.debug(f'查询资产回调结果={self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result)}')
         #print(subscribe_result)
         stock_code =self.adjust_stock(stock=security)
         price=self.select_slippage(stock=security,price=price,trader_type='sell')
@@ -356,17 +353,18 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                logger.info(f'卖出成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                print('交易类型{} 代码{} 价格{} 数量{} 请求序号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+                logger.info(f'卖出请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
-            print('卖出 标的{} 价格{} 委托数量{}小于0有问题'.format(stock_code,price,order_volume))
+            logger.error(f'卖出参数错误 标的={stock_code}, 价格={price}, 委托数量={order_volume}小于0')
+            return None
 
     def order_stock_async(self,stock_code='600031.SH', order_type=xtconstant.STOCK_BUY,
                     order_volume=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -385,7 +383,7 @@ class easy_qmt_trader:
         '''
         # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
         subscribe_result = self.xt_trader.subscribe(self.acc)
-        print(self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result))
+        logger.debug(f'查询资产回调结果={self.xt_trader.query_stock_asset_async(account=self.acc,callback=subscribe_result)}')
         #print(subscribe_result)
         stock_code = self.adjust_stock(stock=stock_code)
         price=self.select_slippage(stock=stock_code,price=price,trader_type=order_type)
@@ -393,7 +391,7 @@ class easy_qmt_trader:
         fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-        print('交易类型{} 代码{} 价格{} 数量{} 订单编号{}'.format(order_type,stock_code,price,order_volume,fix_result_order_id))
+        logger.info(f'异步下单请求提交 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
         return fix_result_order_id
     def cancel_order_stock(self,order_id=12):
         '''
@@ -404,15 +402,15 @@ class easy_qmt_trader:
         # 使用订单编号撤单
         cancel_order_result = self.xt_trader.cancel_order_stock(account=self.acc,order_id=order_id)
         if cancel_order_result==0:
-            print('成功')
+            logger.info(f'撤单成功 订单号={order_id}')
         elif cancel_order_result==-1:
-            print('委托已完成撤单失败')
+            logger.error(f'撤单失败-委托已完成 订单号={order_id}')
         elif cancel_order_result==-2:
-            print('找到对应委托编号撤单失败')
+            logger.error(f'撤单失败-未找到对应委托编号 订单号={order_id}')
         elif cancel_order_result==-3:
-            print('账号未登陆撤单失败')
+            logger.error(f'撤单失败-账号未登陆 订单号={order_id}')
         else:
-            pass
+            logger.warning(f'撤单结果未知 订单号={order_id}, 结果码={cancel_order_result}')
         return cancel_order_result
     def cancel_order_stock_async(self,order_id=12):
         '''
@@ -429,15 +427,15 @@ class easy_qmt_trader:
         # 使用订单编号撤单
         cancel_order_result = self.xt_trader.cancel_order_stock_async(account=self.acc,order_id=order_id)
         if cancel_order_result==0:
-            print('成功')
+            logger.info(f'异步撤单请求提交成功 订单号={order_id}')
         elif cancel_order_result==-1:
-            print('委托已完成撤单失败')
+            logger.error(f'异步撤单失败-委托已完成 订单号={order_id}')
         elif cancel_order_result==-2:
-            print('找到对应委托编号撤单失败')
+            logger.error(f'异步撤单失败-未找到对应委托编号 订单号={order_id}')
         elif cancel_order_result==-3:
-            print('账号未登陆撤单失败')
+            logger.error(f'异步撤单失败-账号未登陆 订单号={order_id}')
         else:
-            pass
+            logger.warning(f'异步撤单结果未知 订单号={order_id}, 结果码={cancel_order_result}')
         return cancel_order_result
     def query_stock_asset(self):
         '''
@@ -457,7 +455,7 @@ class easy_qmt_trader:
             data_dict['总资产']=asset.total_asset
             return data_dict
         else:
-            print('获取失败资金')
+            logger.warning('查询资产失败-asset对象为空')
             data_dict['账号类型']=[None]
             data_dict['资金账户']=[None]
             data_dict['可用金额']=[None]
@@ -482,8 +480,8 @@ class easy_qmt_trader:
                 return df
             # ===== 新增：asset为空时返回空DataFrame而非隐式None =====
             return df
-        except:
-            print('获取账户失败，读取上次数据，谨慎使用')
+        except Exception as e:
+            logger.error(f'获取账户资产失败: {str(e)}，返回空DataFrame')
             df=pd.DataFrame()
             return df
     def query_stock_orders(self):
@@ -494,7 +492,7 @@ class easy_qmt_trader:
         :return: 返回当日所有委托的委托对象组成的list
         '''
         orders = self.xt_trader.query_stock_orders(self.acc)
-        print("委托数量", len(orders))
+        logger.debug(f"查询当日委托数量: {len(orders)}")
         data=pd.DataFrame()
         if len(orders) != 0:
             for i in range(len(orders)):
@@ -520,7 +518,7 @@ class easy_qmt_trader:
             data['报单时间']=pd.to_datetime(data['报单时间'],unit='s')
             return data
         else:
-            print('目前没有委托')
+            logger.debug('当前没有委托单')
             return data
     def today_entrusts(self):
         '''
@@ -551,7 +549,7 @@ class easy_qmt_trader:
             else:
                 return '废单'
         orders = self.xt_trader.query_stock_orders(self.acc)
-        print("委托数量", len(orders))
+        logger.debug(f"查询今日委托数量: {len(orders)}")
         data=pd.DataFrame()
         if len(orders) != 0:
             for i in range(len(orders)):
@@ -580,14 +578,14 @@ class easy_qmt_trader:
             data['未成交价值']=data['未成交数量']*data['委托价格']
             return data
         else:
-            print('目前没有委托')
+            logger.debug('今日没有委托单')
             return data
     def query_stock_trades(self):
         '''
         当日成交
         '''
         trades = self.xt_trader.query_stock_trades(self.acc)
-        print("成交数量:", len(trades))
+        logger.debug(f"查询当日成交数量: {len(trades)}")
         data=pd.DataFrame()
         if len(trades) != 0:
             for i in range(len(trades)):
@@ -610,7 +608,7 @@ class easy_qmt_trader:
             data['成交时间']=pd.to_datetime(data['成交时间'],unit='s')
             return data
         else:
-            print('今日没有成交')     
+            logger.debug('今日没有成交记录')
             return data
     def get_active_orders_by_stock(self, stock_code):
         """
@@ -700,7 +698,7 @@ class easy_qmt_trader:
         今日成交
         '''
         trades = self.xt_trader.query_stock_trades(self.acc)
-        print("成交数量:", len(trades))
+        logger.debug(f"查询今日成交数量: {len(trades)}")
         data=pd.DataFrame()
         if len(trades) != 0:
             for i in range(len(trades)):
@@ -731,14 +729,14 @@ class easy_qmt_trader:
             data['成交时间']=pd.to_datetime(data['成交时间'],unit='s')
             return data
         else:
-            print('今日没有成交')     
+            logger.debug('今日没有成交记录')
             return data
     def query_stock_positions(self):
         '''
         查询账户所有的持仓
         '''
         positions = self.xt_trader.query_stock_positions(self.acc)
-        print("query_stock_positions()-持仓数量:", len(positions))
+        logger.debug(f"query_stock_positions()-持仓数量: {len(positions)}")
         data=pd.DataFrame()
         if len(positions) != 0:
             for i in range(len(positions)):
@@ -754,7 +752,7 @@ class easy_qmt_trader:
                 data=pd.concat([data,df],ignore_index=True)
             return data
         else:
-            print('没有持股')
+            logger.debug('当前没有持仓')
             df=pd.DataFrame()
             df['账号类型']=[None]
             df['资金账号']=[None]
@@ -771,7 +769,7 @@ class easy_qmt_trader:
             # 🔧 修复：检查xt_trader是否已正确初始化
             if not hasattr(self, 'xt_trader') or self.xt_trader is None or isinstance(self.xt_trader, str):
                 logger_error_msg = f"QMT未连接或连接失败，无法获取持仓。xt_trader类型: {type(self.xt_trader) if hasattr(self, 'xt_trader') else 'undefined'}"
-                print(f"获取持仓信息时出错: {logger_error_msg}")
+                logger.error(f"获取持仓信息时出错: {logger_error_msg}")
 
                 # 返回预定义空DataFrame
                 columns = ['账号类型', '资金账号', '证券代码', '股票余额', '可用余额',
@@ -807,9 +805,9 @@ class easy_qmt_trader:
                         '证券名称', '冻结数量', '市价', '盈亏', '盈亏比(%)', 
                         '当日买入', '当日卖出']
                 return pd.DataFrame(columns=columns)
-                    
+
         except Exception as e:
-            print(f"获取持仓信息时出错: {str(e)}")
+            logger.error(f"获取持仓信息时出错: {str(e)}")
             columns = ['账号类型', '资金账号', '证券代码', '股票余额', '可用余额', 
                     '成本价', '市值', '选择', '持股天数', '交易状态', '明细',
                     '证券名称', '冻结数量', '市价', '盈亏', '盈亏比(%)', 
@@ -832,14 +830,14 @@ class easy_qmt_trader:
             self.xtdata = xt
             if xt.connect():
                 self.xtdata_connected = True
-                print("xtdata行情接口连接成功")
+                logger.info("xtdata行情接口连接成功")
                 return True
             else:
-                print("xtdata行情接口连接失败")
+                logger.error("xtdata行情接口连接失败")
                 self.xtdata_connected = False
                 return False
         except Exception as e:
-            print(f"连接xtdata失败: {e}")
+            logger.error(f"连接xtdata失败: {e}")
             self.xtdata_connected = False
             return False
 
@@ -851,14 +849,14 @@ class easy_qmt_trader:
                 self.xtdata = xt
             if self.xtdata.reconnect():
                 self.xtdata_connected = True
-                print("xtdata行情接口重连成功")
+                logger.info("xtdata行情接口重连成功")
                 return True
             else:
-                print("xtdata行情接口重连失败")
+                logger.error("xtdata行情接口重连失败")
                 self.xtdata_connected = False
                 return False
         except Exception as e:
-            print(f"重连xtdata失败: {e}")
+            logger.error(f"重连xtdata失败: {e}")
             self.xtdata_connected = False
             return False
 
@@ -872,13 +870,13 @@ class easy_qmt_trader:
             test_codes = ['000001.SZ']
             test_data = self.xtdata.get_full_tick(test_codes)
             if test_data:
-                print("xtdata连接验证成功")
+                logger.debug("xtdata连接验证成功")
                 return True
             else:
-                print("xtdata连接验证失败")
+                logger.warning("xtdata连接验证失败-返回数据为空")
                 return False
         except Exception as e:
-            print(f"xtdata连接验证异常: {e}")
+            logger.error(f"xtdata连接验证异常: {e}")
             return False
 
     def get_full_tick(self, stock_codes):
@@ -890,9 +888,9 @@ class easy_qmt_trader:
 if __name__=='__main__':
     models=easy_qmt_trader()
     models.connect()
-    print(models.query_stock_orders())
+    logger.info(f"测试查询委托: {models.query_stock_orders()}")
     models.buy()
     models1=easy_qmt_trader(account='55009680',session_id=123457)
     models1.connect()
-    print(models1.query_stock_positions())
-    
+    logger.info(f"测试查询持仓: {models1.query_stock_positions()}")
+
