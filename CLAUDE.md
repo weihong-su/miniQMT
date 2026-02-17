@@ -65,16 +65,49 @@ python main.py
 ```
 **首次运行**: 系统会自动创建 `data/positions.db` 数据库文件
 
-### 运行测试(推荐顺序)
+### 运行测试
+
+#### 回归测试框架 (推荐)
+
+项目集成了完整的回归测试框架 ([test/run_integration_regression_tests.py](test/run_integration_regression_tests.py))，支持按模块运行、快速验证和失败重试。测试组配置在 [test/integration_test_config.json](test/integration_test_config.json)。
+
 ```bash
-# 1. 无人值守功能测试（推荐首先运行,验证线程自愈机制）
-python test/test_unattended_operation.py
+# 快速验证（5分钟内完成，检查关键功能）
+python test/run_integration_regression_tests.py --fast
 
-# 2. 系统综合测试
-python test/comprehensive_test.py
+# 运行所有回归测试
+python test/run_integration_regression_tests.py --all
 
-# 3. 止盈止损测试
-python test/test_stop_loss_buy_param.py
+# 按组运行
+python test/run_integration_regression_tests.py --group system_integration  # 系统集成
+python test/run_integration_regression_tests.py --group stop_profit         # 止盈止损
+python test/run_integration_regression_tests.py --group grid_signal         # 网格信号
+python test/run_integration_regression_tests.py --group grid_session        # 网格会话
+python test/run_integration_regression_tests.py --group grid_trade          # 网格交易
+python test/run_integration_regression_tests.py --group grid_exit           # 网格退出
+python test/run_integration_regression_tests.py --group grid_validation     # 网格参数
+python test/run_integration_regression_tests.py --group grid_comprehensive  # 网格综合
+
+# 其他选项
+python test/run_integration_regression_tests.py --all --retry-failed   # 失败重试
+python test/run_integration_regression_tests.py --all --verbose        # 详细输出
+python test/run_integration_regression_tests.py --all --skip-env-prep  # 跳过环境准备
+python test/run_integration_regression_tests.py --all --no-backup      # 不备份生产DB
+```
+
+测试报告自动输出到 `test/integration_test_report.json` 和 `test/integration_test_report.md`。
+
+#### 单个测试文件
+
+```bash
+# 运行单个测试模块
+python test/run_single_test.py test.test_unattended_operation
+
+# 直接使用 unittest
+python -m unittest test.test_system_integration -v
+
+# 运行全部网格测试
+python test/run_all_grid_tests.py
 ```
 
 ### Web前端
@@ -562,6 +595,49 @@ position_manager.latest_signals
 thread_monitor.get_status()
 ```
 
+## 测试框架架构
+
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`，共 65+ 个测试文件，约 21,000 行。
+
+### 测试基础设施
+
+- **[test/test_base.py](test/test_base.py)**: `TestBase` 基类，提供测试DB创建、持仓 fixture、线程断言、条件等待等工具方法
+- **[test/test_mocks.py](test/test_mocks.py)**: `MockQmtTrader` 完整模拟 QMT API（连接、持仓查询、下单），无需真实 QMT 环境即可运行测试
+- **[test/test_utils.py](test/test_utils.py)**: 通用测试辅助函数
+
+### 测试分组
+
+| 组名 | 优先级 | 内容 |
+|------|--------|------|
+| `system_integration` | critical | 系统集成、无人值守、线程监控 |
+| `stop_profit` | high | 动态止盈止损策略（6个模块） |
+| `grid_signal` | high | 网格信号检测与价格追踪 |
+| `grid_session` | high | 网格会话生命周期管理 |
+| `grid_trade` | high | 网格买卖执行与资金管理 |
+| `grid_exit` | high | 网格退出条件检测 |
+| `grid_comprehensive` | high | 网格综合端到端场景 |
+| `grid_validation` | medium | 参数校验与边界情况 |
+| `fast` | critical | 5分钟快速验证子集 |
+
+### 编写新测试的规范
+
+```python
+from test.test_base import TestBase
+from test.test_mocks import MockQmtTrader
+
+class TestMyFeature(TestBase):
+    def setUp(self):
+        super().setUp()
+        self.mock_trader = MockQmtTrader()
+        self.mock_trader.add_mock_position("000001.SZ", volume=1000, cost_price=10.0)
+
+    def test_something(self):
+        # 测试代码...
+        self.wait_for_condition(lambda: condition_met, timeout=5)
+```
+
+测试运行时自动备份生产DB，测试完成后恢复。使用 `--skip-env-prep` 跳过备份（仅限开发调试）。
+
 ## 相关文档
 
 ### 无人值守运行
@@ -591,40 +667,6 @@ thread_monitor.get_status()
   "600036.SH",
   "000333.SZ"
 ]
-```
-
-## 调试技巧
-
-### 启用详细日志
-```python
-# config.py
-DEBUG = True
-LOG_LEVEL = "DEBUG"
-```
-
-### 测试模拟交易
-```python
-# config.py
-ENABLE_SIMULATION_MODE = True
-DEBUG_SIMU_STOCK_DATA = True  # 绕过交易时间限制
-```
-
-### 监控关键数据
-```python
-# 查看内存持仓
-position_manager.get_all_positions()
-
-# 查看待执行信号
-position_manager.get_pending_signals()
-
-# 检查账户信息
-position_manager.get_account_info()
-
-# 查看信号队列
-position_manager.latest_signals
-
-# 查看线程监控状态
-thread_monitor.get_status()
 ```
 
 ---

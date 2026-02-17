@@ -1,5 +1,12 @@
 """
 日志管理模块，提供日志记录和清理功能
+
+功能特性:
+- 双输出架构: 同时输出到文件和控制台
+- 颜色化输出: WARNING显示为黄色，ERROR/CRITICAL显示为红色
+- 文件轮转: 超过配置大小时自动创建备份
+- 安全处理: 程序退出时避免I/O错误
+- 模块名简化: position_manager → pm，提高可读性
 """
 import os
 import sys
@@ -11,6 +18,23 @@ import glob
 import threading
 from contextlib import contextmanager
 import config
+
+# 导入colorama用于跨平台颜色输出
+try:
+    from colorama import init as colorama_init, Fore, Style
+    colorama_init(autoreset=True)  # 自动重置颜色
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
+    # 如果colorama不可用，使用空字符串作为颜色代码
+    class _DummyStyle:
+        RESET_ALL = ''
+    class _DummyFore:
+        YELLOW = ''
+        RED = ''
+        RESET = ''
+    Fore = _DummyFore()
+    Style = _DummyStyle()
 
 # 创建日志目录
 if not os.path.exists('logs'):
@@ -36,8 +60,45 @@ MODULE_NAME_MAP = {
     'main': 'main',
 }
 
+# ============ 颜色化Formatter ============
+
+class ColoredFormatter(logging.Formatter):
+    """为不同日志级别添加颜色的Formatter
+
+    颜色方案:
+    - DEBUG: 默认颜色
+    - INFO: 默认颜色
+    - WARNING: 黄色
+    - ERROR: 红色
+    - CRITICAL: 红色
+    """
+
+    # 定义级别颜色映射
+    LEVEL_COLORS = {
+        logging.DEBUG: '',
+        logging.INFO: '',
+        logging.WARNING: Fore.YELLOW,
+        logging.ERROR: Fore.RED,
+        logging.CRITICAL: Fore.RED,
+    }
+
+    def format(self, record):
+        """格式化日志记录，为WARNING和ERROR添加颜色"""
+        # 获取该级别对应的颜色
+        level_color = self.LEVEL_COLORS.get(record.levelno, '')
+
+        # 格式化原始消息
+        formatted_message = super().format(record)
+
+        # 如果需要颜色且颜色可用，则添加颜色
+        if level_color and COLORAMA_AVAILABLE:
+            return f"{level_color}{formatted_message}{Style.RESET_ALL}"
+        else:
+            return formatted_message
+
 # 日志格式(优化: 使用单字母级别,精简模块名)
 log_formatter = logging.Formatter('%(asctime)s [%(levelname).1s] %(name)s - %(message)s')
+colored_formatter = ColoredFormatter('%(asctime)s [%(levelname).1s] %(name)s - %(message)s')
 
 # 创建日志处理器
 file_handler = RotatingFileHandler(
@@ -105,7 +166,8 @@ def _safe_emit(self, record):
 logging.StreamHandler.emit = _safe_emit
 
 console_handler = SafeStreamHandler()
-console_handler.setFormatter(log_formatter)
+# 使用彩色formatter用于控制台输出
+console_handler.setFormatter(colored_formatter)
 
 # 创建logger
 logger = logging.getLogger('miniQMT')

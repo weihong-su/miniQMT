@@ -621,29 +621,29 @@ class PositionManager:
                     if not real_positions_df.empty:
                         self._sync_real_positions_to_memory(real_positions_df)
 
-                    # 更新缓存和时间戳
+                    # 读取数据到局部变量，避免就地修改 self.positions_cache 时与其他
+                    # 线程的 .copy() 调用产生竞态（Gaps in blk ref_locs）
                     with self.memory_conn_lock:
                         query = "SELECT * FROM positions"
-                        self.positions_cache = pd.read_sql_query(query, self.memory_conn)
+                        new_cache = pd.read_sql_query(query, self.memory_conn)
 
-                    # 确保所有列都有合适的默认值
-                    if not self.positions_cache.empty:
-                        # 确保数值列为数值类型
+                    # 在局部变量上完成所有列类型修正，不触碰 self.positions_cache
+                    if not new_cache.empty:
                         numeric_columns = ['volume', 'available', 'cost_price', 'current_price',
                                             'market_value', 'profit_ratio', 'highest_price', 'stop_loss_price','breakout_highest_price']
                         for col in numeric_columns:
-                            if col in self.positions_cache.columns:
-                                # 转换为数值，无效值替换为0
-                                self.positions_cache[col] = pd.to_numeric(self.positions_cache[col], errors='coerce').fillna(0)
+                            if col in new_cache.columns:
+                                new_cache[col] = pd.to_numeric(new_cache[col], errors='coerce').fillna(0)
 
-                        # 确保布尔列为布尔类型
-                        if 'profit_triggered' in self.positions_cache.columns:
-                            self.positions_cache['profit_triggered'] = self.positions_cache['profit_triggered'].fillna(False)
+                        if 'profit_triggered' in new_cache.columns:
+                            new_cache['profit_triggered'] = new_cache['profit_triggered'].fillna(False)
 
-                        # 确保布尔列为布尔类型
-                        if 'profit_breakout_triggered' in self.positions_cache.columns:
-                            self.positions_cache['profit_breakout_triggered'] = self.positions_cache['profit_breakout_triggered'].fillna(False)
+                        if 'profit_breakout_triggered' in new_cache.columns:
+                            new_cache['profit_breakout_triggered'] = new_cache['profit_breakout_triggered'].fillna(False)
 
+                    # 原子赋值：CPython STORE_ATTR 是单字节码操作，确保其他线程
+                    # 读到的 self.positions_cache 始终是完整对象
+                    self.positions_cache = new_cache
                     self.last_position_update_time = current_time
                     logger.debug(f"更新持仓缓存，共 {len(self.positions_cache)} 条记录")
                 except Exception as e:
