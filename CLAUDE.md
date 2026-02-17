@@ -15,7 +15,7 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
 
 **环境要求**:
-- Python 3.8+ (推荐 3.9)
+- Python 3.8+ (推荐 3.9)，例如用户目录下的Anaconda3/envs/python39
 - 操作系统: Windows (QMT仅支持Windows)
 - QMT客户端: 实盘交易需要安装并登录QMT
 

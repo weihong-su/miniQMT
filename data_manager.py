@@ -552,14 +552,24 @@ class DataManager:
             
             # 数据处理
             work_df['stock_code'] = stock_code
-            work_df['close'] = pd.to_numeric(work_df['close'], errors='coerce')
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount']:
+                work_df[col] = pd.to_numeric(work_df[col], errors='coerce')
 
             # 方案A优化：使用逐行REPLACE避免主键冲突
             # 相比DELETE+INSERT，REPLACE在并发场景下更安全
             cursor = self.conn.cursor()
 
             # 准备数据
-            data_to_insert = work_df[['stock_code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
+            data_to_insert = list(zip(
+                work_df['stock_code'].tolist(),
+                work_df['date'].tolist(),
+                work_df['open'].tolist(),
+                work_df['high'].tolist(),
+                work_df['low'].tolist(),
+                work_df['close'].tolist(),
+                work_df['volume'].tolist(),
+                work_df['amount'].tolist()
+            ))
 
             # 使用REPLACE INTO语句（SQLite特性，自动处理主键冲突）
             cursor.executemany('''
