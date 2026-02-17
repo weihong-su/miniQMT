@@ -73,9 +73,16 @@
       "name": "网格综合测试",
       "description": "网格交易综合功能测试",
       "modules": [
-        "test.test_grid_comprehensive",
-        "test.test_grid_comprehensive_100",
         "test.test_grid_comprehensive_ultraqa"
+      ],
+      "priority": "high"
+    },
+    "core_metrics": {
+      "name": "核心指标与利润测试",
+      "description": "验证网格利润计算和风险分级等核心指标",
+      "modules": [
+        "test.test_grid_profit_calculation",
+        "test.test_grid_risk_grading"
       ],
       "priority": "high"
     },

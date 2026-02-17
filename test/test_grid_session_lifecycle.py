@@ -204,9 +204,10 @@ class TestGridSessionLifecycle(unittest.TestCase):
 
     def test_start_session_timeout(self):
         """测试超时处理：获取持仓超时"""
+        config.GRID_POSITION_QUERY_TIMEOUT = 0.5
         # 模拟获取持仓超时
         def timeout_effect(*args, **kwargs):
-            time.sleep(5)  # 模拟超时
+            time.sleep(1.0)  # 模拟超时
             return None
 
         self.mock_position_manager.get_position.side_effect = timeout_effect
@@ -217,6 +218,7 @@ class TestGridSessionLifecycle(unittest.TestCase):
             user_config = {**self.test_config, 'center_price': 10.0}
             self.grid_manager.start_grid_session(self.test_stock, user_config)
 
+        config.GRID_POSITION_QUERY_TIMEOUT = 5.0
         print(f"[OK] 测试通过: 超时处理正确")
 
     # ==================== 会话停止测试 ====================

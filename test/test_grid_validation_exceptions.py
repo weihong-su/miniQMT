@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from grid_trading_manager import GridTradingManager
 from grid_database import DatabaseManager
 import sqlite3
+import config
 
 
 class TestGridValidationExceptions(unittest.TestCase):
@@ -25,6 +26,10 @@ class TestGridValidationExceptions(unittest.TestCase):
 
     def setUp(self):
         """测试前准备"""
+        self._original_timeout = config.GRID_POSITION_QUERY_TIMEOUT
+        self._original_lock_timeout = config.GRID_LOCK_ACQUIRE_TIMEOUT
+        config.GRID_POSITION_QUERY_TIMEOUT = 0.5
+        config.GRID_LOCK_ACQUIRE_TIMEOUT = 0.5
         self.test_db = f"data/test_exc_{int(datetime.now().timestamp())}.db"
         self.db = DatabaseManager(self.test_db)
         self.db.init_grid_tables()
@@ -35,6 +40,8 @@ class TestGridValidationExceptions(unittest.TestCase):
 
     def tearDown(self):
         """测试后清理"""
+        config.GRID_POSITION_QUERY_TIMEOUT = self._original_timeout
+        config.GRID_LOCK_ACQUIRE_TIMEOUT = self._original_lock_timeout
         self.db.close()
         if os.path.exists(self.test_db):
             os.remove(self.test_db)
@@ -45,7 +52,7 @@ class TestGridValidationExceptions(unittest.TestCase):
 
         # 模拟超时：get_position 延迟6秒（超过5秒超时限制）
         def slow_get_position(code):
-            time.sleep(6)
+            time.sleep(1.0)
             return {'volume': 1000}
 
         self.position_mgr.get_position = slow_get_position
@@ -179,7 +186,7 @@ class TestGridValidationExceptions(unittest.TestCase):
             """在独立线程中持有锁"""
             lock.acquire()
             lock_acquired_event.set()  # 通知主线程锁已获取
-            time.sleep(6)  # 持有6秒，超过5秒超时
+            time.sleep(1.0)  # 持有1秒，超过0.5秒超时
             lock.release()
 
         # 在单独的线程中获取锁(避免RLock可重入特性)

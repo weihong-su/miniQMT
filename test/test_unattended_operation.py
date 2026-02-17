@@ -192,11 +192,14 @@ class TestUnattendedOperation(TestBase):
 
         import concurrent.futures
 
+        # 使用短超时以加速测试（仅验证机制，不需要实际等待生产超时）
+        original_timeout = config.MONITOR_CALL_TIMEOUT
+        config.MONITOR_CALL_TIMEOUT = 0.1
         timeout = config.MONITOR_CALL_TIMEOUT
 
         def slow_api_call():
             """Simulate slow API call"""
-            time.sleep(10)  # Takes 10 seconds
+            time.sleep(0.3)  # 超过0.1秒超时阈值即可
             return "success"
 
         # Execute with timeout
@@ -209,6 +212,7 @@ class TestUnattendedOperation(TestBase):
             except concurrent.futures.TimeoutError:
                 logger.info(f"API call timed out after {timeout}s (expected)")
 
+        config.MONITOR_CALL_TIMEOUT = original_timeout
         logger.info("Timeout protection verified")
 
     def test_10_trading_hours_detection(self):

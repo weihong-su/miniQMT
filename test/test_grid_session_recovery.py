@@ -250,8 +250,8 @@ class TestGridSessionRecovery(unittest.TestCase):
         original_start_time = dict(original_session)['start_time']
         original_end_time = dict(original_session)['end_time']
 
-        # 2. 等待1秒后模拟系统重启
-        time.sleep(1)
+        # 2. 等待0.05秒后模拟系统重启
+        time.sleep(0.05)
         grid_manager = GridTradingManager(
             db_manager=self.db_manager,
             position_manager=self.mock_position_manager,

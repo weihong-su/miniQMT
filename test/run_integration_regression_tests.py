@@ -55,6 +55,15 @@ from typing import Dict, List, Tuple, Optional
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+# 修复 Windows 控制台编码问题（GBK 不支持 emoji/Unicode 字符）
+if sys.platform == 'win32' and hasattr(sys.stderr, 'buffer'):
+    import io
+    try:
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except Exception:
+        pass
+
 # 配置文件路径
 CONFIG_FILE = os.path.join(PROJECT_ROOT, 'test', 'integration_test_config.json')
 
@@ -70,6 +79,34 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+
+
+class SafeStream:
+    """安全流包装器 - 防止 I/O operation on closed file 和 Unicode 编码错误"""
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, data):
+        try:
+            self._stream.write(data)
+        except (ValueError, OSError, AttributeError):
+            pass
+        except UnicodeEncodeError:
+            try:
+                safe_data = data.encode(self._stream.encoding or 'utf-8', errors='replace').decode(self._stream.encoding or 'utf-8')
+                self._stream.write(safe_data)
+            except Exception:
+                pass
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except (ValueError, OSError, AttributeError):
+            pass
+
+    def writeln(self, data=''):
+        self.write(data)
+        self.write('\n')
 
 
 def load_config() -> dict:
@@ -299,7 +336,7 @@ def run_test_group(group_name: str, group_info: dict, config: dict, verbose: boo
           f"{load_stats['total_tests']} 用例{Colors.ENDC}\n")
 
     # 运行测试
-    runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
+    runner = unittest.TextTestRunner(verbosity=2 if verbose else 1, stream=SafeStream(sys.stderr))
     start_time = datetime.now()
     result = runner.run(suite)
     end_time = datetime.now()

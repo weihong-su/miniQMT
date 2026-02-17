@@ -352,6 +352,8 @@ THREAD_RESTART_COOLDOWN = 60  # 重启冷却时间(秒)
 MONITOR_LOOP_INTERVAL = 3  # 监控循环间隔(秒)
 MONITOR_CALL_TIMEOUT = 8.0  # 监控调用超时(秒) - 增加到8秒,避免QMT API调用超时
 MONITOR_NON_TRADE_SLEEP = 60  # 非交易时段休眠(秒)
+GRID_POSITION_QUERY_TIMEOUT = 5.0  # 网格交易持仓查询超时(秒)
+GRID_LOCK_ACQUIRE_TIMEOUT = 5.0   # 网格交易锁获取超时(秒)
 
 def is_trade_time():
     """判断当前是否为交易时间"""

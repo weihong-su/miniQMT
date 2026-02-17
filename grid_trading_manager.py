@@ -385,9 +385,9 @@ class GridTradingManager:
         with ThreadPoolExecutor(max_workers=1) as executor:
             try:
                 future = executor.submit(self.position_manager.get_position, stock_code)
-                position = future.result(timeout=5.0)
+                position = future.result(timeout=config.GRID_POSITION_QUERY_TIMEOUT)
             except TimeoutError:
-                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓超时(5秒)，拒绝启动")
+                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓超时({config.GRID_POSITION_QUERY_TIMEOUT}秒)，拒绝启动")
                 raise RuntimeError(f"获取{stock_code}持仓信息超时，请稍后重试")
             except Exception as e:
                 logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓失败: {str(e)}")
@@ -443,9 +443,9 @@ class GridTradingManager:
 
         # ========== 阶段2: 锁内操作 - 停止旧session、创建记录 ==========
         logger.info(f"[GRID] start_grid_session: [阶段2] 尝试获取锁...")
-        lock_acquired = self.lock.acquire(timeout=5.0)
+        lock_acquired = self.lock.acquire(timeout=config.GRID_LOCK_ACQUIRE_TIMEOUT)
         if not lock_acquired:
-            logger.error(f"[GRID] start_grid_session: [阶段2] 获取锁超时(5秒)! 拒绝启动")
+            logger.error(f"[GRID] start_grid_session: [阶段2] 获取锁超时({config.GRID_LOCK_ACQUIRE_TIMEOUT}秒)! 拒绝启动")
             raise RuntimeError(f"网格交易启动失败：系统繁忙，请稍后重试")
 
         logger.info(f"[GRID] start_grid_session: [阶段2] 成功获取锁，开始处理...")
