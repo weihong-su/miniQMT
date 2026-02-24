@@ -1000,9 +1000,13 @@ class PositionManager:
                     # 最后兜底,设最小值0.01
                     final_cost_price = 0.01
 
+            # 统一保留2位小数（QMT返回的成本价可能有多位小数，如57.95875）
+            if final_cost_price > 0:
+                final_cost_price = round(final_cost_price, 2)
+
             # 同时确保base_cost_price始终保留
             if base_cost_price is not None and base_cost_price > 0:
-                p_base_cost_price = float(base_cost_price)
+                p_base_cost_price = round(float(base_cost_price), 2)
             else:
                 # 如果base_cost_price无效,尝试使用final_cost_price
                 p_base_cost_price = final_cost_price if final_cost_price > 0 else None
