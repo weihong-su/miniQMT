@@ -572,21 +572,18 @@ class DataManager:
             ))
 
             # 使用REPLACE INTO语句（SQLite特性，自动处理主键冲突）
-            cursor.executemany('''
-                REPLACE INTO stock_daily_data
-                (stock_code, date, open, high, low, close, volume, amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', data_to_insert)
-
-            self.conn.commit()
+            # with self.conn 自动管理 BEGIN/COMMIT/ROLLBACK，保证异常后事务状态干净
+            with self.conn:
+                self.conn.executemany('''
+                    REPLACE INTO stock_daily_data
+                    (stock_code, date, open, high, low, close, volume, amount)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', data_to_insert)
 
             logger.debug(f"已保存 {stock_code} 的历史数据到数据库, 共 {len(data_to_insert)} 条记录（使用REPLACE模式避免主键冲突）")
 
-            # logger.info(f"已保存 {stock_code} 的历史数据到数据库, 共 {len(data_df)} 条记录")
-            
         except Exception as e:
             logger.error(f"保存 {stock_code} 的历史数据时出错: {str(e)}")
-            self.conn.rollback()
 
 
     def get_latest_data(self, stock_code):

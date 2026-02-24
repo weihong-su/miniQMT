@@ -2969,6 +2969,14 @@ class PositionManager:
             else:
                 logger.debug(f"{stock_code} 信号已不存在，无需处理")
 
+    def clear_all_signals(self, reason=""):
+        """清除所有待处理信号"""
+        with self.signal_lock:
+            count = len(self.latest_signals)
+            if count > 0:
+                logger.warning(f"清除 {count} 个待处理信号{f'（原因: {reason}）' if reason else ''}: {list(self.latest_signals.keys())}")
+                self.latest_signals.clear()
+
     def _position_monitor_loop(self):
         """持仓监控循环 - 鲁棒性优化版本,支持无人值守运行"""
         logger.info("🚀 持仓监控循环已启动")

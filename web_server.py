@@ -518,6 +518,10 @@ def save_config():
             config.ENABLE_AUTO_TRADING = value
             # 注意：自动交易总开关不持久化，为了安全每次启动需手动确认
             logger.info(f"自动交易总开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (仅运行时，不持久化)")
+            # 从非自动交易切换到自动交易时，清除之前积累的信号，避免执行过期信号
+            if not old_auto_trading and value:
+                position_manager = get_position_manager_instance()
+                position_manager.clear_all_signals(reason="切换到自动交易模式")
 
         # 处理模拟交易模式切换
         if "simulationMode" in config_data:
