@@ -140,6 +140,85 @@ realtime_data = {
 # 创建线程池用于超时调用(最大2个工作线程,避免资源消耗)
 api_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api_timeout")
 
+# ======================= 账户信息缓存（避免SSE阻塞） =======================
+# 缓存有效期（秒），可在config.py中覆盖
+ACCOUNT_INFO_CACHE_TTL = getattr(config, 'ACCOUNT_INFO_CACHE_TTL', 5.0)
+# 刷新最小间隔（秒），防止频繁触发后台刷新
+ACCOUNT_INFO_REFRESH_MIN_INTERVAL = getattr(config, 'ACCOUNT_INFO_REFRESH_MIN_INTERVAL', 2.0)
+
+_account_info_cache = {'data': None, 'ts': 0.0}
+_account_info_lock = threading.Lock()
+_account_info_refresh_lock = threading.Lock()
+_account_info_refreshing = False
+_last_account_info_refresh_start = 0.0
+
+def _build_default_account_info():
+    """构造默认账户信息（保证前端字段完整）"""
+    return {
+        'account_id': '--',
+        'account_type': '--',
+        'available': 0.0,
+        'frozen_cash': 0.0,
+        'market_value': 0.0,
+        'total_asset': 0.0,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+def _refresh_account_info_worker():
+    """后台刷新账户信息，允许阻塞但不影响SSE"""
+    global _account_info_refreshing
+    try:
+        position_manager = get_position_manager_instance()
+        account_info = position_manager.get_account_info() or {}
+        if not account_info:
+            account_info = _build_default_account_info()
+        else:
+            account_info.setdefault('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+        with _account_info_lock:
+            _account_info_cache['data'] = account_info
+            _account_info_cache['ts'] = time.time()
+    except Exception as e:
+        logger.warning(f"账户信息刷新失败: {str(e)}")
+    finally:
+        with _account_info_refresh_lock:
+            _account_info_refreshing = False
+
+def _schedule_account_info_refresh(now_ts: float):
+    """触发后台刷新（幂等+限频）"""
+    global _account_info_refreshing, _last_account_info_refresh_start
+    with _account_info_refresh_lock:
+        if _account_info_refreshing:
+            return
+        if (now_ts - _last_account_info_refresh_start) < ACCOUNT_INFO_REFRESH_MIN_INTERVAL:
+            return
+        _account_info_refreshing = True
+        _last_account_info_refresh_start = now_ts
+
+        t = threading.Thread(
+            target=_refresh_account_info_worker,
+            name="account_info_refresh",
+            daemon=True
+        )
+        t.start()
+
+def get_account_info_cached(max_age: float = None):
+    """获取账户信息缓存，过期则后台刷新，避免阻塞调用链"""
+    if max_age is None:
+        max_age = ACCOUNT_INFO_CACHE_TTL
+
+    now_ts = time.time()
+    with _account_info_lock:
+        cached = _account_info_cache.get('data')
+        ts = _account_info_cache.get('ts', 0.0)
+
+    if cached is None or (now_ts - ts) > max_age:
+        _schedule_account_info_refresh(now_ts)
+
+    if not cached:
+        return _build_default_account_info()
+    return cached
+
 # 实时推送线程
 push_thread = None
 stop_push_flag = False
@@ -1220,7 +1299,7 @@ def sse():
                 current_time = time.time()
 
                 # 获取基础数据
-                account_info = position_manager.get_account_info() or {}
+                account_info = get_account_info_cached()
 
                 current_data = {
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),

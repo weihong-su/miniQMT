@@ -268,7 +268,29 @@ class GridTradingManager:
                     # BUG FIX: 使用session_dict而不是session_data
                     end_time = datetime.fromisoformat(session_dict['end_time'])
                     if datetime.now() > end_time:
+                        # 先更新数据库状态
                         self.db.stop_grid_session(session_id, 'expired')
+
+                        # 如果内存里已有该会话，做最小清理避免Web仍显示active
+                        existing = self.sessions.get(stock_code)
+                        if existing and existing.status == 'active':
+                            logger.info(f"[GRID] 会话{session_id}({stock_code})已过期，清理内存会话")
+                            # 仅做最小清理：从内存移除并触发版本更新
+                            try:
+                                del self.sessions[stock_code]
+                            except Exception:
+                                pass
+                            if session_id in self.trackers:
+                                try:
+                                    del self.trackers[session_id]
+                                except Exception:
+                                    pass
+                            # 触发数据版本更新，确保前端刷新
+                            try:
+                                self.position_manager._increment_data_version()
+                            except Exception:
+                                pass
+
                         logger.info(f"[GRID] 会话{session_id}({stock_code})已过期,自动停止")
                         stopped_count += 1
                         continue
