@@ -553,8 +553,10 @@ class PositionManager:
                         self.update_all_positions_price()  # 更新价格
                         self._increment_data_version()      # 触发版本更新
 
-                # ⭐ 新增：定期自动升级版本号（确保Web界面定期刷新）
-                if (current_time - self.last_version_increment_time) >= self.version_increment_interval:
+                # ⭐ 可选：定期自动升级版本号（默认关闭，避免前端频繁全量刷新）
+                # 如需启用，请在 config.py 中设置 ENABLE_VERSION_HEARTBEAT = True
+                enable_version_heartbeat = getattr(config, 'ENABLE_VERSION_HEARTBEAT', False)
+                if enable_version_heartbeat and (current_time - self.last_version_increment_time) >= self.version_increment_interval:
                     with self.version_lock:
                         self.data_version += 1
                         self.last_version_increment_time = current_time

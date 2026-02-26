@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
+﻿document.addEventListener('DOMContentLoaded', () => {
     console.log("DOM fully loaded and parsed");
 
     // --- Configuration ---
@@ -49,6 +49,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // SSE连接
     let sseConnection = null;
+    let sseHealthy = false; // SSE是否健康可用
+    let sseHeartbeatTimer = null;
+    let sseReconnectTimer = null;
+
+    // SSE与轮询策略配置
+    const SSE_HEARTBEAT_TIMEOUT = 15000;        // 15秒无消息视为异常
+    const SSE_HEARTBEAT_CHECK_INTERVAL = 10000; // 10秒检查一次
+    const HOLDINGS_POLL_INTERVAL_SSE_OK = 60000; // SSE正常时，持仓兜底轮询60秒
+    const STATUS_POLL_INTERVAL_SSE_OK = 15000;   // SSE正常时，状态轮询15秒
+    const LOGS_POLL_INTERVAL_SSE_OK = 15000;     // SSE正常时，日志轮询15秒
+    const HOLDINGS_POLL_INTERVAL_SSE_DOWN = 10000; // SSE异常时，持仓轮询10秒
+    const STATUS_POLL_INTERVAL_SSE_DOWN = 10000;   // SSE异常时，状态轮询10秒
+    const LOGS_POLL_INTERVAL_SSE_DOWN = 10000;     // SSE异常时，日志轮询10秒
     
     // 数据版本号跟踪
     let currentDataVersions = {
@@ -56,6 +69,26 @@ document.addEventListener('DOMContentLoaded', () => {
         logs: 0,
         status: 0
     };
+
+    // 统一股票代码格式（处理前导零问题）
+    function normalizeStockCode(code) {
+        if (code === null || code === undefined) return '';
+        const str = String(code).trim();
+        if (!str) return '';
+        // 提取6位数字（兼容 002441.SZ / SZ002441 / sh600519 等格式）
+        const match = str.match(/(\d{6})/);
+        if (match) return match[1];
+        if (/^\d+$/.test(str)) return str.padStart(6, '0');
+        return str;
+    }
+
+    function getSessionPriority(status) {
+        if (!status) return 0;
+        const s = String(status).toLowerCase();
+        if (s === 'active') return 3;
+        if (s === 'paused') return 2;
+        return 1;
+    }
     
     // 请求锁定状态 - 防止重复请求
     let requestLocks = {
@@ -984,6 +1017,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateExistingRow(row, stock) {
         // 更新各个单元格的值
         const cells = row.querySelectorAll('td');
+        const normalizedCode = normalizeStockCode(stock.stock_code);
 
         // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
         const hasActiveGrid = stock.grid_session_active === true;
@@ -996,7 +1030,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // ⭐ checkbox状态由 updateAllGridTradingStatus 独立管理，此处不更新
 
         // 更新基本信息
-        cells[1].textContent = stock.stock_code || '--';
+        if (normalizedCode) {
+            row.dataset.stockCode = normalizedCode;
+        }
+        cells[1].textContent = normalizedCode || '--';
         cells[2].textContent = stock.stock_name || stock.name || '--';
 
         // 更新涨跌幅，包括类名
@@ -1036,13 +1073,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // 创建新的持仓行（仅创建DOM结构，不设置checkbox状态）
     function createStockRow(stock) {
         const row = document.createElement('tr');
+        const normalizedCode = normalizeStockCode(stock.stock_code);
         // ⭐ 使用后端返回的grid_session_active字段来判断是否有活跃的网格会话
         const hasActiveGrid = stock.grid_session_active === true;
         // 如果有活跃网格，添加绿色边框（视觉指示）
         row.className = hasActiveGrid
             ? 'hover:bg-gray-50 even:bg-gray-100 border-l-4 border-l-green-500'
             : 'hover:bg-gray-50 even:bg-gray-100';
-        row.dataset.stockCode = stock.stock_code; // 添加标识属性
+        row.dataset.stockCode = normalizedCode; // 添加标识属性
 
         // 计算关键值
         const changePercentage = parseFloat(stock.change_percentage || 0);
@@ -1054,13 +1092,13 @@ document.addEventListener('DOMContentLoaded', () => {
         row.innerHTML = `
             <td class="border p-2">
                 <input type="checkbox" class="holding-checkbox"
-                       data-id="${stock.id || stock.stock_code}"
-                       data-stock-code="${stock.stock_code}"
+                       data-id="${stock.id || normalizedCode}"
+                       data-stock-code="${normalizedCode}"
                        ${hasActiveGrid ? 'checked' : ''}
-                       onmouseenter="showGridTooltip(event, '${stock.stock_code}')"
+                       onmouseenter="showGridTooltip(event, '${normalizedCode}')"
                        onmouseleave="hideGridTooltip()">
             </td>
-            <td class="border p-2">${stock.stock_code || '--'}</td>
+            <td class="border p-2">${normalizedCode || '--'}</td>
             <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>
             <td class="border p-2 ${changePercentage >= 0 ? 'text-red-600' : 'text-green-600'}">${changePercentage.toFixed(2)}%</td>
             <td class="border p-2">${parseFloat(stock.current_price || 0).toFixed(2)}</td>
@@ -1088,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // ⭐ 立即恢复checkbox的正确状态（防止浏览器切换）
                 checkbox.checked = hasActiveGrid;
 
-                await showGridConfigDialog(stock.stock_code);
+                await showGridConfigDialog(normalizedCode);
             });
         }
 
@@ -1131,21 +1169,23 @@ document.addEventListener('DOMContentLoaded', () => {
         let hasChanges = false;
 
         holdings.forEach(stock => {
-            processedStocks.add(stock.stock_code);
+            const stockCode = normalizeStockCode(stock.stock_code);
+            if (!stockCode) return;
+            processedStocks.add(stockCode);
             
             // 检查是否已存在此股票行
-            if (existingRows[stock.stock_code]) {
+            if (existingRows[stockCode]) {
                 // 获取现有数据
-                const oldData = existingRows[stock.stock_code].data || {};
+                const oldData = existingRows[stockCode].data || {};
                 
                 // 检查是否需要更新
                 if (shouldUpdateRow(oldData, stock)) {
-                    updateExistingRow(existingRows[stock.stock_code], stock);
+                    updateExistingRow(existingRows[stockCode], stock);
                     hasChanges = true;
                 }
                 
                 // 更新存储的数据
-                existingRows[stock.stock_code].data = {...stock};
+                existingRows[stockCode].data = {...stock};
             } else {
                 // 创建新行
                 const row = createStockRow(stock);
@@ -1174,6 +1214,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (hasChanges || hasRemovals) {
             addHoldingCheckboxListeners();
         }
+
+        // 基于holdings数据同步网格状态（避免额外请求）
+        syncGridStatusFromHoldings(holdings);
+    }
+
+    // 基于后端返回的grid_session_active同步网格状态
+    function syncGridStatusFromHoldings(holdings) {
+        if (!Array.isArray(holdings)) return;
+
+        holdings.forEach(stock => {
+            const stockCode = normalizeStockCode(stock.stock_code);
+            if (!stockCode) return;
+
+            const hasActiveGrid = stock.grid_session_active === true;
+            if (hasActiveGrid) {
+                const previous = gridTradingStatus[stockCode] || {};
+                gridTradingStatus[stockCode] = {
+                    ...previous,
+                    status: 'active',
+                    lastUpdate: Date.now()
+                };
+                updateGridCheckboxStyle(stockCode, 'active');
+            } else {
+                // 仅在原状态为active时清理，避免覆盖paused/stopped
+                if (gridTradingStatus[stockCode]?.status === 'active') {
+                    delete gridTradingStatus[stockCode];
+                    updateGridCheckboxStyle(stockCode, 'none');
+                }
+            }
+        });
     }
 
     function addHoldingCheckboxListeners() {
@@ -1186,7 +1256,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!checkbox.dataset.hasClickListener) {
                 checkbox.addEventListener('click', async (e) => {
                     e.preventDefault(); // 阻止默认的checkbox切换行为
-                    const stockCode = e.target.dataset.stockCode;
+                    const stockCode = normalizeStockCode(e.target.dataset.stockCode);
 
                     // ⭐ 立即恢复checkbox的正确状态（防止浏览器切换）
                     const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
@@ -1355,6 +1425,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 检查是否有数据变化
             if (data.no_change) {
                 console.log('Holdings data unchanged, skipping update');
+                lastDataUpdateTimestamps.holdings = Date.now();
                 return;
             }
 
@@ -1830,18 +1901,22 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const now = Date.now();
             
+            const statusInterval = sseHealthy ? STATUS_POLL_INTERVAL_SSE_OK : STATUS_POLL_INTERVAL_SSE_DOWN;
+            const logsInterval = sseHealthy ? LOGS_POLL_INTERVAL_SSE_OK : LOGS_POLL_INTERVAL_SSE_DOWN;
+            const holdingsInterval = sseHealthy ? HOLDINGS_POLL_INTERVAL_SSE_OK : HOLDINGS_POLL_INTERVAL_SSE_DOWN;
+
             // 只轮询状态和日志，持仓数据主要靠SSE推送
-            if (!requestLocks.status && now - lastDataUpdateTimestamps.status >= 10000) { // 增加到10秒
+            if (!requestLocks.status && now - lastDataUpdateTimestamps.status >= statusInterval) {
                 await fetchStatus();
                 await new Promise(r => setTimeout(r, 200));
             }
             
-            if (!requestLocks.logs && now - lastDataUpdateTimestamps.logs >= 10000) { // 增加到10秒
+            if (!requestLocks.logs && now - lastDataUpdateTimestamps.logs >= logsInterval) {
                 await fetchLogs();
             }
             
             // 持仓数据降低轮询频率，主要依赖SSE推送
-            if (!requestLocks.holdings && now - lastDataUpdateTimestamps.holdings >= 10000) { // 轮询兜底间隔缩短为10秒
+            if (!requestLocks.holdings && now - lastDataUpdateTimestamps.holdings >= holdingsInterval) {
                 await fetchHoldings();
             }
             
@@ -1891,11 +1966,30 @@ document.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(checkFrame);
     }
 
+    function scheduleSSEReconnect(delayMs = 5000) {
+        if (sseReconnectTimer) {
+            clearTimeout(sseReconnectTimer);
+            sseReconnectTimer = null;
+        }
+        sseReconnectTimer = setTimeout(() => {
+            initSSE();
+        }, delayMs);
+    }
+
     // --- SSE连接 - 修改后确保不混淆两种状态 ---
     function initSSE() {
         if (sseConnection) {
             sseConnection.close();
         }
+        if (sseHeartbeatTimer) {
+            clearInterval(sseHeartbeatTimer);
+            sseHeartbeatTimer = null;
+        }
+        if (sseReconnectTimer) {
+            clearTimeout(sseReconnectTimer);
+            sseReconnectTimer = null;
+        }
+        sseHealthy = false;
 
         const sseURL = `${API_BASE_URL}/api/sse`;
         sseConnection = new EventSource(sseURL);
@@ -1907,6 +2001,7 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 // 更新心跳时间
                 lastSSEMessageTime = Date.now();
+                sseHealthy = true;
 
                 const data = JSON.parse(event.data);
                 console.log('SSE update received:', data);
@@ -1939,22 +2034,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         sseConnection.onerror = function(error) {
             console.error('SSE connection error:', error);
-            setTimeout(() => {
-                initSSE();
-            }, 5000); // 减少重连时间到5秒
+            sseHealthy = false;
+            scheduleSSEReconnect(5000);
         };
 
         // SSE心跳检测：每10秒检查SSE是否存活
-        setInterval(() => {
+        sseHeartbeatTimer = setInterval(() => {
             const elapsed = Date.now() - lastSSEMessageTime;
-            if (elapsed > 15000) {  // 15秒没收到消息
+            if (elapsed > SSE_HEARTBEAT_TIMEOUT) {
                 console.warn(`⚠️ SSE heartbeat timeout (${Math.round(elapsed/1000)}s), reconnecting...`);
+                sseHealthy = false;
                 if (sseConnection) {
                     sseConnection.close();
                 }
-                initSSE();
+                scheduleSSEReconnect(1000);
             }
-        }, 10000);
+        }, SSE_HEARTBEAT_CHECK_INTERVAL);
     }
 
     // --- 事件监听器 ---
@@ -2050,6 +2145,11 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {string} stockCode - 股票代码
      */
     async function showGridConfigDialog(stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) {
+            showMessage('股票代码无效', 'error');
+            return;
+        }
         // 显示loading覆盖层
         const loadingOverlay = document.getElementById('gridConfigLoading');
         if (loadingOverlay) {
@@ -2058,7 +2158,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 从DOM中获取持仓信息
-            const row = document.querySelector(`tr[data-stock-code="${stockCode}"]`);
+            const row = document.querySelector(`tr[data-stock-code="${normalizedCode}"]`);
             if (!row) {
                 showMessage('未找到该股票持仓信息', 'error');
                 // 隐藏loading覆盖层
@@ -2066,9 +2166,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     loadingOverlay.classList.add('hidden');
                 }
                 // 恢复checkbox状态
-                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${normalizedCode}"]`);
                 if (checkbox) {
-                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                    const hasActiveGrid = gridTradingStatus[normalizedCode]?.status === 'active';
                     checkbox.checked = hasActiveGrid;
                 }
                 return;
@@ -2096,7 +2196,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // ⭐ 使用新的 /api/grid/session/<stock_code> API 直接获取该股票的会话状态
-            const sessionResponse = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
+            const sessionResponse = await fetch(`${API_BASE_URL}/api/grid/session/${normalizedCode}`);
             if (!sessionResponse.ok) {
                 throw new Error('获取网格会话状态失败');
             }
@@ -2118,14 +2218,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // ⭐ 调试日志
             console.log('网格会话数据:', {
-                stockCode,
+                stockCode: normalizedCode,
                 hasActiveSession,
                 activeSessionId,
                 config
             });
 
             // 填充对话框信息
-            document.getElementById('gridStockCode').textContent = stockCode;
+            document.getElementById('gridStockCode').textContent = normalizedCode;
 
             // ⭐ 显示实时市场价（移除来源说明，界面已明确标注）
             const centerPriceInput = document.getElementById('gridCenterPriceInput');
@@ -2191,9 +2291,9 @@ document.addEventListener('DOMContentLoaded', () => {
             dialog.classList.remove('hidden');
 
             // ⭐ 立即恢复checkbox的正确状态（防止点击时的状态切换）
-            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+            const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${normalizedCode}"]`);
             if (checkbox) {
-                const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                const hasActiveGrid = gridTradingStatus[normalizedCode]?.status === 'active';
                 checkbox.checked = hasActiveGrid;
             }
 
@@ -2219,7 +2319,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 创建命名函数用于停止网格
                 gridConfirmHandler = async () => {
                     // ⭐ 使用新的灵活API，支持通过session_id停止
-                    await stopGridSessionById(activeSessionId, stockCode);
+                    await stopGridSessionById(activeSessionId, normalizedCode);
 
                     dialog.classList.add('hidden');
                     fetchHoldings(); // 立即刷新持仓数据
@@ -2234,7 +2334,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 gridConfirmHandler = async () => {
                     // ⭐ 从输入框读取用户输入的中心价格（允许用户手动修改）
                     const userInputPrice = parseFloat(document.getElementById('gridCenterPriceInput').value);
-                    await startGridSession(stockCode, userInputPrice);
+                    await startGridSession(normalizedCode, userInputPrice);
                 };
             }
 
@@ -2243,9 +2343,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 dialog.classList.add('hidden');
 
                 // ⭐ 立即恢复checkbox的正确状态（避免刷新延迟导致的状态不一致）
-                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+                const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${normalizedCode}"]`);
                 if (checkbox) {
-                    const hasActiveGrid = gridTradingStatus[stockCode]?.status === 'active';
+                    const hasActiveGrid = gridTradingStatus[normalizedCode]?.status === 'active';
                     checkbox.checked = hasActiveGrid;
                 }
 
@@ -2276,7 +2376,9 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {string} status - 状态: 'active'(绿色), 'paused'(黄色), 'stopped'(红色), 'none'(默认)
      */
     function updateGridCheckboxStyle(stockCode, status) {
-        const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${stockCode}"]`);
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) return;
+        const checkbox = document.querySelector(`.holding-checkbox[data-stock-code="${normalizedCode}"]`);
         if (!checkbox) return;
 
         // 移除所有状态类
@@ -2360,6 +2462,11 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {number} centerPrice - 中心价格
      */
     async function startGridSession(stockCode, centerPrice) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) {
+            showMessage('股票代码无效', 'error');
+            return;
+        }
         try {
             // 收集配置参数(转换百分比为小数)
             const config = {
@@ -2406,7 +2513,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            console.log(`✅ 启动网格交易 - 股票: ${stockCode}, 中心价格: ¥${centerPrice.toFixed(2)}`);
+            console.log(`✅ 启动网格交易 - 股票: ${normalizedCode}, 中心价格: ¥${centerPrice.toFixed(2)}`);
 
             const response = await fetch(`${API_BASE_URL}/api/grid/start`, {
                 method: 'POST',
@@ -2414,7 +2521,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    stock_code: stockCode,
+                    stock_code: normalizedCode,
                     center_price: centerPrice,
                     duration_days: durationDays,
                     config: config
@@ -2439,7 +2546,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('gridConfigDialog').classList.add('hidden');
 
             // ⭐ 立即更新checkbox状态（使用独立API，不依赖持仓刷新）
-            await updateSingleGridCheckboxStatus(stockCode);
+            await updateSingleGridCheckboxStatus(normalizedCode);
 
             // 刷新持仓数据（确保所有数据一致）
             await fetchHoldings();
@@ -2459,6 +2566,7 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {string} stockCode - 股票代码
      */
     async function stopGridSessionById(sessionId, stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
         try {
             // 调用停止API
             const response = await fetch(`${API_BASE_URL}/api/grid/stop/${sessionId}`, {
@@ -2480,7 +2588,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('gridConfigDialog').classList.add('hidden');
 
             // ⭐ 立即更新checkbox状态（使用独立API，不依赖持仓刷新）
-            await updateSingleGridCheckboxStatus(stockCode);
+            await updateSingleGridCheckboxStatus(normalizedCode);
 
             // ⭐ 延迟1秒后刷新持仓数据（给后端时间更新数据库）
             setTimeout(async () => {
@@ -2497,6 +2605,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function stopGridSession(stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) {
+            showMessage('股票代码无效', 'error');
+            return;
+        }
         try {
             // 先获取该股票的会话ID
             const sessionsResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
@@ -2510,7 +2623,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // 查找该股票的运行中会话
-            const session = sessionsData.sessions.find(s => s.stock_code === stockCode && s.status === 'active');
+            const session = sessionsData.sessions.find(s => normalizeStockCode(s.stock_code) === normalizedCode && s.status === 'active');
             if (!session) {
                 showMessage('未找到该股票的运行中网格会话', 'warning');
                 // 刷新持仓数据以同步状态
@@ -2519,7 +2632,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // 调用stopGridSessionById
-            await stopGridSessionById(session.session_id, stockCode);
+            await stopGridSessionById(session.session_id, normalizedCode);
 
         } catch (error) {
             console.error('停止网格交易失败:', error);
@@ -2531,7 +2644,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 更新所有网格交易状态（使用单个股票API逐个查询）
+     * 更新所有网格交易状态（使用批量sessions接口）
      * 定期从服务器获取最新状态并更新UI
      * ⭐ 优化点：checkbox状态与持仓数据完全解耦，独立更新
      */
@@ -2544,57 +2657,67 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // ✅ 使用批量接口获取会话列表
+            const sessionsResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
+            if (!sessionsResponse.ok) {
+                console.warn('[Grid] 获取网格会话列表失败');
+                return;
+            }
+
+            const sessionsData = await sessionsResponse.json();
+            if (!sessionsData.success) {
+                console.warn('[Grid] 获取网格会话列表失败', sessionsData.error);
+                return;
+            }
+
+            const sessions = Array.isArray(sessionsData.sessions) ? sessionsData.sessions : [];
+            const sessionsByStock = new Map();
+            sessions.forEach(session => {
+                if (session && session.stock_code) {
+                    const code = normalizeStockCode(session.stock_code);
+                    if (code) {
+                        const existing = sessionsByStock.get(code);
+                        if (!existing) {
+                            sessionsByStock.set(code, session);
+                        } else if (getSessionPriority(session.status) > getSessionPriority(existing.status)) {
+                            sessionsByStock.set(code, session);
+                        }
+                    }
+                }
+            });
+
             // 先清除所有本地状态（准备全量更新）
             const previousStates = {...gridTradingStatus};
             const currentStates = {};
 
-            // ⭐ 对每个持仓股票单独调用 /api/grid/session/<stock_code> 接口
+            // ✅ 基于批量结果更新checkbox状态
             for (const checkbox of checkboxes) {
-                const stockCode = checkbox.dataset.stockCode;
+                const stockCode = normalizeStockCode(checkbox.dataset.stockCode);
                 if (!stockCode) continue;
 
-                try {
-                    const response = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
-                    if (!response.ok) {
-                        console.warn(`[Grid] 获取${stockCode}的session状态失败`);
-                        continue;
+                const session = sessionsByStock.get(stockCode);
+                if (session) {
+                    const status = (session.status || 'active').toLowerCase();
+                    gridTradingStatus[stockCode] = {
+                        sessionId: session.session_id ?? session.sessionId ?? session.id,
+                        status,
+                        config: session.config,
+                        lastUpdate: Date.now()
+                    };
+                    currentStates[stockCode] = true;
+                    updateGridCheckboxStyle(stockCode, status);
+                } else {
+                    currentStates[stockCode] = false;
+                    if (previousStates[stockCode]) {
+                        updateGridCheckboxStyle(stockCode, 'none');
+                        delete gridTradingStatus[stockCode];
                     }
-
-                    const data = await response.json();
-                    if (!data.success) {
-                        console.warn(`[Grid] 获取${stockCode}的session状态失败:`, data.error);
-                        continue;
-                    }
-
-                    // ⭐ 根据返回的 has_session 字段更新checkbox状态
-                    const hasActiveSession = data.has_session === true;
-
-                    if (hasActiveSession) {
-                        // 有活跃session
-                        gridTradingStatus[stockCode] = {
-                            sessionId: data.session_id,
-                            status: 'active',
-                            lastUpdate: Date.now()
-                        };
-                        currentStates[stockCode] = true;
-                        updateGridCheckboxStyle(stockCode, 'active');
-                    } else {
-                        // 无活跃session
-                        currentStates[stockCode] = false;
-                        if (previousStates[stockCode]) {
-                            updateGridCheckboxStyle(stockCode, 'none');
-                            delete gridTradingStatus[stockCode];
-                        }
-                    }
-                } catch (error) {
-                    console.error(`[Grid] 获取${stockCode}的session状态异常:`, error);
                 }
             }
 
             // 检查是否有本地状态但当前没有的（说明session已停止）
             Object.keys(previousStates).forEach(stockCode => {
                 if (!currentStates[stockCode]) {
-                    updateGridCheckboxStyle(stockCode, 'none');
                     delete gridTradingStatus[stockCode];
                 }
             });
@@ -2611,39 +2734,41 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {string} stockCode - 股票代码
      */
     async function updateSingleGridCheckboxStatus(stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) return;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/grid/checkbox-state/${stockCode}`);
+            const response = await fetch(`${API_BASE_URL}/api/grid/checkbox-state/${normalizedCode}`);
             if (!response.ok) {
-                console.warn(`获取${stockCode}的checkbox状态失败`);
+                console.warn(`获取${normalizedCode}的checkbox状态失败`);
                 return;
             }
 
             const data = await response.json();
             if (!data.success) {
-                console.warn(`获取${stockCode}的checkbox状态失败:`, data.error);
+                console.warn(`获取${normalizedCode}的checkbox状态失败:`, data.error);
                 return;
             }
 
             // 更新本地状态
             if (data.active) {
-                gridTradingStatus[stockCode] = {
+                gridTradingStatus[normalizedCode] = {
                     sessionId: data.session_id,
                     status: 'active',
                     lastUpdate: Date.now()
                 };
-                updateGridCheckboxStyle(stockCode, 'active');
+                updateGridCheckboxStyle(normalizedCode, 'active');
             } else {
-                delete gridTradingStatus[stockCode];
-                updateGridCheckboxStyle(stockCode, 'none');
+                delete gridTradingStatus[normalizedCode];
+                updateGridCheckboxStyle(normalizedCode, 'none');
             }
 
             // 更新版本号
             localStorage.setItem('gridCheckboxVersion', data.version);
 
-            console.log(`[Grid] ${stockCode} checkbox状态已更新: ${data.active ? 'active' : 'inactive'}`);
+            console.log(`[Grid] ${normalizedCode} checkbox状态已更新: ${data.active ? 'active' : 'inactive'}`);
 
         } catch (error) {
-            console.error(`更新${stockCode}的checkbox状态失败:`, error);
+            console.error(`更新${normalizedCode}的checkbox状态失败:`, error);
         }
     }
 
@@ -2653,10 +2778,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============ 显示Tooltip ============
     async function showGridTooltip(event, stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) return;
         const tooltip = document.getElementById('gridTooltip');
 
         // 检查缓存
-        const cached = tooltipDataCache[stockCode];
+        const cached = tooltipDataCache[normalizedCode];
         const now = Date.now();
 
         if (cached && (now - cached.timestamp < TOOLTIP_CACHE_TIME)) {
@@ -2665,7 +2792,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             // 请求新数据
             try {
-                const response = await fetch(`${API_BASE_URL}/api/grid/session/${stockCode}`);
+                const response = await fetch(`${API_BASE_URL}/api/grid/session/${normalizedCode}`);
                 const data = await response.json();
 
                 if (!data.success || !data.has_session) {
@@ -2673,7 +2800,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // 缓存数据
-                tooltipDataCache[stockCode] = {
+                tooltipDataCache[normalizedCode] = {
                     data: data,
                     timestamp: now
                 };
