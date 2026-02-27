@@ -86,6 +86,14 @@
       ],
       "priority": "high"
     },
+    "trader_callback": {
+      "name": "卖出交易Callback兜底机制测试",
+      "description": "验证委托跟踪生命周期：callback链路完整性、pending_orders精确匹配、profit_triggered立即同步、超时兜底撤单/重新挂单",
+      "modules": [
+        "test.test_trader_callback"
+      ],
+      "priority": "critical"
+    },
     "system_integration": {
       "name": "系统集成测试",
       "description": "验证系统整体功能",
@@ -104,7 +112,8 @@
         "test.test_grid_session_lifecycle",
         "test.test_grid_trade_buy",
         "test.test_grid_exit_deviation",
-        "test.test_grid_validation_params"
+        "test.test_grid_validation_params",
+        "test.test_trader_callback"
       ],
       "priority": "critical"
     }

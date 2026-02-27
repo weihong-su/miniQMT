@@ -52,6 +52,8 @@ class PositionManager:
         else:
             logger.info("✅ QMT已连接")
             self.qmt_connected = True
+            # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
+            self.qmt_trader.register_trade_callback(self._on_trade_callback)
 
         # 创建内存数据库
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -1840,34 +1842,44 @@ class PositionManager:
             
             # 7. 动态止盈检查（已触发首次止盈后）
             if profit_triggered and highest_price > 0:
+                # P0修复: available=0时说明已有委托在途，跳过信号生成避免无限循环
+                if available <= 0:
+                    logger.debug(f"{stock_code} take_profit_full: available={available}，已有委托在途，跳过信号生成")
+                    return None, None
+
                 # 🔑 使用安全计算的动态止盈价格
                 try:
                     dynamic_take_profit_price = self.calculate_stop_loss_price(
                         cost_price, highest_price, profit_triggered
                     )
-                    
+
                     # 验证动态止盈价格的合理性
                     if dynamic_take_profit_price <= 0 or dynamic_take_profit_price > highest_price * 1.1:
                         logger.error(f"{stock_code} 动态止盈价格异常: {dynamic_take_profit_price}，跳过检查")
                         return None, None
-                    
+
                     # 如果当前价格跌破动态止盈位，触发止盈
                     if current_price <= dynamic_take_profit_price:
+                        # P0修复: 再次确认available>0，防止并发场景下volume已被消耗
+                        if available <= 0:
+                            logger.debug(f"{stock_code} take_profit_full: 触发时available={available}，跳过")
+                            return None, None
+
                         # 获取匹配的级别信息（用于日志）
                         matched_level, take_profit_coefficient = self._get_profit_level_info(
                             cost_price, highest_price
                         )
-                        
+
                         logger.info(f"{stock_code} 触发动态全仓止盈，当前价格: {current_price:.2f}, "
                                 f"止盈位: {dynamic_take_profit_price:.2f}, 最高价: {highest_price:.2f}, "
                                 f"最高达到区间: {matched_level:.1%}（系数{take_profit_coefficient})")
-                                
+
                         return 'take_profit_full', {
                             'current_price': current_price,
                             'dynamic_take_profit_price': dynamic_take_profit_price,
                             'highest_price': highest_price,
                             'matched_level': matched_level,
-                            'volume': position['available'],
+                            'volume': available,
                             'cost_price': cost_price
                         }
                         
@@ -3202,6 +3214,64 @@ class PositionManager:
 
     # ========== 委托单超时管理功能 ==========
 
+    def _on_trade_callback(self, trade):
+        """
+        P0修复: QMT成交回报回调 — 成交时立即从pending_orders移除跟踪，
+        防止超时逻辑对已成交委托发起撤单。
+        同时立即同步 profit_triggered 到 SQLite（P1修复）。
+        """
+        try:
+            order_id = trade.order_id
+            stock_code_full = str(trade.stock_code)
+            stock_code_short = stock_code_full[:6]
+
+            with self.pending_orders_lock:
+                # 按股票代码查找匹配的跟踪记录
+                matched_key = None
+                for key, info in self.pending_orders.items():
+                    tracked_id = info.get('order_id')
+                    if tracked_id == order_id or str(tracked_id) == str(order_id):
+                        matched_key = key
+                        break
+                    # 也按股票代码短码匹配（防止格式差异）
+                    if key == stock_code_short or key == stock_code_full:
+                        if str(tracked_id) == str(order_id):
+                            matched_key = key
+                            break
+
+                if matched_key:
+                    signal_type = self.pending_orders[matched_key].get('signal_type', '')
+                    logger.info(f"✅ [成交回调] {matched_key} 委托已成交(order_id={order_id})，"
+                                f"立即移除跟踪(信号={signal_type})")
+                    del self.pending_orders[matched_key]
+
+                    # P1修复: take_profit_half成交后立即同步profit_triggered到SQLite
+                    if signal_type == 'take_profit_half':
+                        threading.Thread(
+                            target=self._sync_profit_triggered_to_sqlite,
+                            args=(stock_code_short,),
+                            daemon=True
+                        ).start()
+        except Exception as e:
+            logger.error(f"_on_trade_callback 处理异常: {e}")
+
+    def _sync_profit_triggered_to_sqlite(self, stock_code):
+        """P1修复: 立即将内存中的profit_triggered=True同步到SQLite，不等待定时同步"""
+        try:
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(config.DB_PATH)
+            conn.row_factory = _sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE positions SET profit_triggered=1, last_update=? WHERE stock_code=?",
+                (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_code)
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"[P1修复] {stock_code} profit_triggered=True 已立即同步到SQLite")
+        except Exception as e:
+            logger.error(f"_sync_profit_triggered_to_sqlite 失败: {e}")
+
     def track_order(self, stock_code, order_id, signal_type, signal_info):
         """
         跟踪新提交的委托单
@@ -3469,8 +3539,8 @@ class PositionManager:
             # 执行卖出
             result = trading_executor.sell_stock(
                 stock_code=stock_code,
-                sell_volume=volume,
-                sell_price=new_price,
+                volume=volume,
+                price=new_price,
                 strategy=f"reorder_{signal_type}"
             )
 

@@ -24,6 +24,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def __init__(self, order_id_map):
         super().__init__()
         self.order_id_map = order_id_map
+        self.trade_callbacks = []  # 成交回报外部回调列表
     def on_disconnected(self):
         """
         连接断开
@@ -51,6 +52,12 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :return:
         """
         logger.info(f"成交回报: 账户={trade.account_id}, 股票代码={trade.stock_code}, 订单号={trade.order_id}")
+        # 通知所有注册的外部回调（如 position_manager 的委托跟踪清理）
+        for cb in self.trade_callbacks:
+            try:
+                cb(trade)
+            except Exception as e:
+                logger.error(f"on_stock_trade 外部回调异常: {e}")
     def on_stock_position(self, position):
         """
         持仓变动推送
@@ -101,7 +108,15 @@ class easy_qmt_trader:
         self.order_id_map = {}  # 新增：用于存储下单请求序号和qmt订单编号的映射关系
         self.xtdata = None  # 初始化xtdata属性
         self.xtdata_connected = False  # 初始化连接状态
+        self._callback = None  # 保存callback对象，供外部注册trade_callbacks
         logger.info('操作提示: 请登录QMT,选择行情加交易选项,选择极简模式')
+
+    def register_trade_callback(self, cb):
+        """注册成交回报外部回调，cb(trade) 在每次成交时被调用"""
+        if self._callback is not None:
+            self._callback.trade_callbacks.append(cb)
+        else:
+            logger.warning("register_trade_callback: callback尚未初始化，请在connect()后调用")
         
     def random_session_id(self):
         '''
@@ -259,6 +274,8 @@ class easy_qmt_trader:
         # 创建交易回调类对象，并声明接收回调
         callback = MyXtQuantTraderCallback(self.order_id_map)
         xt_trader.register_callback(callback)
+        # 保存callback对象，供外部注册trade_callbacks使用
+        self._callback = callback
         # 启动交易线程
         xt_trader.start()
         # 建立交易连接，返回0表示连接成功
