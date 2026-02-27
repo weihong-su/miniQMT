@@ -106,6 +106,12 @@ class PositionManager:
         self.order_check_interval = 30  # 委托单检查间隔（秒）
         self.last_order_check_time = 0
 
+        # ========= 行情异常兜底（风险保护） =========
+        self.market_data_failures = {}  # {stock_code: 连续失败次数}
+        self.market_data_failure_ts = {}  # {stock_code: 最近一次失败时间戳}
+        self.market_data_circuit_until = 0  # 熔断结束时间戳
+        self.market_data_circuit_log_ts = 0  # 熔断日志节流
+
         # 🔴 P0修复：添加同步操作线程锁，防止并发调用导致递归异常
         self.sync_lock = threading.RLock()  # 可重入锁
         self._deleting_stocks = set()  # 正在删除的股票代码集合
@@ -1682,6 +1688,51 @@ class PositionManager:
             logger.error(f"检查 {stock_code} 补仓信号时出错: {str(e)}")
             return None, None
 
+    # ========== 行情异常兜底（风险保护） ==========
+    def _record_market_data_failure(self, stock_code, reason=""):
+        """记录行情失败并触发熔断"""
+        if not getattr(config, 'ENABLE_MARKET_DATA_CIRCUIT_BREAKER', False):
+            return
+
+        now = time.time()
+        last_ts = self.market_data_failure_ts.get(stock_code, 0)
+        if now - last_ts > config.MARKET_DATA_FAILURE_WINDOW_SECONDS:
+            count = 1
+        else:
+            count = self.market_data_failures.get(stock_code, 0) + 1
+
+        self.market_data_failures[stock_code] = count
+        self.market_data_failure_ts[stock_code] = now
+
+        if count >= config.MARKET_DATA_FAILURE_THRESHOLD:
+            # 触发熔断
+            self.market_data_circuit_until = max(
+                self.market_data_circuit_until,
+                now + config.MARKET_DATA_CIRCUIT_BREAK_SECONDS
+            )
+            logger.error(
+                f"[RISK] 行情异常触发熔断: {stock_code} 连续失败{count}次，"
+                f"熔断{config.MARKET_DATA_CIRCUIT_BREAK_SECONDS}s，原因: {reason}"
+            )
+
+    def _record_market_data_success(self, stock_code):
+        """记录行情成功，清零失败计数"""
+        self.market_data_failures[stock_code] = 0
+        self.market_data_failure_ts[stock_code] = 0
+
+    def _is_market_data_circuit_open(self):
+        if not getattr(config, 'ENABLE_MARKET_DATA_CIRCUIT_BREAKER', False):
+            return False
+        return time.time() < self.market_data_circuit_until
+
+    def _log_market_data_circuit(self):
+        now = time.time()
+        if now - self.market_data_circuit_log_ts >= 30:
+            remaining = int(self.market_data_circuit_until - now)
+            if remaining > 0:
+                logger.warning(f"[RISK] 行情熔断中，剩余 {remaining}s，暂停信号生成")
+                self.market_data_circuit_log_ts = now
+
     # ========== 新增：统一的止盈止损检查逻辑 ==========
     
     def check_trading_signals(self, stock_code, current_price=None):
@@ -1709,19 +1760,32 @@ class PositionManager:
                 logger.debug(f"{stock_code} 持仓已清空(volume=0, available=0)，跳过信号检测")
                 return None, None
 
-            # 2. 获取最新行情数据 (优化: 如果已提供current_price则跳过API调用)
+            # 2. 行情熔断检查：熔断中直接跳过信号生成
+            if self._is_market_data_circuit_open():
+                self._log_market_data_circuit()
+                return None, None
+
+            # 3. 获取最新行情数据 (优化: 如果已提供current_price则跳过API调用)
             if current_price is None:
                 latest_quote = self.data_manager.get_latest_data(stock_code)
-                if not latest_quote:
-                    latest_quote = {'lastPrice': position.get('current_price', 0)}
+                if not latest_quote or latest_quote.get('lastPrice') is None:
+                    self._record_market_data_failure(stock_code, "latest_quote_empty")
+                    if self._is_market_data_circuit_open():
+                        self._log_market_data_circuit()
+                    return None, None
             else:
                 latest_quote = {'lastPrice': current_price}
 
-            # 3. 🔑 安全的数据类型转换和验证
+            # 4. 🔑 安全的数据类型转换和验证
             try:
                 current_price = float(latest_quote.get('lastPrice', 0)) if latest_quote else 0
                 if current_price <= 0:
-                    current_price = float(position.get('current_price', 0))
+                    self._record_market_data_failure(stock_code, f"invalid_price={current_price}")
+                    if self._is_market_data_circuit_open():
+                        self._log_market_data_circuit()
+                    return None, None
+
+                self._record_market_data_success(stock_code)
 
                 cost_price = float(position.get('cost_price', 0))
                 profit_triggered = bool(position.get('profit_triggered', False))
@@ -1907,10 +1971,14 @@ class PositionManager:
         bool: 是否通过验证
         """
         try:
-            # 关键修改: 全仓止盈信号跳过活跃委托单检查
-            # 全仓止盈是风险兜底机制,即使有活跃委托单也应该执行
-            if signal_type != 'take_profit_full':
-                # 检查是否有未成交委托单 (仅非全仓止盈信号)
+            # 全仓止盈信号是否允许跳过活跃委托单检查（默认不允许）
+            allow_skip_pending_check = (
+                signal_type == 'take_profit_full'
+                and getattr(config, 'ALLOW_TAKE_PROFIT_FULL_WITH_PENDING', False)
+            )
+
+            if not allow_skip_pending_check:
+                # 检查是否有未成交委托单 (全仓止盈也纳入，除非显式允许跳过)
                 position = self.get_position(stock_code)
                 if position:
                     available = int(position.get('available', 0))
@@ -1935,8 +2003,11 @@ class PositionManager:
                             logger.error(f"   修复说明：此为保守策略，避免在不确定情况下执行交易")
                             return False
             else:
-                # 全仓止盈信号: 强制执行,不检查活跃委托单
-                logger.warning(f"全仓止盈信号 {stock_code}: 跳过活跃委托单检查(风险兜底机制)")
+                # 全仓止盈信号: 允许跳过活跃委托单检查（受配置控制）
+                logger.warning(
+                    f"全仓止盈信号 {stock_code}: 允许跳过活跃委托单检查 "
+                    f"(ALLOW_TAKE_PROFIT_FULL_WITH_PENDING=True)"
+                )
 
             if signal_type == 'stop_loss':
                 current_price = signal_info.get('current_price', 0)

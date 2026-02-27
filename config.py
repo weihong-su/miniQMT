@@ -211,6 +211,15 @@ PENDING_ORDER_TIMEOUT_MINUTES = 5        # 委托单超时时间（分钟），�
 PENDING_ORDER_AUTO_REORDER = True        # 撤单后是否自动重新挂单
 PENDING_ORDER_REORDER_PRICE_MODE = "best"  # 重新挂单价格模式: "market"=市价, "limit"=限价, "best"=对手价
 
+# ========== 行情异常兜底（风险保护） ==========
+ENABLE_MARKET_DATA_CIRCUIT_BREAKER = True  # 是否启用行情熔断
+MARKET_DATA_FAILURE_THRESHOLD = 3          # 连续失败次数阈值
+MARKET_DATA_FAILURE_WINDOW_SECONDS = 60    # 统计窗口（秒）
+MARKET_DATA_CIRCUIT_BREAK_SECONDS = 300    # 熔断时长（秒）
+
+# ========== 全仓止盈与委托冲突控制 ==========
+ALLOW_TAKE_PROFIT_FULL_WITH_PENDING = False  # 全仓止盈是否允许跳过活跃委托检查
+
 # 说明:
 # - 当止盈止损委托单提交后超过指定时间仍未成交时:
 #   1. ENABLE_PENDING_ORDER_AUTO_CANCEL=True: 自动撤销旧委托单

@@ -520,6 +520,72 @@ class TestTraderCallback(TestBase):
         self.assertEqual(len(self.pm.pending_orders), 0,
                          "所有委托应被并发回调正确移除")
 
+    # ===================================================================
+    # Group G: 风险兜底策略
+    # ===================================================================
+
+    def test_g1_market_data_circuit_breaker_blocks_signals(self):
+        """行情失败达到阈值后触发熔断，停止信号生成"""
+        stock_code = self._insert_position(
+            stock_code="300001",
+            volume=1000,
+            available=1000,
+            cost_price=10.0,
+            current_price=10.0,
+        )
+
+        self.pm.data_manager = MagicMock()
+        self.pm.data_manager.get_latest_data.return_value = None
+
+        old_enabled = getattr(config, "ENABLE_MARKET_DATA_CIRCUIT_BREAKER", True)
+        old_threshold = getattr(config, "MARKET_DATA_FAILURE_THRESHOLD", 3)
+        old_window = getattr(config, "MARKET_DATA_FAILURE_WINDOW_SECONDS", 60)
+        old_break = getattr(config, "MARKET_DATA_CIRCUIT_BREAK_SECONDS", 300)
+        try:
+            config.ENABLE_MARKET_DATA_CIRCUIT_BREAKER = True
+            config.MARKET_DATA_FAILURE_THRESHOLD = 2
+            config.MARKET_DATA_FAILURE_WINDOW_SECONDS = 60
+            config.MARKET_DATA_CIRCUIT_BREAK_SECONDS = 300
+
+            for _ in range(2):
+                signal, _ = self.pm.check_trading_signals(stock_code)
+                self.assertIsNone(signal, "行情失败时不应生成交易信号")
+
+            self.assertTrue(self.pm._is_market_data_circuit_open(),
+                            "连续失败达到阈值后应进入熔断状态")
+
+            signal, _ = self.pm.check_trading_signals(stock_code)
+            self.assertIsNone(signal, "熔断期间不应生成交易信号")
+        finally:
+            config.ENABLE_MARKET_DATA_CIRCUIT_BREAKER = old_enabled
+            config.MARKET_DATA_FAILURE_THRESHOLD = old_threshold
+            config.MARKET_DATA_FAILURE_WINDOW_SECONDS = old_window
+            config.MARKET_DATA_CIRCUIT_BREAK_SECONDS = old_break
+
+    def test_g2_take_profit_full_rejects_when_pending_orders_and_disallow(self):
+        """全仓止盈在有活跃委托且配置不允许时应被拒绝"""
+        stock_code = self._insert_position(
+            stock_code="300002",
+            volume=1000,
+            available=0,
+            cost_price=10.0,
+            current_price=11.0,
+            profit_triggered=1,
+            highest_price=12.0,
+        )
+
+        signal_info = {"current_price": 11.0, "cost_price": 10.0}
+        old_flag = getattr(config, "ALLOW_TAKE_PROFIT_FULL_WITH_PENDING", False)
+        try:
+            config.ALLOW_TAKE_PROFIT_FULL_WITH_PENDING = False
+            with patch.object(self.pm, "_has_pending_orders", return_value=True):
+                ok = self.pm.validate_trading_signal(
+                    stock_code, "take_profit_full", signal_info
+                )
+            self.assertFalse(ok, "存在活跃委托时应拒绝全仓止盈信号")
+        finally:
+            config.ALLOW_TAKE_PROFIT_FULL_WITH_PENDING = old_flag
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
