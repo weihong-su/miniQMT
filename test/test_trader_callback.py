@@ -455,6 +455,26 @@ class TestTraderCallback(TestBase):
                       "重新挂单成功后应跟踪新委托单")
         self.assertEqual(self.pm.pending_orders[stock_code]["order_id"], new_order_id)
 
+    def test_e3b_reorder_tracks_new_order_when_executor_returns_str(self):
+        """_reorder_after_cancel 兼容 sell_stock 返回 order_id 字符串"""
+        stock_code = "301560"
+        signal_info = {"volume": 600, "current_price": 44.08}
+        new_order_id = "940572701"
+
+        mock_quote = {"close": 44.00, "bid3": 43.95}
+        self.pm.data_manager = MagicMock()
+        self.pm.data_manager.get_latest_data.return_value = mock_quote
+
+        mock_executor = MagicMock()
+        mock_executor.sell_stock.return_value = new_order_id
+
+        with patch("trading_executor.get_trading_executor", return_value=mock_executor):
+            self.pm._reorder_after_cancel(stock_code, "take_profit_half", signal_info)
+
+        self.assertIn(stock_code, self.pm.pending_orders,
+                      "返回字符串时也应跟踪新委托单")
+        self.assertEqual(self.pm.pending_orders[stock_code]["order_id"], new_order_id)
+
     def test_e4_reorder_aborts_when_no_quote(self):
         """无法获取行情时，_reorder_after_cancel 应放弃挂单"""
         stock_code = "301560"

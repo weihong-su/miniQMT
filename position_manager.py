@@ -3460,10 +3460,7 @@ class PositionManager:
                     with self.pending_orders_lock:
                         self.pending_orders.pop(stock_code, None)
                 else:
-                    logger.error(f"❌ {stock_code} 委托单撤销失败: {order_id}")
-                    # 失败后也移除，避免重复处理
-                    with self.pending_orders_lock:
-                        self.pending_orders.pop(stock_code, None)
+                    logger.error(f"❌ {stock_code} 委托单撤销失败: {order_id}，保留跟踪等待下次重试")
             else:
                 # 其他状态（已撤、废单等），直接移除跟踪
                 logger.info(f"ℹ️ {stock_code} 委托单状态={order_status}, 移除跟踪")
@@ -3545,12 +3542,21 @@ class PositionManager:
                 return False
 
             # 调用QMT撤单接口 (order_id已确保是int类型)
-            result = self.qmt_trader.xt_trader.cancel_order_stock(
-                self.qmt_trader.acc, order_id
-            )
+            # 调用QMT撤单接口 (order_id已确保是int类型)，失败时重试
+            max_retries = getattr(config, 'MAX_CANCEL_RETRIES', 3)
+            retry_interval = getattr(config, 'CANCEL_RETRY_INTERVAL_SECONDS', 1)
+            for attempt in range(1, max_retries + 1):
+                result = self.qmt_trader.xt_trader.cancel_order_stock(
+                    self.qmt_trader.acc, order_id
+                )
+                if result == 0:
+                    return True
 
-            # 0表示成功，-1表示失败
-            return result == 0
+                logger.warning(f"{stock_code} 撤单失败: order_id={order_id}, 尝试 {attempt}/{max_retries}")
+                if attempt < max_retries:
+                    time.sleep(retry_interval)
+
+            return False
 
         except Exception as e:
             logger.error(f"撤单失败: {str(e)}")
@@ -3612,13 +3618,20 @@ class PositionManager:
                 stock_code=stock_code,
                 volume=volume,
                 price=new_price,
-                strategy=f"reorder_{signal_type}"
+                strategy=f"reorder_{signal_type}",
+                signal_type=signal_type,
+                signal_info=signal_info
             )
 
             if result:
                 logger.info(f"✅ {stock_code} 重新挂单成功")
-                # 跟踪新委托单
-                new_order_id = result.get('order_id')
+                # 兼容返回 dict 或 order_id 字符串
+                new_order_id = None
+                if isinstance(result, dict):
+                    new_order_id = result.get('order_id')
+                else:
+                    new_order_id = result
+
                 if new_order_id:
                     self.track_order(stock_code, new_order_id, signal_type, signal_info)
             else:

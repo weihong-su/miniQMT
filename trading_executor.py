@@ -1216,14 +1216,16 @@ class TradingExecutor:
                                 
                                 logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号: {order_id}, 价格: {price}, 数量: {volume}, 价格类型: {price_type}")
 
-                                # 🔑 新增：跟踪委托单（用于超时管理）
+                                # 🔑 新增：跟踪委托单（用于超时管理，仅卖出信号）
                                 if signal_type and signal_info and not is_simulation:
                                     try:
+                                        tracking_info = dict(signal_info)
+                                        tracking_info.setdefault('order_side', 'SELL')
                                         self.position_manager.track_order(
                                             stock_code=stock_code,
                                             order_id=str(order_id),
                                             signal_type=signal_type,
-                                            signal_info=signal_info
+                                            signal_info=tracking_info
                                         )
                                     except Exception as track_error:
                                         logger.warning(f"跟踪委托单失败（不影响交易）: {str(track_error)}")

@@ -210,6 +210,8 @@ ENABLE_PENDING_ORDER_AUTO_CANCEL = True  # 是否启用委托单超时自动撤�
 PENDING_ORDER_TIMEOUT_MINUTES = 5        # 委托单超时时间（分钟），默认5分钟
 PENDING_ORDER_AUTO_REORDER = True        # 撤单后是否自动重新挂单
 PENDING_ORDER_REORDER_PRICE_MODE = "best"  # 重新挂单价格模式: "market"=市价, "limit"=限价, "best"=对手价
+MAX_CANCEL_RETRIES = 3                   # 撤单最大重试次数
+CANCEL_RETRY_INTERVAL_SECONDS = 1        # 撤单重试间隔（秒）
 
 # ========== 行情异常兜底（风险保护） ==========
 ENABLE_MARKET_DATA_CIRCUIT_BREAKER = True  # 是否启用行情熔断
