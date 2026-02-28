@@ -19,10 +19,9 @@ class ThreadHealthMonitor:
     def __init__(self):
         """初始化"""
         self.monitored_threads = {}
-        self.health_check_interval = 60  # 每60秒检查一次
+        self.health_check_interval = config.THREAD_CHECK_INTERVAL  # 线程检查间隔(秒)
         self.monitor_thread = None
-        self.stop_flag = False
-
+        self.stop_event = threading.Event()
         # 统计信息
         self.total_restarts = 0
         self.restart_history = []
@@ -49,11 +48,10 @@ class ThreadHealthMonitor:
     def _monitor_loop(self):
         """监控循环"""
         logger.info("🚀 线程健康监控已启动")
-
-        while not self.stop_flag:
+        while not self.stop_event.is_set():
             try:
-                time.sleep(self.health_check_interval)
-
+                if self.stop_event.wait(self.health_check_interval):
+                    break
                 for name, info in self.monitored_threads.items():
                     try:
                         # 获取当前thread对象
@@ -146,8 +144,7 @@ class ThreadHealthMonitor:
         if self.monitor_thread and self.monitor_thread.is_alive():
             logger.warning("线程监控器已在运行")
             return
-
-        self.stop_flag = False
+        self.stop_event.clear()
         self.monitor_thread = threading.Thread(target=self._monitor_loop, name="ThreadHealthMonitor")
         self.monitor_thread.daemon = True
         self.monitor_thread.start()
@@ -155,7 +152,7 @@ class ThreadHealthMonitor:
 
     def stop(self):
         """停止监控"""
-        self.stop_flag = True
+        self.stop_event.set()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
         logger.info("线程健康监控器已停止")
