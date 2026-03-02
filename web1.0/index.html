@@ -475,14 +475,18 @@
                     </div>
                     <div id="connectPortError" class="param-error hidden"></div>
                 </div>
+                <div class="flex flex-col">
+                    <div class="flex items-center space-x-2">
+                        <label for="apiToken" class="text-sm whitespace-nowrap">API Token:</label>
+                        <input type="password" id="apiToken" class="border rounded px-2 py-1 w-full" placeholder="留空则不验证">
+                    </div>
+                </div>
                 <div class="flex items-center space-x-2">
                     <input type="checkbox" id="simulationMode" class="form-checkbox h-8 w-8 text-orange-600">
                     <label for="simulationMode" class="text-sm font-bold text-orange-600">模拟交易模式</label>
+                    <input type="checkbox" id="globalAllowBuySell" class="form-checkbox h-8 w-8 text-blue-600 ml-auto" checked>
+                    <label for="globalAllowBuySell" class="text-base font-bold">全局监控总开关</label>
                 </div>
-                <div class="flex items-center space-x-2">
-					<input type="checkbox" id="globalAllowBuySell" class="form-checkbox h-8 w-8 text-blue-600" checked>
-					<label for="globalAllowBuySell" class="text-sm">全局监控总开关</label>
-				</div>
 
             </div>
 

@@ -104,6 +104,14 @@
       ],
       "priority": "critical"
     },
+    "db_thread_safety": {
+      "name": "数据库线程安全与缓存验证测试",
+      "description": "验证 data_manager.py 数据库访问加锁保护（防止多线程SQLite事务冲突）及 web_server.py 账户信息缓存机制（防止阻塞8秒超时）",
+      "modules": [
+        "test.test_db_op_safety_verification"
+      ],
+      "priority": "critical"
+    },
     "fast": {
       "name": "快速验证测试",
       "description": "关键功能快速验证（5分钟内完成）",
@@ -113,7 +121,8 @@
         "test.test_grid_trade_buy",
         "test.test_grid_exit_deviation",
         "test.test_grid_validation_params",
-        "test.test_trader_callback"
+        "test.test_trader_callback",
+        "test.test_db_op_safety_verification"
       ],
       "priority": "critical"
     }

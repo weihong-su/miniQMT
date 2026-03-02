@@ -27,7 +27,9 @@ class DataManager:
             
         # 连接数据库
         self.conn = self._connect_db()
-        
+        # 数据库操作锁，防止多线程并发访问同一连接导致事务冲突
+        self._db_lock = threading.Lock()
+
         # 创建表结构
         self._create_tables()
         
@@ -557,7 +559,6 @@ class DataManager:
 
             # 方案A优化：使用逐行REPLACE避免主键冲突
             # 相比DELETE+INSERT，REPLACE在并发场景下更安全
-            cursor = self.conn.cursor()
 
             # 准备数据
             data_to_insert = list(zip(
@@ -572,13 +573,14 @@ class DataManager:
             ))
 
             # 使用REPLACE INTO语句（SQLite特性，自动处理主键冲突）
-            # with self.conn 自动管理 BEGIN/COMMIT/ROLLBACK，保证异常后事务状态干净
-            with self.conn:
-                self.conn.executemany('''
-                    REPLACE INTO stock_daily_data
-                    (stock_code, date, open, high, low, close, volume, amount)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', data_to_insert)
+            # _db_lock 保证多线程不并发访问 self.conn，避免隐式事务冲突
+            with self._db_lock:
+                with self.conn:
+                    self.conn.executemany('''
+                        REPLACE INTO stock_daily_data
+                        (stock_code, date, open, high, low, close, volume, amount)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', data_to_insert)
 
             logger.debug(f"已保存 {stock_code} 的历史数据到数据库, 共 {len(data_to_insert)} 条记录（使用REPLACE模式避免主键冲突）")
 
@@ -713,7 +715,8 @@ class DataManager:
         query += " ORDER BY date"
 
         try:
-            df = pd.read_sql_query(query, self.conn, params=params)
+            with self._db_lock:
+                df = pd.read_sql_query(query, self.conn, params=params)
             logger.debug(f"从数据库获取 {stock_code} 的历史数据, 共 {len(df)} 条记录")
             return df
         except Exception as e:
@@ -737,9 +740,10 @@ class DataManager:
         """
         # 从数据库获取最新的数据日期
         latest_date_query = "SELECT MAX(date) FROM stock_daily_data WHERE stock_code=?"
-        cursor = self.conn.cursor()
-        cursor.execute(latest_date_query, (stock_code,))
-        result = cursor.fetchone()
+        with self._db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute(latest_date_query, (stock_code,))
+            result = cursor.fetchone()
         
         if result and result[0]:
             latest_date = result[0]

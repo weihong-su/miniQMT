@@ -4,7 +4,9 @@
 Web服务模块，提供RESTful API接口与前端交互
 """
 import os
+import re
 import time
+from functools import wraps
 import json
 import threading
 import sqlite3
@@ -33,8 +35,33 @@ webpage_dir = 'web1.0'
 # 创建Flask应用
 app = Flask(__name__, static_folder=webpage_dir, static_url_path='')
 
-# 允许跨域请求
-CORS(app)
+# 允许局域网跨域请求（localhost + 常见局域网 IP 段：192.168.x.x / 10.x.x.x / 172.16-31.x.x）
+_LAN_ORIGIN_PATTERN = re.compile(
+    r'^https?://(localhost|127\.0\.0\.1'
+    r'|192\.168\.\d{1,3}\.\d{1,3}'
+    r'|10\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    r'|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})'
+    r'(:\d+)?$'
+)
+CORS(app, origins=_LAN_ORIGIN_PATTERN)
+
+
+def require_token(f):
+    """Token 认证装饰器，保护敏感 API 端点。
+    通过环境变量 QMT_API_TOKEN 启用：未设置或为空时跳过验证（适合纯内网部署）。
+    验证方式：请求头 X-API-Token 或 URL 参数 token。
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = config.WEB_API_TOKEN
+        if not token:
+            return f(*args, **kwargs)
+        provided = request.headers.get("X-API-Token") or request.args.get("token")
+        if provided != token:
+            logger.warning(f"[安全] 未授权访问被拒绝: {request.method} {request.path} 来自 {request.remote_addr}")
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 # ======================= Web访问日志中间件 =======================
 @app.before_request
@@ -268,18 +295,8 @@ def get_status():
         # 动态获取position_manager以确保grid_manager已初始化
         position_manager = get_position_manager_instance()
 
-        # 从 position_manager 获取账户信息(使用超时保护)
-        def get_account_data():
-            return position_manager.get_account_info() or {}
-
-        timeout_seconds = config.MONITOR_CALL_TIMEOUT if hasattr(config, 'MONITOR_CALL_TIMEOUT') else 5.0
-        future = api_executor.submit(get_account_data)
-
-        try:
-            account_info = future.result(timeout=timeout_seconds)
-        except FuturesTimeoutError:
-            logger.warning(f"获取账户信息超时({timeout_seconds}秒),使用默认值")
-            account_info = {}
+        # 从缓存获取账户信息，避免阻塞请求线程
+        account_info = get_account_info_cached()
         
         # 如果没有账户信息，使用默认值
         if not account_info:
@@ -510,6 +527,7 @@ def get_config():
         }), 500
 
 @app.route('/api/config/save', methods=['POST'])
+@require_token
 def save_config():
     """保存系统配置（持久化到数据库）"""
     try:
@@ -923,6 +941,7 @@ def debug_status():
 
 
 @app.route('/api/logs/clear', methods=['POST'])
+@require_token
 def clear_logs():
     """清空当天日志"""
     try:
@@ -975,6 +994,7 @@ def clear_logs():
 #         }), 500
 
 @app.route('/api/data/clear_buysell', methods=['POST'])
+@require_token
 def clear_buysell_data():
     """清空买入/卖出数据"""
     try:
@@ -995,6 +1015,7 @@ def clear_buysell_data():
         }), 500
 
 @app.route('/api/data/import', methods=['POST'])
+@require_token
 def import_data():
     """导入保存数据"""
     try:
@@ -1012,6 +1033,7 @@ def import_data():
         }), 500
 
 @app.route('/api/initialize_positions', methods=['POST'])
+@require_token
 def api_initialize_positions():
     """初始化持仓数据的API端点"""
     try:
@@ -1030,6 +1052,7 @@ def api_initialize_positions():
         }), 500
 
 @app.route('/api/holdings/init', methods=['POST'])
+@require_token
 def init_holdings():
     """初始化持仓数据"""
     try:
@@ -1145,6 +1168,7 @@ def get_stock_pool():
         }), 500
 
 @app.route('/api/actions/execute_buy', methods=['POST'])
+@require_token
 def execute_buy():
     """执行买入操作"""
     try:
@@ -1231,6 +1255,7 @@ def execute_buy():
         }), 500
 
 @app.route('/api/holdings/update', methods=['POST'])
+@require_token
 def update_holding_params():
     """更新持仓参数"""
     try:
@@ -1549,6 +1574,7 @@ def normalize_stock_code(stock_code: str) -> str:
 
 
 @app.route('/api/grid/start', methods=['POST'])
+@require_token
 def start_grid_trading():
     """启动网格交易"""
     try:
@@ -1705,6 +1731,7 @@ def start_grid_trading():
 
 
 @app.route('/api/grid/stop/<int:session_id>', methods=['POST'])
+@require_token
 def stop_grid_trading(session_id):
     """停止网格交易(通过session_id)"""
     try:
@@ -1732,6 +1759,7 @@ def stop_grid_trading(session_id):
 
 
 @app.route('/api/grid/stop', methods=['POST'])
+@require_token
 def stop_grid_trading_flexible():
     """
     停止网格交易(支持通过session_id或stock_code)
@@ -2227,6 +2255,7 @@ def get_grid_template(template_name):
 
 
 @app.route('/api/grid/template/save', methods=['POST'])
+@require_token
 def save_grid_template():
     """保存网格配置模板"""
     try:
@@ -2299,6 +2328,7 @@ def delete_grid_template(template_name):
 
 
 @app.route('/api/grid/template/use', methods=['POST'])
+@require_token
 def use_grid_template():
     """使用模板（更新使用统计）"""
     try:

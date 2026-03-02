@@ -308,9 +308,10 @@ def validate_config_param(param_name, value):
         return False, f"{param_range['desc']}必须是{param_type}类型"
 
 # ======================= Web服务配置 =======================
-WEB_SERVER_HOST = "localhost"
+WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = 5000
-WEB_SERVER_DEBUG = True
+WEB_SERVER_DEBUG = False
+WEB_API_TOKEN = os.environ.get("QMT_API_TOKEN", "")  # 设置后启用 Token 验证，空字符串=不验证（仅限内网部署）
 
 # ======================= 日志清理配置 =======================
 LOG_CLEANUP_DAYS = 30  # 保留最近30天的日志
@@ -364,6 +365,7 @@ MONITOR_LOOP_INTERVAL = 3  # 监控循环间隔(秒)
 MONITOR_CALL_TIMEOUT = 8.0  # 监控调用超时(秒) - 增加到8秒,避免QMT API调用超时
 MONITOR_NON_TRADE_SLEEP = 60  # 非交易时段休眠(秒)
 GRID_POSITION_QUERY_TIMEOUT = 5.0  # 网格交易持仓查询超时(秒)
+HISTORY_DATA_DOWNLOAD_TIMEOUT = 5  # 启动时单只股票历史数据下载超时（秒），超时则跳过
 GRID_LOCK_ACQUIRE_TIMEOUT = 5.0   # 网格交易锁获取超时(秒)
 
 def is_trade_time():

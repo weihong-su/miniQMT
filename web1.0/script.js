@@ -140,6 +140,7 @@
         totalMaxPosition: document.getElementById('totalMaxPosition'),
         connectPort: document.getElementById('connectPort'),
         totalAccounts: document.getElementById('totalAccounts'),
+        apiToken: document.getElementById('apiToken'),
         globalAllowBuySell: document.getElementById('globalAllowBuySell'),
         simulationMode: document.getElementById('simulationMode'),
         // 错误提示元素
@@ -614,13 +615,18 @@
         // 提取URL中的关键部分用于日志
         const urlParts = url.split('/');
         const endpoint = urlParts[urlParts.length - 1].split('?')[0]; // 获取API路径的最后一部分
-        
+
+        // 注入 Token 认证头（仅 POST 请求，且 Token 已配置时）
+        const token = elements.apiToken ? elements.apiToken.value.trim() : '';
+        const tokenHeader = (token && options.method === 'POST') ? { 'X-API-Token': token } : {};
+
         console.log(`API Request: ${options.method || 'GET'} ${endpoint}`, options.body ? JSON.parse(options.body) : '');
         try {
             const response = await fetch(url, {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
+                    ...tokenHeader,
                     ...options.headers,
                 },
                 ...options,
@@ -2092,6 +2098,13 @@
     elements.totalAccounts.addEventListener('change', updateApiBaseUrl);
     elements.connectPort.addEventListener('change', updateApiBaseUrl);
 
+    // API Token localStorage 持久化
+    const _savedToken = localStorage.getItem('qmt_api_token');
+    if (_savedToken && elements.apiToken) elements.apiToken.value = _savedToken;
+    elements.apiToken && elements.apiToken.addEventListener('change', () => {
+        localStorage.setItem('qmt_api_token', elements.apiToken.value.trim());
+    });
+
     // --- 初始数据加载 ---
     async function fetchAllData() {
         // 初始化API基础URL
@@ -2518,7 +2531,8 @@
             const response = await fetch(`${API_BASE_URL}/api/grid/start`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(elements.apiToken?.value.trim() ? { 'X-API-Token': elements.apiToken.value.trim() } : {})
                 },
                 body: JSON.stringify({
                     stock_code: normalizedCode,
@@ -2572,7 +2586,8 @@
             const response = await fetch(`${API_BASE_URL}/api/grid/stop/${sessionId}`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(elements.apiToken?.value.trim() ? { 'X-API-Token': elements.apiToken.value.trim() } : {})
                 }
             });
 

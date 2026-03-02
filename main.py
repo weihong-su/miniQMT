@@ -6,6 +6,7 @@ import time
 import threading
 import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 
 import config
@@ -196,18 +197,26 @@ def start_web_server_thread(position_manager):
     threads.append(("web_thread", shutdown_web_server))
 
 def download_initial_data(data_manager):
-    """下载初始数据"""
+    """下载初始数据，每只股票有超时保护"""
     logger.info("下载初始数据")
+    timeout = config.HISTORY_DATA_DOWNLOAD_TIMEOUT
     for stock_code in config.STOCK_POOL:
         try:
-            logger.info(f"下载 {stock_code[:6]} 历史数据")
-            data_df = data_manager.download_history_data(stock_code)
-            if data_df is not None and not data_df.empty:
-                data_manager.save_history_data(stock_code, data_df)
-            # 避免请求过于频繁
-            time.sleep(1)
+            logger.info(f"下载 {stock_code[:6]} 历史数据（超时{timeout}秒）")
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(data_manager.download_history_data, stock_code)
+            try:
+                data_df = future.result(timeout=timeout)
+                if data_df is not None and not data_df.empty:
+                    data_manager.save_history_data(stock_code, data_df)
+            except FuturesTimeoutError:
+                logger.warning(f"下载 {stock_code[:6]} 超时（>{timeout}秒），跳过")
+            finally:
+                executor.shutdown(wait=False)  # 不阻塞等待后台线程，立即继续下一只
         except Exception as e:
             logger.error(f"下载 {stock_code[:6]} 失败:{str(e)[:30]}")
+        # 避免请求过于频繁
+        time.sleep(1)
     logger.info("初始数据下载完成")
 
 def calculate_initial_indicators(indicator_calculator):
