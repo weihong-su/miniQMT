@@ -130,6 +130,14 @@
       ],
       "priority": "high"
     },
+    "grid_simulation": {
+      "name": "网格交易价格模拟测试",
+      "description": "使用自动化脚本模拟持仓数据波动，验证网格交易是否能正确触发买卖信号（30个测试用例）",
+      "modules": [
+        "test.test_grid_price_simulation"
+      ],
+      "priority": "high"
+    },
     "fast": {
       "name": "快速验证测试",
       "description": "关键功能快速验证（5分钟内完成）",
