@@ -627,12 +627,24 @@ class GridTradingManager:
         """检查退出条件,返回退出原因或None"""
         logger.debug(f"[GRID] _check_exit_conditions: session_id={session.id}, stock_code={session.stock_code}, current_price={current_price:.2f}")
 
-        # 1. 偏离度检测
+        # 1. 偏离度检测（双重保护）
         if session.current_center_price and session.center_price:
-            deviation = session.get_deviation_ratio()
-            logger.debug(f"[GRID] _check_exit_conditions: 偏离度检测 deviation={deviation*100:.2f}%, max_deviation={session.max_deviation*100:.2f}%")
+            # 网格漂移偏离：current_center 相对 initial_center 的偏移（多次同向交易后累计）
+            drift_deviation = session.get_deviation_ratio()
+            # 市价偏离：当前市价相对 current_center 的距离（捕捉单边行情未触发信号的情形）
+            market_deviation = abs(current_price - session.current_center_price) / session.current_center_price
+            deviation = max(drift_deviation, market_deviation)
+            logger.debug(
+                f"[GRID] _check_exit_conditions: 偏离度检测 "
+                f"drift={drift_deviation*100:.2f}%, market={market_deviation*100:.2f}%, "
+                f"max={session.max_deviation*100:.2f}%"
+            )
             if deviation > session.max_deviation:
-                logger.warning(f"[GRID] _check_exit_conditions: {session.stock_code} 偏离度{deviation*100:.2f}%超过限制{session.max_deviation*100:.2f}%, 触发退出")
+                logger.warning(
+                    f"[GRID] _check_exit_conditions: {session.stock_code} "
+                    f"偏离度{deviation*100:.2f}%超过限制{session.max_deviation*100:.2f}% "
+                    f"(drift={drift_deviation*100:.2f}%, market={market_deviation*100:.2f}%), 触发退出"
+                )
                 return 'deviation'
 
         # 2. 盈亏检测：严格配对模式 - 必须至少完成1次买入+1次卖出
