@@ -2,7 +2,7 @@
 盘前配置同步与初始化模块
 
 功能:
-1. 每天9:15自动同步数据库配置到内存
+1. 每天9:25自动同步数据库配置到内存
 2. 重新初始化xtquant行情和交易接口
 3. 支持reset后的补偿执行
 4. 详细日志记录所有操作
@@ -47,7 +47,7 @@ class PreMarketSyncScheduler:
         target = now.replace(hour=self.sync_time[0], minute=self.sync_time[1],
                            second=0, microsecond=0)
 
-        # 如果已过今天的9:15,计算明天
+        # 如果已过今天的9:25,计算明天
         if now >= target:
             target += timedelta(days=1)
 
@@ -111,7 +111,7 @@ class PreMarketSyncScheduler:
 
         # 2. 判断是否需要补偿执行
         if persisted_time and persisted_time < now:
-            # 计划时间已过,检查是否在合理窗口内(例如9:15-9:30)
+            # 计划时间已过,检查是否在合理窗口内(例如9:25-9:30)
             sync_time = now.replace(
                 hour=self.sync_time[0],
                 minute=self.sync_time[1],
@@ -120,7 +120,8 @@ class PreMarketSyncScheduler:
             )
             window_end = sync_time + timedelta(minutes=self.compensation_window)
 
-            if sync_time <= now <= window_end and now.weekday() < 5:
+            # 额外守卫: 不在交易时间内触发补偿(避免补偿同步穿越9:30开盘)
+            if sync_time <= now <= window_end and now.weekday() < 5 and not config.is_trade_time():
                 logger.warning(
                     f"检测到reset场景(计划时间{persisted_time.strftime('%H:%M')},"
                     f"当前{now.strftime('%H:%M')}),立即执行补偿同步"
@@ -248,7 +249,17 @@ def perform_premarket_sync():
             results['positions_synced'] = True
             logger.info("✓ 持仓已同步(模拟)")
         else:
-            logger.info("○ 跳过持仓(实盘)")
+            try:
+                from position_manager import get_position_manager
+                position_manager = get_position_manager()
+                real_positions_df = position_manager.qmt_trader.position()
+                if real_positions_df is not None and not real_positions_df.empty:
+                    position_manager._sync_real_positions_to_memory(real_positions_df)
+                results['positions_synced'] = True
+                logger.info("✓ 持仓已同步(实盘：刷新QMT成本价)")
+            except Exception as e:
+                logger.warning(f"⚠ 实盘持仓同步失败(继续): {e}")
+                results['positions_synced'] = False
 
         # 步骤7: 网格交易初始化
         logger.info("[7/9] 网格交易初始化")
