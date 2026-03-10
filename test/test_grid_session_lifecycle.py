@@ -97,9 +97,10 @@ class TestGridSessionLifecycle(unittest.TestCase):
 
         # 验证会话创建
         self.assertIsNotNone(session_id)
-        self.assertIn(self.test_stock, self.grid_manager.sessions)
+        normalized_stock = self.grid_manager._normalize_code(self.test_stock)
+        self.assertIn(normalized_stock, self.grid_manager.sessions)
 
-        session_obj = self.grid_manager.sessions[self.test_stock]
+        session_obj = self.grid_manager.sessions[normalized_stock]
         self.assertEqual(session_obj.stock_code, self.test_stock)
         self.assertEqual(session_obj.center_price, 11.0)  # 使用最高价
         self.assertEqual(session_obj.status, 'active')
@@ -131,7 +132,7 @@ class TestGridSessionLifecycle(unittest.TestCase):
         session = self.grid_manager.start_grid_session(self.test_stock, user_config)
         session_id = session.id
 
-        session_obj = self.grid_manager.sessions[self.test_stock]
+        session_obj = self.grid_manager.sessions[self.grid_manager._normalize_code(self.test_stock)]
         self.assertEqual(session_obj.center_price, custom_price)
 
         print(f"[OK] 测试通过: 自定义中心价格启动 center_price={custom_price}")
@@ -242,7 +243,8 @@ class TestGridSessionLifecycle(unittest.TestCase):
         success = self.grid_manager.stop_grid_session(session_id, "manual")
 
         self.assertTrue(success)
-        self.assertNotIn(self.test_stock, self.grid_manager.sessions)
+        normalized_stock = self.grid_manager._normalize_code(self.test_stock)
+        self.assertNotIn(normalized_stock, self.grid_manager.sessions)
 
         # 验证数据库记录
         db_session = self.db_manager.get_grid_session(session_id)
@@ -297,7 +299,7 @@ class TestGridSessionLifecycle(unittest.TestCase):
         session_id = session.id
 
         # 模拟交易活动，更新统计信息
-        session_obj = self.grid_manager.sessions[self.test_stock]
+        session_obj = self.grid_manager.sessions[self.grid_manager._normalize_code(self.test_stock)]
         session_obj.trade_count = 10
         session_obj.buy_count = 5
         session_obj.sell_count = 5
@@ -333,7 +335,8 @@ class TestGridSessionLifecycle(unittest.TestCase):
         session_id = session.id
 
         # 添加一些内存数据
-        session_obj = self.grid_manager.sessions[self.test_stock]
+        normalized_stock = self.grid_manager._normalize_code(self.test_stock)
+        session_obj = self.grid_manager.sessions[normalized_stock]
         self.grid_manager.trackers[session_obj.id] = Mock()
         self.grid_manager.level_cooldowns[(self.test_stock, 'lower')] = time.time()
 
@@ -341,7 +344,7 @@ class TestGridSessionLifecycle(unittest.TestCase):
         self.grid_manager.stop_grid_session(session_id, "manual")
 
         # 验证内存清理
-        self.assertNotIn(self.test_stock, self.grid_manager.sessions)
+        self.assertNotIn(normalized_stock, self.grid_manager.sessions)
         self.assertNotIn(session_id, self.grid_manager.trackers)
 
         # 验证cooldowns也被清理（如果实现了的话）

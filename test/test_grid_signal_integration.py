@@ -79,7 +79,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 模拟震荡行情: 10.0 -> 10.6 -> 10.54 (卖) -> 9.4 -> 9.45 (买) -> 10.6 -> 10.54 (卖)
@@ -146,7 +146,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 模拟单边上涨: 10.0 -> 11.0 -> 10.945 (卖) -> 12.0 -> 11.94 (卖)
@@ -196,7 +196,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 模拟单边下跌: 10.0 -> 9.0 -> 9.045 (买)
@@ -244,7 +244,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 模拟5个完整循环
@@ -297,7 +297,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 初始档位: lower=9.5, center=10.0, upper=10.5
@@ -343,7 +343,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 模拟极端波动: 涨停 -> 跌停
@@ -391,7 +391,7 @@ class TestGridSignalIntegration(unittest.TestCase):
         )
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 测试刚好在档位边界

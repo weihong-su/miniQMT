@@ -52,6 +52,9 @@ logger = get_logger(__name__)
 # ==================== 测试常量 ====================
 STOCK_A = "000001.SZ"   # 主测试股票
 STOCK_B = "600036.SH"   # 多股票测试用
+# sessions 字典使用归一化 key（去除交易所后缀）
+STOCK_A_KEY = "000001"  # _normalize_code(STOCK_A)
+STOCK_B_KEY = "600036"  # _normalize_code(STOCK_B)
 INITIAL_PRICE = 10.00   # 初始股价
 PRICE_INTERVAL = 0.05   # 5%档位间隔
 CALLBACK_RATIO = 0.005  # 0.5%回调触发阈值
@@ -550,7 +553,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             self.assertAlmostEqual(levels['upper'], expected_upper, places=4)
 
             # 验证内存中已注册
-            self.assertIn(STOCK_A, self.grid_manager.sessions)
+            self.assertIn(STOCK_A_KEY, self.grid_manager.sessions)
             self.assertIn(session.id, self.grid_manager.trackers)
 
             print(f"  [OK] 会话ID={session.id}, 档位: [{levels['lower']:.4f}, {levels['center']:.4f}, {levels['upper']:.4f}]")
@@ -902,7 +905,7 @@ class TestGridPriceSimulation(unittest.TestCase):
 
             for i, (price, desc) in enumerate(sequence):
                 # 检查会话是否还在运行
-                if STOCK_A not in self.grid_manager.sessions:
+                if STOCK_A_KEY not in self.grid_manager.sessions:
                     print(f"  会话在第{i}步退出（可能触发了退出条件）")
                     break
 
@@ -979,7 +982,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 触发一次check，应检测到退出条件
             signal = self.grid_manager.check_grid_signals(STOCK_A, deviation_price)
             self.assertIsNone(signal, "退出条件触发后不应产生交易信号")
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "会话应已从内存中移除")
 
             print(f"  [OK] 偏离超限({15}% > 10%)触发会话退出")
@@ -1023,7 +1026,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 触发check，应检测到止盈退出
             signal = self.grid_manager.check_grid_signals(STOCK_A, INITIAL_PRICE)
             self.assertIsNone(signal, "达到目标盈利后应退出，不产生信号")
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "会话应已自动停止")
 
             print(f"  [OK] 盈利率{profit*100:.2f}% >= 目标1%，触发止盈退出")
@@ -1064,7 +1067,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 触发check，应检测到止损退出
             signal = self.grid_manager.check_grid_signals(STOCK_A, INITIAL_PRICE)
             self.assertIsNone(signal, "止损后应退出，不产生信号")
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "止损后会话应已停止")
 
             print(f"  [OK] 盈亏率{profit*100:.2f}% <= 止损-1%，触发止损退出")
@@ -1101,7 +1104,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 触发check，应检测到过期退出
             signal = self.grid_manager.check_grid_signals(STOCK_A, INITIAL_PRICE)
             self.assertIsNone(signal, "过期后应退出")
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "过期后会话应已停止")
 
             print(f"  [OK] 会话过期，自动停止")
@@ -1136,7 +1139,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 触发check，应检测到持仓清空退出
             signal = self.grid_manager.check_grid_signals(STOCK_A, INITIAL_PRICE)
             self.assertIsNone(signal, "持仓清空后应退出")
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "持仓清空后会话应已停止")
 
             print(f"  [OK] 持仓清零，会话自动停止")
@@ -1281,13 +1284,13 @@ class TestGridPriceSimulation(unittest.TestCase):
             session = create_grid_session(self.grid_manager, STOCK_A)
             session_id = session.id
 
-            self.assertIn(STOCK_A, self.grid_manager.sessions)
+            self.assertIn(STOCK_A_KEY, self.grid_manager.sessions)
             self.assertIn(session_id, self.grid_manager.trackers)
 
             # 手动停止
             result = self.grid_manager.stop_grid_session(session_id, "manual_test")
 
-            self.assertNotIn(STOCK_A, self.grid_manager.sessions,
+            self.assertNotIn(STOCK_A_KEY, self.grid_manager.sessions,
                              "停止后应从内存中移除")
             self.assertNotIn(session_id, self.grid_manager.trackers,
                              "停止后Tracker应清理")
@@ -1385,8 +1388,8 @@ class TestGridPriceSimulation(unittest.TestCase):
             )
 
             # 两个会话都应存在
-            self.assertIn(STOCK_A, self.grid_manager.sessions)
-            self.assertIn(STOCK_B, self.grid_manager.sessions)
+            self.assertIn(STOCK_A_KEY, self.grid_manager.sessions)
+            self.assertIn(STOCK_B_KEY, self.grid_manager.sessions)
 
             # STOCK_A的价格变动不影响STOCK_B
             signal_a = self.grid_manager.check_grid_signals(
@@ -1449,7 +1452,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             sell_count = 0
             buy_count = 0
             for i, price in enumerate(UPTREND_PRICES):
-                if STOCK_A not in self.grid_manager.sessions:
+                if STOCK_A_KEY not in self.grid_manager.sessions:
                     print(f"  会话在price={price}时退出")
                     break
                 signal = self.grid_manager.check_grid_signals(STOCK_A, price)
@@ -1513,7 +1516,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             buy_count = 0
             sell_count = 0
             for i, price in enumerate(DOWNTREND_PRICES):
-                if STOCK_A not in self.grid_manager.sessions:
+                if STOCK_A_KEY not in self.grid_manager.sessions:
                     print(f"  会话在price={price}时退出（可能偏离超限）")
                     break
                 signal = self.grid_manager.check_grid_signals(STOCK_A, price)
@@ -1573,7 +1576,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             errors = 0
 
             for i, price in enumerate(prices):
-                if STOCK_A not in self.grid_manager.sessions:
+                if STOCK_A_KEY not in self.grid_manager.sessions:
                     print(f"  会话在第{i}步退出（价格={price:.4f}）")
                     break
                 try:
@@ -1846,7 +1849,7 @@ class TestGridPriceSimulation(unittest.TestCase):
             # 改变持仓市价（不影响网格盈亏）
             self.grid_manager.check_grid_signals(STOCK_A, INITIAL_PRICE * 0.8)
             # 即使价格大幅下跌，网格自身盈亏不变（如果没有触发新交易）
-            if STOCK_A in self.grid_manager.sessions:
+            if STOCK_A_KEY in self.grid_manager.sessions:
                 current_ratio = session.get_profit_ratio()
                 self.assertAlmostEqual(current_ratio, expected_ratio, places=6,
                                        msg="价格变化不影响已记录的网格盈亏")
@@ -1932,7 +1935,7 @@ class TestGridPriceSimulation(unittest.TestCase):
                     try:
                         change = random.uniform(-0.02, 0.02)
                         price = max(5.0, min(20.0, price * (1 + change)))
-                        if STOCK_A in self.grid_manager.sessions:
+                        if STOCK_A_KEY in self.grid_manager.sessions:
                             signal = self.grid_manager.check_grid_signals(
                                 STOCK_A, round(price, 4)
                             )

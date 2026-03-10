@@ -243,7 +243,7 @@ class TestGridExitIntegration(unittest.TestCase):
 
         session_dict = asdict(session)
         session.id = self.db_manager.create_grid_session(session_dict)
-        self.grid_manager.sessions[session.stock_code] = session
+        self.grid_manager.sessions[self.grid_manager._normalize_code(session.stock_code)] = session
 
         # 检查退出条件
         exit_reason = self.grid_manager._check_exit_conditions(session, 10.00)
@@ -293,7 +293,7 @@ class TestGridExitIntegration(unittest.TestCase):
 
         session_dict = asdict(session)
         session.id = self.db_manager.create_grid_session(session_dict)
-        self.grid_manager.sessions[session.stock_code] = session
+        self.grid_manager.sessions[self.grid_manager._normalize_code(session.stock_code)] = session
 
         # 检查退出条件
         exit_reason = self.grid_manager._check_exit_conditions(session, 10.00)
@@ -343,7 +343,7 @@ class TestGridExitIntegration(unittest.TestCase):
 
         session_dict = asdict(session)
         session.id = self.db_manager.create_grid_session(session_dict)
-        self.grid_manager.sessions[session.stock_code] = session
+        self.grid_manager.sessions[self.grid_manager._normalize_code(session.stock_code)] = session
 
         # 检查退出条件
         exit_reason = self.grid_manager._check_exit_conditions(session, 10.00)
@@ -389,14 +389,14 @@ class TestGridExitIntegration(unittest.TestCase):
 
         session_dict = asdict(session)
         session.id = self.db_manager.create_grid_session(session_dict)
-        self.grid_manager.sessions[session.stock_code] = session
+        self.grid_manager.sessions[self.grid_manager._normalize_code(session.stock_code)] = session
         self.grid_manager.trackers[session.id] = MagicMock()
 
         # 停止会话
         result = self.grid_manager.stop_grid_session(session.id, 'deviation')
 
         # 验证清理
-        session_in_memory = '000001.SZ' in self.grid_manager.sessions
+        session_in_memory = self.grid_manager._normalize_code('000001.SZ') in self.grid_manager.sessions
         tracker_in_memory = session.id in self.grid_manager.trackers
         stop_reason_correct = result['stop_reason'] == 'deviation'
 
@@ -457,7 +457,7 @@ class TestGridExitIntegration(unittest.TestCase):
 
             session_dict = asdict(session)
             session.id = self.db_manager.create_grid_session(session_dict)
-            self.grid_manager.sessions[session.stock_code] = session
+            self.grid_manager.sessions[self.grid_manager._normalize_code(session.stock_code)] = session
 
             # 停止会话
             result = self.grid_manager.stop_grid_session(session.id, expected_reason)

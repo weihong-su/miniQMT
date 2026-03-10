@@ -107,16 +107,16 @@ class TestGridSessionRecovery(unittest.TestCase):
 
         # 3. 验证会话已恢复到内存
         self.assertEqual(len(grid_manager.sessions), 2)
-        self.assertIn(self.test_stock1, grid_manager.sessions)
-        self.assertIn(self.test_stock2, grid_manager.sessions)
+        self.assertIn(grid_manager._normalize_code(self.test_stock1), grid_manager.sessions)
+        self.assertIn(grid_manager._normalize_code(self.test_stock2), grid_manager.sessions)
 
         # 4. 验证会话数据完整性
-        session1 = grid_manager.sessions[self.test_stock1]
+        session1 = grid_manager.sessions[grid_manager._normalize_code(self.test_stock1)]
         self.assertEqual(session1.stock_code, self.test_stock1)
         self.assertEqual(session1.status, 'active')
         self.assertEqual(session1.center_price, 10.0)
 
-        session2 = grid_manager.sessions[self.test_stock2]
+        session2 = grid_manager.sessions[grid_manager._normalize_code(self.test_stock2)]
         self.assertEqual(session2.stock_code, self.test_stock2)
 
         # 5. 验证PriceTracker已创建
@@ -138,7 +138,7 @@ class TestGridSessionRecovery(unittest.TestCase):
         )
 
         # 3. 验证过期会话未恢复到内存
-        self.assertNotIn(self.test_stock1, grid_manager.sessions)
+        self.assertNotIn(grid_manager._normalize_code(self.test_stock1), grid_manager.sessions)
 
         # 4. 验证数据库中会话状态已更新为stopped
         db_session = self.db_manager.get_grid_session(session_id)
@@ -171,7 +171,7 @@ class TestGridSessionRecovery(unittest.TestCase):
         )
 
         # 3. 验证内存中的会话数据与数据库一致
-        session = grid_manager.sessions[self.test_stock1]
+        session = grid_manager.sessions[grid_manager._normalize_code(self.test_stock1)]
         self.assertEqual(session.trade_count, 10)
         self.assertEqual(session.buy_count, 5)
         self.assertEqual(session.sell_count, 5)
@@ -201,8 +201,8 @@ class TestGridSessionRecovery(unittest.TestCase):
 
         # 3. 验证只恢复2个活跃会话
         self.assertEqual(len(grid_manager.sessions), 2)
-        self.assertIn("000001.SZ", grid_manager.sessions)
-        self.assertIn("000002.SZ", grid_manager.sessions)
+        self.assertIn(grid_manager._normalize_code("000001.SZ"), grid_manager.sessions)
+        self.assertIn(grid_manager._normalize_code("000002.SZ"), grid_manager.sessions)
         self.assertNotIn("000003.SZ", grid_manager.sessions)
 
         # 4. 验证过期会话已标记为stopped
@@ -236,7 +236,7 @@ class TestGridSessionRecovery(unittest.TestCase):
         self.assertLess(elapsed_time, 2.0)
 
         # 5. 验证会话仍成功恢复
-        self.assertIn(self.test_stock1, grid_manager.sessions)
+        self.assertIn(grid_manager._normalize_code(self.test_stock1), grid_manager.sessions)
 
         print(f"[OK] 测试通过: 恢复时跳过持仓检查，启动时间={elapsed_time:.2f}秒")
 
@@ -259,7 +259,7 @@ class TestGridSessionRecovery(unittest.TestCase):
         )
 
         # 3. 验证时间戳未改变
-        session = grid_manager.sessions[self.test_stock1]
+        session = grid_manager.sessions[grid_manager._normalize_code(self.test_stock1)]
         self.assertEqual(session.start_time.isoformat(), original_start_time)
         self.assertEqual(session.end_time.isoformat(), original_end_time)
 

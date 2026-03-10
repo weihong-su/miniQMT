@@ -89,7 +89,7 @@ class TestGridLevelCrossing(unittest.TestCase):
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 价格上穿卖出档位 (10.5)
@@ -119,7 +119,7 @@ class TestGridLevelCrossing(unittest.TestCase):
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 价格下穿买入档位 (9.5)
@@ -148,7 +148,7 @@ class TestGridLevelCrossing(unittest.TestCase):
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 价格在 [9.5, 10.5] 区间内
@@ -177,7 +177,7 @@ class TestGridLevelCrossing(unittest.TestCase):
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 第一次穿越卖出档位
@@ -211,7 +211,7 @@ class TestGridLevelCrossing(unittest.TestCase):
 
         tracker = PriceTracker(session_id=1, last_price=10.0)
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 设置过期的冷却时间 (61秒前)
@@ -245,7 +245,7 @@ class TestGridLevelCrossing(unittest.TestCase):
             waiting_callback=True
         )
 
-        self.manager.sessions['000001.SZ'] = session
+        self.manager.sessions['000001'] = session
         self.manager.trackers[1] = tracker
 
         # 价格继续上涨,但已经在等待回调,不应触发新穿越

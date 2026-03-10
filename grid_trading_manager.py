@@ -227,6 +227,17 @@ class GridTradingManager:
         loaded_count = self._load_active_sessions()
         logger.info(f"[GRID] GridTradingManager.__init__: 初始化完成, 已加载 {loaded_count} 个活跃会话")
 
+    @staticmethod
+    def _normalize_code(stock_code: str) -> str:
+        """统一股票代码格式：去除交易所后缀，用作 sessions 字典的 key。
+        例: '600509.SH' -> '600509', '000001.SZ' -> '000001'
+        positions 表存储无后缀代码，grid_trading_sessions 存储带后缀代码，
+        此方法确保两者作为字典 key 时一致。
+        """
+        if stock_code and '.' in stock_code:
+            return stock_code.split('.')[0]
+        return stock_code
+
     def _load_active_sessions(self):
         """系统启动时从数据库加载活跃会话(保守恢复策略)"""
         logger.info("[GRID] 系统重启 - 开始恢复网格交易会话")
@@ -260,8 +271,9 @@ class GridTradingManager:
                 # CRITICAL FIX: 将sqlite3.Row转换为字典,避免"'sqlite3.Row' object has no attribute 'get'"错误
                 session_dict = dict(session_data)
                 stock_code = session_dict['stock_code']
+                stock_code_key = self._normalize_code(stock_code)  # 用于 sessions 字典的统一 key
                 session_id = session_dict['id']
-                logger.info(f"[GRID] >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}")
+                logger.info(f"[GRID] >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}, key={stock_code_key}")
 
                 try:
                     # 1. 检查会话是否已过期
@@ -272,12 +284,12 @@ class GridTradingManager:
                         self.db.stop_grid_session(session_id, 'expired')
 
                         # 如果内存里已有该会话，做最小清理避免Web仍显示active
-                        existing = self.sessions.get(stock_code)
+                        existing = self.sessions.get(stock_code_key)
                         if existing and existing.status == 'active':
                             logger.info(f"[GRID] 会话{session_id}({stock_code})已过期，清理内存会话")
                             # 仅做最小清理：从内存移除并触发版本更新
                             try:
-                                del self.sessions[stock_code]
+                                del self.sessions[stock_code_key]
                             except Exception:
                                 pass
                             if session_id in self.trackers:
@@ -327,9 +339,7 @@ class GridTradingManager:
                         start_time=datetime.fromisoformat(session_dict['start_time']),
                         end_time=end_time
                     )
-                    self.sessions[stock_code] = session
-
-                    # 4. 重置PriceTracker(保守策略)
+                    self.sessions[stock_code_key] = session
                     # 使用数据库中保存的价格,避免在启动时调用position_manager
                     if position and isinstance(position, dict) and position.get('current_price'):
                         current_price = position.get('current_price')
@@ -398,6 +408,9 @@ class GridTradingManager:
         logger.info(f"[GRID] start_grid_session: ========== 开始启动会话 ==========")
         logger.info(f"[GRID] start_grid_session: stock_code={stock_code}")
         logger.info(f"[GRID] start_grid_session: user_config={user_config}")
+        # 统一 sessions 字典 key（去除交易所后缀）
+        stock_code_key = self._normalize_code(stock_code)
+        logger.info(f"[GRID] start_grid_session: stock_code_key={stock_code_key}")
 
         # ========== 阶段1: 锁外操作 - 获取持仓数据并验证 ==========
         logger.info(f"[GRID] start_grid_session: [阶段1] 获取持仓数据（锁外）...")
@@ -474,7 +487,7 @@ class GridTradingManager:
         session = None
         try:
             # 检查并停止旧session
-            if stock_code in self.sessions:
+            if stock_code_key in self.sessions:
                 raise ValueError(f"{stock_code}已存在活跃会话，请先停止当前会话")
 
             # 创建数据库记录
@@ -498,7 +511,7 @@ class GridTradingManager:
                 start_time=start_time,
                 end_time=end_time
             )
-            self.sessions[stock_code] = session
+            self.sessions[stock_code_key] = session
             logger.debug(f"[GRID] start_grid_session: [阶段2] 内存会话对象创建完成")
 
             # 创建PriceTracker
@@ -556,7 +569,8 @@ class GridTradingManager:
             raise ValueError(f"会话{session_id}不存在")
 
         stock_code = session.stock_code
-        logger.debug(f"[GRID] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}")
+        stock_code_key = self._normalize_code(stock_code)  # 用于 sessions 字典操作
+        logger.debug(f"[GRID] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}, key={stock_code_key}")
 
         # 记录停止前的统计信息
         logger.info(f"[GRID] _stop_grid_session_unlocked: 停止前统计:")
@@ -571,8 +585,8 @@ class GridTradingManager:
         logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
 
         # 同步内存中的统计信息到数据库
-        if stock_code in self.sessions:
-            session_obj = self.sessions[stock_code]
+        if stock_code_key in self.sessions:
+            session_obj = self.sessions[stock_code_key]
             updates = {
                 'trade_count': session_obj.trade_count,
                 'buy_count': session_obj.buy_count,
@@ -589,9 +603,9 @@ class GridTradingManager:
         logger.debug(f"[GRID] _stop_grid_session_unlocked: 数据库更新完成")
 
         # 从内存中移除
-        if stock_code in self.sessions:
-            del self.sessions[stock_code]
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从sessions中移除 {stock_code}")
+        if stock_code_key in self.sessions:
+            del self.sessions[stock_code_key]
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从sessions中移除 {stock_code} (key={stock_code_key})")
         if session_id in self.trackers:
             del self.trackers[session_id]
             logger.debug(f"[GRID] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
@@ -758,7 +772,7 @@ class GridTradingManager:
                     f"active_sessions_count={len(self.sessions)}")
 
         with self.lock:
-            session = self.sessions.get(stock_code)
+            session = self.sessions.get(self._normalize_code(stock_code))
             if not session:
                 logger.debug(f"[GRID] check_grid_signals: {stock_code} 无活跃会话, 返回None")
                 return None
@@ -878,7 +892,7 @@ class GridTradingManager:
         try:
             with self.lock:
                 stock_code = signal['stock_code']
-                session = self.sessions.get(stock_code)
+                session = self.sessions.get(self._normalize_code(stock_code))
                 if not session:
                     logger.error(f"[GRID] execute_grid_trade: 会话不存在: {stock_code}")
                     return False
