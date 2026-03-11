@@ -2647,7 +2647,7 @@ def shutdown_web_server():
     try:
         # 关闭线程池
         if api_executor:
-            api_executor.shutdown(wait=True, cancel_futures=True)
+            api_executor.shutdown(wait=False, cancel_futures=True)
             logger.info("已关闭API线程池")
     except Exception as e:
         logger.error(f"关闭API线程池失败: {str(e)}")
