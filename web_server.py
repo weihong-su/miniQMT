@@ -1701,7 +1701,7 @@ def start_grid_trading():
 
         # 检查是否有旧session(用于返回警告消息)
         grid_manager = position_manager.grid_manager
-        old_session = grid_manager.sessions.get(stock_code)
+        old_session = grid_manager.sessions.get(grid_manager._normalize_code(stock_code))
         had_old_session = old_session is not None
         old_session_id = old_session.id if old_session else None
 
@@ -1794,7 +1794,7 @@ def stop_grid_trading_flexible():
 
         # 如果提供stock_code,查找对应的session_id
         if not session_id and stock_code:
-            session = grid_manager.sessions.get(stock_code)
+            session = grid_manager.sessions.get(grid_manager._normalize_code(stock_code))
             if not session:
                 return jsonify({
                     'success': False,
@@ -1869,8 +1869,8 @@ def get_grid_session_status(stock_code):
         stock_code = normalize_stock_code(stock_code)
         # logger.info(f"[API] 查询网格会话状态: stock_code={stock_code}")
 
-        # 从内存中查询活跃会话
-        session = grid_manager.sessions.get(stock_code)
+        # 从内存中查询活跃会话（sessions dict key 为无后缀代码）
+        session = grid_manager.sessions.get(grid_manager._normalize_code(stock_code))
 
         if session and session.status == 'active':
             # ⭐ 添加调试日志：检查session对象的实际值
@@ -2175,7 +2175,9 @@ def get_grid_status(stock_code):
             return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
 
         # 检查是否有活跃会话
-        session = position_manager.grid_manager.sessions.get(stock_code)
+        session = position_manager.grid_manager.sessions.get(
+            position_manager.grid_manager._normalize_code(stock_code)
+        )
 
         if not session:
             return jsonify({
@@ -2612,7 +2614,7 @@ def get_single_grid_checkbox_state(stock_code):
         grid_manager = position_manager.grid_manager
 
         # 检查是否有活跃session
-        session = grid_manager.sessions.get(stock_code)
+        session = grid_manager.sessions.get(grid_manager._normalize_code(stock_code))
         active = (session is not None and session.status == 'active')
         session_id = session.id if active else None
 
