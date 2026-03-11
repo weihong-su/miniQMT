@@ -96,7 +96,7 @@ def heartbeat_logger():
                 account_info = position_manager.get_account_info()
                 if account_info:
                     total_asset = account_info.get('total_asset', 0)
-                    available = account_info.get('cash', 0)
+                    available = account_info.get('available', 0)
                     asset_str = f"总资产:{total_asset:.2f} 可用:{available:.2f}"
                 else:
                     asset_str = "资产信息获取失败"

@@ -779,7 +779,7 @@ class TradingStrategy:
 
                     # 检查是否为网格交易信号
                     if signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
-                        logger.info(f"[GRID-STRATEGY] {stock_code} 检测到网格交易信号: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 价格={signal_info.get('price', 'N/A')}")
+                        logger.info(f"[GRID-STRATEGY] {stock_code} 检测到网格交易信号: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 价格={signal_info.get('trigger_price', 'N/A')}")
 
                         # ⭐ 检查网格交易开关状态
                         if not config.ENABLE_GRID_TRADING:
