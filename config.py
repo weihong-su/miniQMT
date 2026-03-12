@@ -162,6 +162,15 @@ QMT_PATH = get_qmt_path()
 # 账号信息
 ACCOUNT_CONFIG = get_account_config()
 
+# ======================= XtQuantManager 集成开关 =======================
+# False（默认）: 直接使用本地 xtquant 接口（现有行为不变）
+# True: 所有 xtquant 调用通过 XtQuantManager HTTP 服务路由
+ENABLE_XTQUANT_MANAGER = False
+# XtQuantManager 服务地址（ENABLE_XTQUANT_MANAGER=True 时生效）
+XTQUANT_MANAGER_URL = "http://127.0.0.1:8888"
+# XtQuantManager API Token（空字符串表示不验证）
+XTQUANT_MANAGER_TOKEN = ""
+
 # ======================= 策略配置 =======================
 # 仓位管理
 POSITION_UNIT = 35000  # 每次买入金额
