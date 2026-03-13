@@ -890,12 +890,15 @@ def _make_grid_manager_mock(sessions=None, db_sessions=None):
     mock_gm = MagicMock()
     mock_gm.sessions = sessions or {}
     mock_gm.trackers = {}
+    # 模拟真实的 _normalize_code 行为：去除交易所后缀
+    mock_gm._normalize_code.side_effect = lambda code: code.split('.')[0] if code and '.' in code else code
     # db.get_all_grid_sessions 返回普通列表，避免 MagicMock 序列化错误
     mock_gm.db = MagicMock()
     mock_gm.db.get_all_grid_sessions.return_value = db_sessions or []
     mock_gm.db.get_grid_trades.return_value = []
     mock_gm.db.get_grid_trade_count.return_value = 0
     return mock_gm
+
 
 
 def _make_grid_session_mock(session_id=1, stock_code='000001.SZ'):
@@ -1224,7 +1227,7 @@ class TestGridTrading(WebAPITestBase):
     def test_18_stop_grid_flexible(self):
         """POST /api/grid/stop 灵活停止（by stock_code）"""
         mock_session = _make_grid_session_mock()
-        mock_gm = _make_grid_manager_mock(sessions={'000001.SZ': mock_session})
+        mock_gm = _make_grid_manager_mock(sessions={'000001': mock_session})
         mock_gm.stop_grid_session.return_value = {'profit': 0.0, 'trades': 0}
         mock_pm.grid_manager = mock_gm
 
