@@ -430,10 +430,17 @@ class PositionManager:
                     deleted_count = 0
                     for stock_code in stocks_to_delete:
                         try:
-                            cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
+                            # 使用rowid子查询绕过可能损坏的唯一索引，确保删除可靠
+                            cursor.execute(
+                                "DELETE FROM positions WHERE rowid IN "
+                                "(SELECT rowid FROM positions WHERE stock_code=?)",
+                                (stock_code,)
+                            )
                             if cursor.rowcount > 0:
                                 deleted_count += 1
                                 logger.info(f"从SQLite删除持仓记录: {stock_code}")
+                            else:
+                                logger.warning(f"SQLite中未找到 {stock_code} 记录（已由其他路径删除或索引损坏）")
                         except Exception as e:
                             logger.error(f"删除SQLite中的 {stock_code} 记录时出错: {str(e)}")
 
@@ -1221,6 +1228,22 @@ class PositionManager:
                     # 触发持仓数据版本更新
                     self._increment_data_version()
                     logger.info(f"已删除 {stock_code} 的持仓记录")
+
+                    # 立即同步删除SQLite，不等待15秒同步线程（防止重启前来不及同步）
+                    if not getattr(config, 'ENABLE_SIMULATION_MODE', True):
+                        try:
+                            import sqlite3 as _sq3
+                            with _sq3.connect(config.DB_PATH, timeout=5.0) as _db:
+                                _db.execute(
+                                    "DELETE FROM positions WHERE rowid IN "
+                                    "(SELECT rowid FROM positions WHERE stock_code=?)",
+                                    (stock_code,)
+                                )
+                                _db.commit()
+                                logger.debug(f"SQLite已即时删除持仓: {stock_code}")
+                        except Exception as e:
+                            logger.warning(f"SQLite即时删除 {stock_code} 失败，将由同步线程处理: {str(e)}")
+
                     return True
                 else:
                     logger.warning(f"未找到 {stock_code} 的持仓记录，无需删除")

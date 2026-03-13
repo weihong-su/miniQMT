@@ -210,6 +210,28 @@ class DataManager:
         
         self.conn.commit()
         logger.info("数据表结构已创建")
+
+        # 启动时修复可能损坏的索引（机器强制重启后可能出现索引损坏）
+        self._repair_indexes_if_needed()
+
+    def _repair_indexes_if_needed(self):
+        """检查并修复损坏的数据库索引（快速完整性检查）"""
+        try:
+            result = self.conn.execute("PRAGMA quick_check").fetchone()
+            if result and result[0] != 'ok':
+                logger.warning(f"检测到数据库索引异常: {result[0]}，执行 REINDEX 修复...")
+                self.conn.execute("REINDEX")
+                self.conn.commit()
+                # 再次验证
+                result2 = self.conn.execute("PRAGMA quick_check").fetchone()
+                if result2 and result2[0] == 'ok':
+                    logger.info("数据库索引修复成功")
+                else:
+                    logger.error(f"数据库索引修复后仍有异常: {result2[0] if result2 else '未知'}")
+            else:
+                logger.debug("数据库索引完整性检查通过")
+        except Exception as e:
+            logger.warning(f"数据库索引检查失败（不影响运行）: {str(e)}")
     
     # def _init_xtquant(self):
     #     """初始化迅投行情接口"""
@@ -300,27 +322,29 @@ class DataManager:
                 stock_code = stock_code[:-3]  # Remove suffix
 
             # ⭐ 超时优化：为Mootdx调用添加超时保护
+            # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    Methods.getStockData,
-                    code=stock_code,
-                    offset=60,
-                    freq=freq,
-                    adjustflag='qfq'  # 前复权
-                )
-                try:
-                    df = future.result(timeout=10.0)  # 10秒超时（历史数据可以稍长）
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"Mootdx: 下载 {stock_code} 历史数据超时（10秒）")
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                Methods.getStockData,
+                code=stock_code,
+                offset=60,
+                freq=freq,
+                adjustflag='qfq'  # 前复权
+            )
+            executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
+            try:
+                df = future.result(timeout=10.0)  # 10秒超时（历史数据可以稍长）
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"Mootdx: 下载 {stock_code} 历史数据超时（10秒）")
+                return None
+            except RuntimeError as e:
+                # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
                     return None
-                except RuntimeError as e:
-                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
-                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                        logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
-                        return None
-                    raise
+                raise
 
             if df is None or df.empty:
                 logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据为空")
@@ -408,50 +432,52 @@ class DataManager:
             import concurrent.futures
 
             # 首先使用XtQuant API下载数据到本地
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    self.xt.download_history_data,
-                    stock_code,
-                    period=period,
-                    start_time=start_date,
-                    end_time=end_date,
-                    incrementally=True  # 使用增量下载
-                )
-                try:
-                    future.result(timeout=15.0)  # 15秒超时
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"xtquant: 下载 {stock_code} 历史数据超时（15秒）")
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                self.xt.download_history_data,
+                stock_code,
+                period=period,
+                start_time=start_date,
+                end_time=end_date,
+                incrementally=True  # 使用增量下载
+            )
+            executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
+            try:
+                future.result(timeout=15.0)  # 15秒超时
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"xtquant: 下载 {stock_code} 历史数据超时（15秒）")
+                return None
+            except RuntimeError as e:
+                if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
                     return None
-                except RuntimeError as e:
-                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                        logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
-                        return None
-                    raise
+                raise
 
             # 等待数据下载完成
             time.sleep(0.5)
 
             # 使用get_market_data_ex从本地获取下载的数据
             # 注意第一个参数是字段列表，可以为空
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    self.xt.get_market_data_ex,
-                    [],  # 空字段列表表示获取所有可用字段
-                    [stock_code],
-                    period=period,
-                    start_time=start_date,
-                    end_time=end_date
-                )
-                try:
-                    result = future.result(timeout=10.0)  # 10秒超时
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"xtquant: 获取 {stock_code} 历史数据超时（10秒）")
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                self.xt.get_market_data_ex,
+                [],  # 空字段列表表示获取所有可用字段
+                [stock_code],
+                period=period,
+                start_time=start_date,
+                end_time=end_date
+            )
+            executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
+            try:
+                result = future.result(timeout=10.0)  # 10秒超时
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"xtquant: 获取 {stock_code} 历史数据超时（10秒）")
+                return None
+            except RuntimeError as e:
+                if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 历史数据")
                     return None
-                except RuntimeError as e:
-                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                        logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 历史数据")
-                        return None
-                    raise
+                raise
             
             if not result:
                 logger.warning(f"获取 {stock_code} 的历史数据为空")
@@ -703,27 +729,29 @@ class DataManager:
                 stock_code = stock_code[:-3]  # Remove suffix
 
             # ⭐ 超时优化：为Mootdx降级路径添加超时保护
+            # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    Methods.getStockData,
-                    code=stock_code,
-                    offset=2,  # Get only the latest data
-                    freq=9,  # 日线
-                    adjustflag='qfq'
-                )
-                try:
-                    df = future.result(timeout=5.0)  # 5秒超时
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"Mootdx: 获取 {stock_code} 行情超时（5秒）")
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                Methods.getStockData,
+                code=stock_code,
+                offset=2,  # Get only the latest data
+                freq=9,  # 日线
+                adjustflag='qfq'
+            )
+            executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
+            try:
+                df = future.result(timeout=5.0)  # 5秒超时
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"Mootdx: 获取 {stock_code} 行情超时（5秒）")
+                return None
+            except RuntimeError as e:
+                # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过Mootdx获取 {stock_code} 行情")
                     return None
-                except RuntimeError as e:
-                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
-                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                        logger.debug(f"[DATA] 解释器正在关闭，跳过Mootdx获取 {stock_code} 行情")
-                        return None
-                    raise
+                raise
 
             if df is None or df.empty:
                 logger.warning(f"使用Mootdx获取 {stock_code} 的最新行情为空")
@@ -772,21 +800,23 @@ class DataManager:
                 return {}
 
             # ⭐ 超时优化：添加超时保护
+            # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(self.xt.get_full_tick, [stock_code])
-                try:
-                    latest_quote = future.result(timeout=3.0)  # 3秒超时
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
-                    return {}  # 返回空字典，与原逻辑一致
-                except RuntimeError as e:
-                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
-                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                        logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 行情")
-                        return {}
-                    raise
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(self.xt.get_full_tick, [stock_code])
+            executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
+            try:
+                latest_quote = future.result(timeout=3.0)  # 3秒超时
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
+                return {}  # 返回空字典，与原逻辑一致
+            except RuntimeError as e:
+                # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 行情")
+                    return {}
+                raise
 
             if not latest_quote or stock_code not in latest_quote:
                 logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
