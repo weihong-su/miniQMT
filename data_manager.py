@@ -384,7 +384,7 @@ class DataManager:
         
         try:
             # 首先使用XtQuant API下载数据到本地
-            xt.download_history_data(
+            self.xt.download_history_data(
                 stock_code,
                 period=period,
                 start_time=start_date,
@@ -397,7 +397,7 @@ class DataManager:
             
             # 使用get_market_data_ex从本地获取下载的数据
             # 注意第一个参数是字段列表，可以为空
-            result = xt.get_market_data_ex(
+            result = self.xt.get_market_data_ex(
                 [],  # 空字段列表表示获取所有可用字段
                 [stock_code],
                 period=period,
@@ -649,13 +649,28 @@ class DataManager:
             if stock_code.endswith((".SH", ".SZ")):
                 stock_code = stock_code[:-3]  # Remove suffix
 
-            # Get the latest data using Mootdx (e.g., get last 1 day)
-            df = Methods.getStockData(
-                code=stock_code,
-                offset=2,  # Get only the latest data
-                freq=9,  # 日线
-                adjustflag='qfq'
-            )
+            # ⭐ 超时优化：为Mootdx降级路径添加超时保护
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    Methods.getStockData,
+                    code=stock_code,
+                    offset=2,  # Get only the latest data
+                    freq=9,  # 日线
+                    adjustflag='qfq'
+                )
+                try:
+                    df = future.result(timeout=5.0)  # 5秒超时
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"Mootdx: 获取 {stock_code} 行情超时（5秒）")
+                    return None
+                except RuntimeError as e:
+                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                        logger.debug(f"[DATA] 解释器正在关闭，跳过Mootdx获取 {stock_code} 行情")
+                        return None
+                    raise
 
             if df is None or df.empty:
                 logger.warning(f"使用Mootdx获取 {stock_code} 的最新行情为空")
@@ -679,6 +694,11 @@ class DataManager:
             return latest_data
 
         except Exception as e:
+            # 区分正常关闭错误和真正的错误
+            error_str = str(e).lower()
+            if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
+                logger.debug(f"[DATA] 系统正在关闭，跳过获取 {stock_code} 行情")
+                return None
             logger.error(f"获取 {stock_code} 的latest_data出错: {str(e)}")
             return None
 
@@ -702,7 +722,7 @@ class DataManager:
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(xt.get_full_tick, [stock_code])
+                future = executor.submit(self.xt.get_full_tick, [stock_code])
                 try:
                     latest_quote = future.result(timeout=3.0)  # 3秒超时
                 except concurrent.futures.TimeoutError:
