@@ -385,9 +385,12 @@ PREMARKET_REINIT_XTTRADER = True        # 是否重新初始化xttrader交易接
 ENABLE_WEB_REFRESH_AFTER_REINIT = True  # 接口初始化成功后是否触发Web数据刷新
 
 # ============ xtquant接口鲁棒性配置 ============
-XTQUANT_RECONNECT_INTERVAL = 300  # xtquant重连间隔(秒)
+XTQUANT_RECONNECT_INTERVAL = 30   # xtquant重连冷却间隔(秒)，防止重连风暴
+                                   # 改为30秒：QMT重启约需60秒，30秒冷却可在1-2分钟内完成恢复
+                                   # on_disconnected触发时会重置此计时，无需担心跨轮次残余冷却
 XTQUANT_CALL_TIMEOUT = 3.0  # xtquant默认调用超时(秒)
 XTQUANT_NON_TRADE_TIMEOUT = 1.0  # 非交易时段超时(秒)
+QMT_RECONNECT_ON_ERRORS = 3  # 连续N次持仓查询失败后触发自动重连
 
 # ============ 线程监控配置 ============
 ENABLE_THREAD_MONITOR = True  # 启用线程健康监控

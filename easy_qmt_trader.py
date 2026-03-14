@@ -24,13 +24,21 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def __init__(self, order_id_map):
         super().__init__()
         self.order_id_map = order_id_map
-        self.trade_callbacks = []  # 成交回报外部回调列表
+        self.trade_callbacks = []       # 成交回报外部回调列表
+        self.disconnect_callbacks = []  # 断连事件外部回调列表（Fail-Safe 用）
+
     def on_disconnected(self):
         """
-        连接断开
-        :return:
+        连接断开推送 — QMT 进程崩溃或网络中断时由 xtquant 主动回调。
+        立即通知所有已注册的外部断连回调，使 PositionManager 能第一时间
+        将 qmt_connected 设为 False，无需等待监控循环连续超时 3 次（约 15 秒）。
         """
-        logger.error("QMT连接断开，请检查连接状态")
+        logger.error("⚠ QMT连接断开，正在通知外部模块...")
+        for cb in self.disconnect_callbacks:
+            try:
+                cb()
+            except Exception as e:
+                logger.error(f"on_disconnected 外部回调异常: {e}")
     def on_stock_order(self, order):
         """
         委托回报推送
@@ -117,6 +125,16 @@ class easy_qmt_trader:
             self._callback.trade_callbacks.append(cb)
         else:
             logger.warning("register_trade_callback: callback尚未初始化，请在connect()后调用")
+
+    def register_disconnect_callback(self, cb):
+        """
+        注册断连事件外部回调，cb() 在 QMT 连接断开时被立即调用。
+        主要供 PositionManager 注册以即时更新 qmt_connected 标志。
+        """
+        if self._callback is not None:
+            self._callback.disconnect_callbacks.append(cb)
+        else:
+            logger.warning("register_disconnect_callback: callback尚未初始化，请在connect()后调用")
         
     def random_session_id(self):
         '''
@@ -262,6 +280,17 @@ class easy_qmt_trader:
         account_type账户内类型
         '''
         logger.info('正在连接QMT交易接口...')
+
+        # 🔧 Fail-Safe 修复: 先清理旧连接，防止重复调用时资源泄漏
+        old_trader = getattr(self, 'xt_trader', None)
+        if old_trader and old_trader != '':
+            try:
+                old_trader.stop()
+                logger.info('已停止旧 XtQuantTrader 实例')
+            except Exception as e:
+                logger.warning(f'停止旧 XtQuantTrader 时出错 (忽略): {e}')
+            self.xt_trader = ''
+
         # path为mini qmt客户端安装目录下userdata_mini路径
         path = self.path
         # session_id为会话编号，策略使用方对于不同的Python策略需要使用不同的会话编号
@@ -875,6 +904,52 @@ class easy_qmt_trader:
         except Exception as e:
             logger.error(f"重连xtdata失败: {e}")
             self.xtdata_connected = False
+            return False
+
+    def ping_xttrader(self):
+        """
+        探测 xttrader 交易接口是否仍然连通（不执行重连，仅探测）。
+
+        通过调用同步资产查询接口来确认 QMT 进程是否在线。
+        xtdata 行情接口即使 QMT 进程崩溃后也可能因缓存返回数据，
+        因此必须额外探测 xttrader 才能准确感知断连。
+
+        Returns:
+            bool: True 表示 xttrader 连通，False 表示断连或异常
+        """
+        try:
+            xt_trader = getattr(self, 'xt_trader', None)
+            acc = getattr(self, 'acc', None)
+            if not xt_trader or xt_trader == '' or not acc or acc == '':
+                return False
+            # 使用同步资产查询作为探针（轻量、不产生副作用）
+            asset = xt_trader.query_stock_asset(account=acc)
+            return asset is not None
+        except Exception as e:
+            logger.warning(f'ping_xttrader 探测失败: {e}')
+            return False
+
+    def reconnect_xttrader(self):
+        """
+        重新连接 xttrader 交易接口（Fail-Safe 自动重连入口）。
+
+        直接复用 connect() 逻辑，connect() 内部已保证先清理旧连接。
+        重连成功后外部调用者需要重新注册 trade_callback。
+
+        Returns:
+            bool: True 表示重连成功，False 表示失败
+        """
+        logger.warning('正在重新连接 xttrader 交易接口...')
+        try:
+            result = self.connect()
+            if result is not None:
+                logger.info('✅ xttrader 重连成功')
+                return True
+            else:
+                logger.error('❌ xttrader 重连失败（connect() 返回 None）')
+                return False
+        except Exception as e:
+            logger.error(f'❌ xttrader 重连异常: {e}')
             return False
 
     def verify_xtdata_connection(self):

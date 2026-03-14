@@ -76,6 +76,8 @@ class PositionManager:
             self.qmt_connected = True
             # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
             self.qmt_trader.register_trade_callback(self._on_trade_callback)
+            # 🔧 Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
+            self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
 
         # 创建内存数据库
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -155,6 +157,110 @@ class PositionManager:
         # 网格交易管理器(延迟初始化)
         self.grid_manager = None
 
+        # 🔧 Fail-Safe 重连支持
+        self._reconnect_lock = threading.Lock()
+        self._last_reconnect_time = 0.0  # 上次重连时间戳，用于冷却保护
+
+
+    def check_qmt_connection_health(self):
+        """
+        QMT 连接心跳检查 — 供 thread_monitor 的 heartbeat_check 回调使用。
+
+        返回 False 时 thread_monitor 会重启持仓监控线程（重启时 __init__ 会
+        重新调用 connect()，但当前设计下重启线程不重建 PositionManager，
+        因此这里直接触发主动重连而非依赖线程重启）。
+
+        适用范围：仅在实盘 + 未启用 XtQuantManager 时实际探测。
+        模拟模式和 XtQuantManager 模式均返回 True（由各自模块负责健康检查）。
+        """
+        if config.ENABLE_SIMULATION_MODE:
+            return True
+        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+            return True  # XtQuantManager 有独立的 HealthMonitor
+
+        if not self.qmt_trader:
+            return False
+        try:
+            return self.qmt_trader.ping_xttrader()
+        except Exception as e:
+            logger.warning(f'[HEALTH] QMT 心跳检查异常: {e}')
+            return False
+
+    def _attempt_qmt_reconnect(self):
+        """
+        尝试重连 QMT 交易接口（含冷却时间保护）。
+
+        冷却时间由 config.XTQUANT_RECONNECT_INTERVAL（默认 300 秒）控制，
+        防止因持续失败导致的高频重连风暴。
+
+        重连成功后自动重新注册 trade_callback，恢复成交推送。
+
+        Returns:
+            bool: True 表示本次重连成功，False 表示仍在冷却或重连失败
+        """
+        # 仅实盘且非 XtQuantManager 模式下执行
+        if config.ENABLE_SIMULATION_MODE:
+            return True
+        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+            return False  # XtQuantManager 有自己的重连机制
+
+        with self._reconnect_lock:
+            now = time.time()
+            cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+
+            if now - self._last_reconnect_time < cooldown:
+                remaining = int(cooldown - (now - self._last_reconnect_time))
+                logger.info(f'[RECONNECT] 冷却中，还需等待 {remaining} 秒，跳过本次重连')
+                return False
+
+            self._last_reconnect_time = now
+
+        # 锁外执行实际重连，避免长时间持锁
+        logger.warning('[RECONNECT] 开始尝试重连 QMT xttrader 接口...')
+        try:
+            success = self.qmt_trader.reconnect_xttrader()
+            if success:
+                self.qmt_connected = True
+                # 重新注册成交回报回调
+                try:
+                    self.qmt_trader.register_trade_callback(self._on_trade_callback)
+                    logger.info('[RECONNECT] 已重新注册 trade_callback')
+                except Exception as e:
+                    logger.warning(f'[RECONNECT] 重新注册 trade_callback 失败 (非致命): {e}')
+                # 重新注册断连回调
+                try:
+                    self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
+                    logger.info('[RECONNECT] 已重新注册 disconnect_callback')
+                except Exception as e:
+                    logger.warning(f'[RECONNECT] 重新注册 disconnect_callback 失败 (非致命): {e}')
+                logger.info('✅ [RECONNECT] QMT 重连成功，恢复正常运行')
+                return True
+            else:
+                self.qmt_connected = False
+                logger.error('❌ [RECONNECT] QMT 重连失败，等待下次冷却后重试')
+                return False
+        except Exception as e:
+            self.qmt_connected = False
+            logger.error(f'❌ [RECONNECT] QMT 重连异常: {e}')
+            return False
+
+    def _on_qmt_disconnect(self):
+        """
+        QMT 断连即时回调 — 由 MyXtQuantTraderCallback.on_disconnected() 触发。
+
+        在 QMT 进程崩溃或网络中断时，xtquant 会立即推送 on_disconnected 事件，
+        比持仓监控循环连续超时 3 次（约 15 秒）提前感知断连。
+
+        同时重置 _last_reconnect_time，使下次断连后首次重连尝试绕过旧冷却，
+        避免因上次重连留下的冷却时间延误新一轮恢复。
+        """
+        if not config.ENABLE_SIMULATION_MODE and not getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+            logger.error('⚠ [DISCONNECT] QMT 连接断开通知已接收，标记 qmt_connected=False')
+            self.qmt_connected = False
+            # 重置冷却时间：新的断连事件意味着需要重新建立连接，
+            # 不应因上次重连失败留下的冷却时间而延误本轮恢复
+            self._last_reconnect_time = 0.0
+            logger.info('[DISCONNECT] 已重置重连冷却计时，下次监控循环可立即触发重连')
 
     def _increment_data_version(self):
         """递增数据版本号（内部方法）"""
@@ -3130,8 +3236,41 @@ class PositionManager:
 
                 # ⭐ 关键优化1: 非交易时段立即跳过,避免无效API调用
                 if not config.is_trade_time():
-                    logger.debug(f"非交易时间(第{loop_count}次循环), 休眠{config.MONITOR_NON_TRADE_SLEEP}秒")
-                    time.sleep(config.MONITOR_NON_TRADE_SLEEP)
+                    # ── 非交易时段 QMT 连接健康检查（24/7，不受交易时段限制）──────────────────
+                    # 即使非交易时段，也必须保持对 QMT 断连的感知和重连能力，
+                    # 否则用户在 18:xx 测试时永远观察不到重连效果。
+                    if not config.ENABLE_SIMULATION_MODE and not getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+                        qmt_ok = self.qmt_connected
+                        logger.debug(
+                            f'[MONITOR][非交易时段][loop#{loop_count}] '
+                            f'qmt_connected={qmt_ok}, consecutive_errors={consecutive_errors}, '
+                            f'is_trade_time=False'
+                        )
+                        if not qmt_ok:
+                            consecutive_errors += 1
+                            logger.warning(
+                                f'[MONITOR][非交易时段] QMT 已断连，累计 {consecutive_errors}/'
+                                f'{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)} 次，将尝试重连'
+                            )
+                            if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                                logger.error(
+                                    f'❌ [MONITOR][非交易时段] 连续 {consecutive_errors} 次断连，触发重连'
+                                )
+                                self._attempt_qmt_reconnect()
+                        else:
+                            if consecutive_errors > 0:
+                                logger.info(
+                                    f'[MONITOR][非交易时段] QMT 已恢复，重置错误计数 {consecutive_errors}->0'
+                                )
+                            consecutive_errors = 0
+                    # ─────────────────────────────────────────────────────────────────────────
+                    # QMT 断连时缩短休眠，让重连检测更及时；连接正常时用标准间隔节省 CPU
+                    if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
+                        sleep_sec = 10
+                    else:
+                        sleep_sec = config.MONITOR_NON_TRADE_SLEEP
+                    logger.debug(f"非交易时间(第{loop_count}次循环), 休眠{sleep_sec}秒")
+                    time.sleep(sleep_sec)
                     last_loop_time = time.time()
                     continue
 
@@ -3182,20 +3321,45 @@ class PositionManager:
                         future = executor.submit(self.get_all_positions)
                         try:
                             positions_df = future.result(timeout=timeout)
-                            consecutive_errors = 0  # 重置错误计数
+
+                            if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
+                                # qmt_connected=False 由 on_disconnected 立即设置，说明 QMT 进程已断连。
+                                # get_all_positions() 内部吞掉了 qmt_trader.position() 的异常，
+                                # 返回的是旧缓存数据——不能视为真实成功，也不能将 qmt_connected 翻回 True。
+                                consecutive_errors += 1
+                                logger.warning(
+                                    f'[MONITOR] QMT 已断连，缓存数据不计为成功'
+                                    f'（{consecutive_errors}/{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)}）'
+                                )
+                                if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                                    logger.error(
+                                        f'❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次QMT断连，触发重连'
+                                    )
+                                    self._attempt_qmt_reconnect()
+                                time.sleep(5)
+                                last_loop_time = time.time()
+                                continue
+
+                            # QMT 连通（或模拟模式）：重置错误计数，不在此处写 qmt_connected
+                            # qmt_connected=True 由 _attempt_qmt_reconnect() 在重连成功后设置
+                            consecutive_errors = 0
                         except concurrent.futures.TimeoutError:
                             consecutive_errors += 1
                             logger.warning(f"[MONITOR_TIMEOUT] 获取持仓超时,连续{consecutive_errors}次")
-                            if consecutive_errors >= 3:
-                                logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次超时!")
+                            if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                                logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次超时，标记断连并尝试重连")
+                                self.qmt_connected = False
+                                self._attempt_qmt_reconnect()
                             time.sleep(5)
                             last_loop_time = time.time()
                             continue
                 except Exception as e:
                     consecutive_errors += 1
                     logger.error(f"[MONITOR_ERROR] 获取持仓失败: {e}")
-                    if consecutive_errors >= 3:
-                        logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次失败!")
+                    if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                        logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次失败，标记断连并尝试重连")
+                        self.qmt_connected = False
+                        self._attempt_qmt_reconnect()
                     time.sleep(5)
                     last_loop_time = time.time()
                     continue

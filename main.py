@@ -411,10 +411,15 @@ def main():
             thread_monitor = get_thread_monitor()
 
             # 注册持仓监控线程
+            # 注意：不注册 heartbeat_check=check_qmt_connection_health。
+            # QMT 断连 ≠ 线程崩溃——持仓监控线程本身始终健康，
+            # QMT 重连逻辑由 _attempt_qmt_reconnect() 在监控循环内部自主处理。
+            # 若注册 heartbeat_check，ping 失败会触发 _restart_thread()，
+            # 而线程仍存活导致 start 幂等返回，产生误导性"重启成功"日志噪音。
             thread_monitor.register_thread(
                 "持仓监控线程",
                 lambda: position_manager.monitor_thread,
-                position_manager.start_position_monitor_thread
+                position_manager.start_position_monitor_thread,
             )
 
             # 注册数据更新线程

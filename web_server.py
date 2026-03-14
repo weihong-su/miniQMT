@@ -292,16 +292,17 @@ def connection_status():
         # 使用传入的position_manager实例
         position_manager = get_position_manager_instance()
 
-        # 直接检查对象存在性,不调用任何QMT API避免阻塞
-        is_connected = False
-        if hasattr(position_manager, 'qmt_trader') and position_manager.qmt_trader:
-            if hasattr(position_manager.qmt_trader, 'xt_trader') and position_manager.qmt_trader.xt_trader:
-                # xt_trader对象存在即认为已连接,不调用任何方法
-                is_connected = True
+        # 模拟模式：无需真实 QMT，始终视为已连接
+        if config.ENABLE_SIMULATION_MODE:
+            is_connected = True
+        else:
+            # 读取 qmt_connected 标志位（非阻塞布尔读，由 on_disconnected/重连逻辑维护）
+            # 不检查 xt_trader 对象存在性——对象存在不代表 QMT 进程在线
+            is_connected = bool(getattr(position_manager, 'qmt_connected', False))
 
         return jsonify({
             'status': 'success',
-            'connected': bool(is_connected),
+            'connected': is_connected,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
