@@ -186,11 +186,15 @@ class HealthMonitor:
             f"(第 {self._reconnect_counts[account_id]} 次)"
         )
 
-        success = account.reconnect()
-        if success:
-            logger.info(f"[{account_id[:4]}***] 重连成功")
-        else:
-            logger.error(f"[{account_id[:4]}***] 重连失败")
+        # 在后台线程执行重连，避免 reconnect() 内的 time.sleep(wait) 阻塞监控主循环。
+        # 多账号场景下，一个账号的重连等待不影响其他账号的健康检查。
+        t = threading.Thread(
+            target=account.reconnect,
+            name=f"XtQuantReconnect-{account_id[:4]}",
+            daemon=True,
+        )
+        t.start()
+        logger.info(f"[{account_id[:4]}***] 已在后台线程发起重连")
 
     def _can_reconnect(self, account_id: str) -> bool:
         """检查是否超过冷却时间"""

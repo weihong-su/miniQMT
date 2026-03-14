@@ -42,6 +42,7 @@ class AccountConfig:
     reconnect_base_wait: float = 60.0          # 重连基础等待（秒）
     max_reconnect_attempts: int = 5             # 最大重连次数（超过后仍重试但不计次）
     ping_stock: str = "000001.SZ"              # 心跳探测使用的股票代码
+    ping_staleness_threshold: float = 300.0    # 超过此秒数未成功 ping，is_healthy() 返回 False
 
 
 class XtQuantAccount:
@@ -72,7 +73,7 @@ class XtQuantAccount:
 
         # 连接状态
         self._connected = False
-        self._conn_lock = threading.Lock()
+        self._conn_lock = threading.RLock()
         self._reconnecting = False
         self._reconnect_attempts = 0
         self._last_ping_ok_time: Optional[float] = None
@@ -271,23 +272,59 @@ class XtQuantAccount:
     def is_healthy(self) -> bool:
         """
         快速内存检查（无 I/O）。
-        用于健康监控高频轮询。
+
+        除基础的 _connected 和 _xt_trader 标志外，还检查 ping 时效：
+        若 _last_ping_ok_time 超过 ping_staleness_threshold 秒未刷新，
+        返回 False 强制触发 Level 1 ping()，从而探测到 QMT 进程崩溃等隐性断连。
         """
-        return self._connected and self._xt_trader is not None
+        if not self._connected or self._xt_trader is None:
+            return False
+        if self._last_ping_ok_time is None:
+            return False
+        elapsed = time.time() - self._last_ping_ok_time
+        return elapsed <= self.config.ping_staleness_threshold
 
     def ping(self) -> bool:
         """
-        真实探测：调用 get_full_tick 验证 xtdata 连接。
-        成功更新 _last_ping_ok_time。
+        真实探测：同时验证 xtdata 和 xttrader 连接。
+
+        xtdata 探测：调用 get_full_tick，验证行情接口是否存活。
+        xttrader 探测：调用 query_stock_asset，验证交易接口是否存活。
+
+        QMT 进程重启后 xttrader 会断开，但 xtdata 可能因缓存仍能返回数据。
+        若仅探测 xtdata 会漏判 xttrader 断连，因此必须同时探测两者。
+
+        xttrader 探测失败时主动重置 _connected=False，确保 is_healthy()
+        下次返回 False，从而触发 HealthMonitor 的 Level 2 重连。
         """
+        # 1. 探测 xtdata（行情接口）
+        xtdata_ok = False
         try:
             result = self.get_full_tick([self.config.ping_stock])
-            if result:
-                self._last_ping_ok_time = time.time()
-                return True
-            return False
+            xtdata_ok = bool(result)
         except Exception:
-            return False
+            pass
+
+        # 2. 探测 xttrader（交易接口）—— QMT 重启后此处会失败
+        xttrader_ok = False
+        if self._xt_trader is not None and self._connected:
+            asset = self._call(
+                self._xt_trader.query_stock_asset,
+                self._acc,
+                op="ping_trader",
+                default=None,
+            )
+            xttrader_ok = asset is not None
+
+        ok = xtdata_ok and xttrader_ok
+        if ok:
+            self._last_ping_ok_time = time.time()
+        elif not xttrader_ok and self._connected:
+            # xttrader 断连但 _connected 仍为 True（QMT 崩溃场景）
+            # 主动重置，使 is_healthy() 下次返回 False，确保进入 Level 2 重连
+            self._connected = False
+            logger.warning(f"[{self._id()}] ping 检测到 xttrader 断连，重置连接状态")
+        return ok
 
     @property
     def last_ping_ok_time(self) -> Optional[float]:
