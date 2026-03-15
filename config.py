@@ -98,9 +98,12 @@ ACCOUNT_CONFIG_FILE = "account_config.json"
 # 3. 默认值（自动检测常见路径）
 DEFAULT_QMT_PATHS = [
     r'C:/QMT/userdata_mini',
+    r'C:/QMT1/userdata_mini',
+    r'C:/QMT2/userdata_mini',
     r'C:/光大证券金阳光QMT实盘/userdata_mini',
-    r'C:/迅投QMT交易端/userdata_mini',
     r'D:/QMT/userdata_mini',
+    r'D:/QMT1/userdata_mini',
+    r'D:/QMT2/userdata_mini',
     r'D:/光大证券金阳光QMT实盘/userdata_mini',
 ]
 
@@ -600,3 +603,35 @@ def get_grid_default_config(position_market_value: float) -> dict:
         'stop_loss': GRID_STOP_LOSS_RATIO,
         'duration_days': GRID_DEFAULT_DURATION_DAYS
     }
+
+
+def _apply_per_account_settings():
+    """根据环境变量 QMT_ACCOUNT_ID，将全局配置覆写为账号专属值。
+    单账号模式（不设置环境变量）时直接返回，行为与改动前完全一致。
+    """
+    global DATA_DIR, DB_PATH, STOCK2BUY_FILE, LOG_FILE, WEB_SERVER_PORT
+
+    account_id = os.environ.get('QMT_ACCOUNT_ID', '').strip()
+    if not account_id:
+        return  # 单账号/默认模式，保持全部默认值
+
+    # 查找账号在列表中的索引（决定端口偏移量）
+    all_accounts = get_all_accounts_config()
+    account_ids = [a.get('account_id', '') for a in all_accounts]
+    if account_id not in account_ids:
+        print(f"[CONFIG] 警告: QMT_ACCOUNT_ID={account_id} 不在账号列表中，使用默认配置")
+        return
+
+    idx = account_ids.index(account_id)
+
+    DATA_DIR        = f"data_{account_id}"
+    DB_PATH         = os.path.join(DATA_DIR, "trading.db")
+    STOCK2BUY_FILE  = os.path.join(DATA_DIR, "stock2buy.json")
+    LOG_FILE        = f"account_{account_id}.log"
+    WEB_SERVER_PORT = 5000 + idx
+
+    print(f"[CONFIG] 账号 {account_id}（第 {idx + 1} 个）: "
+          f"DATA_DIR={DATA_DIR}, PORT={WEB_SERVER_PORT}, LOG={LOG_FILE}")
+
+
+_apply_per_account_settings()

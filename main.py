@@ -9,6 +9,18 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 
+# ── 账号专属配置预处理（必须在 import config 之前执行）──
+# 支持命令行: python main.py --account-id 25105132
+_argv = sys.argv[1:]
+for _i, _arg in enumerate(_argv):
+    if _arg in ('--account-id', '--account') and _i + 1 < len(_argv):
+        os.environ.setdefault('QMT_ACCOUNT_ID', _argv[_i + 1])
+        break
+    if _arg.startswith('--account-id='):
+        os.environ.setdefault('QMT_ACCOUNT_ID', _arg.split('=', 1)[1])
+        break
+# ─────────────────────────────────────────────────────────
+
 import config
 from logger import get_logger, schedule_log_cleanup, clean_old_logs
 from data_manager import get_data_manager
