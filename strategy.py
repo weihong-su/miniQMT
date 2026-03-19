@@ -65,7 +65,7 @@ class TradingStrategy:
         try:
                     # 🔑 添加统一信号验证
             if not self.position_manager.validate_trading_signal(stock_code, signal_type, signal_info):
-                logger.error(f"🚨 {stock_code} {signal_type} 信号验证失败，拒绝执行")
+                logger.warning(f"[信号跳过] {stock_code} {signal_type} 信号验证未通过，本次不执行（委托中或冷却中）")
                 return False
         
             if signal_type == 'stop_loss':

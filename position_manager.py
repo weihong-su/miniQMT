@@ -1142,7 +1142,8 @@ class PositionManager:
                 elif base_cost_price is not None and base_cost_price > 0:
                     # QMT成本价无效,使用base_cost_price
                     final_cost_price = float(base_cost_price)
-                    logger.debug(f"{stock_code} QMT成本价无效({cost_price:.2f}),使用base_cost_price: {final_cost_price:.2f}")
+                    cost_price_disp = f"{cost_price:.2f}" if cost_price is not None else "None"
+                    logger.debug(f"{stock_code} QMT成本价无效({cost_price_disp}),使用base_cost_price: {final_cost_price:.2f}")
                 else:
                     # 最后兜底,设最小值0.01
                     final_cost_price = 0.01
@@ -2143,8 +2144,8 @@ class PositionManager:
 
                         # 修复后的查询机制：使用标准化股票代码匹配
                         if self._has_pending_orders(stock_code):
-                            logger.error(f"错误 {stock_code} 存在未成交委托单，拒绝新信号执行")
-                            logger.error(f"   建议：等待委托单处理完毕或手动确认持仓状态")
+                            logger.warning(f"[待委托拦截] {stock_code} 存在未成交委托单，跳过本次信号执行（委托处理中，非错误）")
+                            logger.warning(f"   等待委托单成交或撤销后，信号将自动重试")
                             return False
                         else:
                             logger.warning(f"警告 {stock_code} 未检测到活跃委托单，但available=0")

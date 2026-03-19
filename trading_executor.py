@@ -797,7 +797,9 @@ class TradingExecutor:
         """
         with self.trade_lock:
             try:
-                logger.info(f"开始买入处理: {stock_code}, volume={volume}, price={price:.2f}, amount={amount:.2f}, price_type={price_type}")
+                price_disp = f"{price:.2f}" if price is not None else "None"
+                amount_disp = f"{amount:.2f}" if amount is not None else "None"
+                logger.info(f"开始买入处理: {stock_code}, volume={volume}, price={price_disp}, amount={amount_disp}, price_type={price_type}")
         
                 # 检查qmt_trader是否初始化
                 if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
