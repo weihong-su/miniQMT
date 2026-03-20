@@ -212,18 +212,20 @@ class TestStopProfitSignalFlow(TestBase):
         finally:
             config.DYNAMIC_TAKE_PROFIT = old_dynamic
 
-        # 未达到任何盈利区间 -> 止损价=最高价
+        # 未达到任何盈利区间 -> 修复后回退固定止损（旧bug曾返回highest_price=10.2）
         price = self.pm.calculate_stop_loss_price(10.0, 10.2, True)
-        self.assertAlmostEqual(price, 10.2, places=4)
+        self.assertAlmostEqual(price, 10.0 * (1 + config.STOP_LOSS_RATIO), places=4)
 
         # 固定止损
         price = self.pm.calculate_stop_loss_price(10.0, 11.0, False)
         self.assertAlmostEqual(price, 10.0 * (1 + config.STOP_LOSS_RATIO), places=4)
 
     def test_calculate_stop_loss_price_highest_invalid_and_str_flag(self):
-        # 最高价无效 + profit_triggered字符串
+        # 最高价无效(0) + profit_triggered字符串
+        # 函数内 highest_price=0 修正为 cost_price=10.0，浮盈0%不达任何档位
+        # 修复后：回退固定止损 10.0*(1+STOP_LOSS_RATIO)，旧bug曾返回 cost_price=10.0
         price = self.pm.calculate_stop_loss_price(10.0, 0.0, "True")
-        self.assertAlmostEqual(price, 10.0, places=4)
+        self.assertAlmostEqual(price, 10.0 * (1 + config.STOP_LOSS_RATIO), places=4)
 
     def test_calculate_stop_loss_price_match_level(self):
         # 覆盖匹配最高止盈级别

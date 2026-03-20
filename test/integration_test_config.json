@@ -10,7 +10,8 @@
         "test.test_stop_profit_advanced_2",
         "test.test_stop_profit_advanced_3",
         "test.test_highest_price_update",
-        "test.test_stop_profit_signal_flow"
+        "test.test_stop_profit_signal_flow",
+        "test.test_stop_loss_price_calc"
       ],
       "priority": "high"
     },
@@ -178,7 +179,8 @@
         "test.test_indicator_all_methods",
         "test.test_grid_trading_bug_fixes",
         "test.test_premarket_xttrader_reinit",
-        "test.test_max_investment_strict"
+        "test.test_max_investment_strict",
+        "test.test_stop_loss_price_calc"
       ],
       "priority": "critical"
     }

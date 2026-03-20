@@ -982,24 +982,21 @@ class PositionManager:
 
                 if profit_triggered:
                     # 动态止盈场景：止损价应该在最高价的0.75-1.0倍之间（允许15%-25%回撤）
+                    # 修复：stop_loss_price == highest_price 是 take_profit_coefficient=1.0 旧 bug 留下的脏数据，需重算
+                    need_recalc = False
                     if stop_loss_price > highest_price:
                         logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price:.2f} > 最高价 {highest_price:.2f}，重新计算")
-                        # 重新计算止损价
-                        base_cost_price = position_dict.get('base_cost_price')
-                        effective_cost = cost_price if cost_price > 0 else (base_cost_price if base_cost_price and base_cost_price > 0 else 0.01)
-                        recalculated_stop_loss = self.calculate_stop_loss_price(effective_cost, highest_price, profit_triggered)
-                        position_dict['stop_loss_price'] = recalculated_stop_loss if recalculated_stop_loss else 0.0
-                        # 更新内存数据库（P0修复: 添加锁保护）
-                        with self.memory_conn_lock:
-                            cursor = self.memory_conn.cursor()
-                            cursor.execute("UPDATE positions SET stop_loss_price=? WHERE stock_code=?",
-                                         (position_dict['stop_loss_price'], stock_code))
-                            self.memory_conn.commit()
+                        need_recalc = True
+                    elif stop_loss_price >= highest_price * 0.999:
+                        # stop_loss_price ≈ highest_price，说明是旧 bug（系数=1.0）写入的脏数据
+                        logger.warning(f"{stock_code} 动态止盈价异常(等于最高价): {stop_loss_price:.2f}，重新计算")
+                        need_recalc = True
                     elif stop_loss_price == 0 or stop_loss_price < highest_price * 0.7:
                         # 止损价为0或异常小，重新计算
                         if stop_loss_price > 0:
                             logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price:.2f} < 最高价*0.7 ({highest_price * 0.7:.2f})，重新计算")
-                        # 重新计算止损价
+                        need_recalc = True
+                    if need_recalc:
                         base_cost_price = position_dict.get('base_cost_price')
                         effective_cost = cost_price if cost_price > 0 else (base_cost_price if base_cost_price and base_cost_price > 0 else 0.01)
                         recalculated_stop_loss = self.calculate_stop_loss_price(effective_cost, highest_price, profit_triggered)
@@ -1683,27 +1680,33 @@ class PositionManager:
                 else:
                     highest_profit_ratio = 0.0
                     
-                # 修正：从高到低遍历，找到最高匹配区间
-                take_profit_coefficient = 1.0  # 默认值改为1.0，表示不进行动态止损
+                # 从高到低遍历，找到最高匹配区间
+                take_profit_coefficient = None  # None 表示未匹配任何动态档位
                 matched_level = None
-                
+
                 for profit_level, coefficient in sorted(config.DYNAMIC_TAKE_PROFIT, reverse=True):
                     if highest_profit_ratio >= profit_level:
                         take_profit_coefficient = coefficient
                         matched_level = profit_level
                         break  # 找到最高匹配级别后停止
-                
+
+                if matched_level is None:
+                    # 未达到任何动态止盈档位（首次止盈触发但价格尚未拉开足够距离）
+                    # 回退到固定止损，避免将 stop_loss_price 误设为 highest_price
+                    stop_loss_ratio = getattr(config, 'STOP_LOSS_RATIO', -0.07)
+                    fallback_price = cost_price * (1 + stop_loss_ratio)
+                    logger.debug(f"动态止损计算：成本价={cost_price:.2f}, 最高价={highest_price:.2f}, "
+                                 f"最高盈利={highest_profit_ratio:.1%}, 未达任何动态档位，"
+                                 f"回退固定止损={fallback_price:.2f}")
+                    return fallback_price
+
                 # 计算动态止损价
                 dynamic_stop_loss_price = highest_price * take_profit_coefficient
-                
-                # 添加调试日志
-                if matched_level is not None:
-                    logger.debug(f"动态止损计算：成本价={cost_price:.2f}, 最高价={highest_price:.2f}, "
-                            f"最高盈利={highest_profit_ratio:.1%}, 匹配区间={matched_level:.1%}, "
-                            f"系数={take_profit_coefficient}, 止损价={dynamic_stop_loss_price:.2f}")
-                else:
-                    logger.debug(f"动态止损计算：未达到任何盈利区间，使用最高价作为止损价")
-                
+
+                logger.debug(f"动态止损计算：成本价={cost_price:.2f}, 最高价={highest_price:.2f}, "
+                             f"最高盈利={highest_profit_ratio:.1%}, 匹配区间={matched_level:.1%}, "
+                             f"系数={take_profit_coefficient}, 止损价={dynamic_stop_loss_price:.2f}")
+
                 return dynamic_stop_loss_price
             else:
                 # 固定止损：基于成本价
