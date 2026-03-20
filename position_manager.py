@@ -1001,12 +1001,23 @@ class PositionManager:
                         effective_cost = cost_price if cost_price > 0 else (base_cost_price if base_cost_price and base_cost_price > 0 else 0.01)
                         recalculated_stop_loss = self.calculate_stop_loss_price(effective_cost, highest_price, profit_triggered)
                         position_dict['stop_loss_price'] = recalculated_stop_loss if recalculated_stop_loss else 0.0
-                        # 更新内存数据库（P0修复: 添加锁保护）
+                        new_slp = position_dict['stop_loss_price']
+                        # 同时更新内存DB和SQLite（不依赖定时同步，模拟模式下也需持久化）
                         with self.memory_conn_lock:
                             cursor = self.memory_conn.cursor()
                             cursor.execute("UPDATE positions SET stop_loss_price=? WHERE stock_code=?",
-                                         (position_dict['stop_loss_price'], stock_code))
+                                         (new_slp, stock_code))
                             self.memory_conn.commit()
+                        try:
+                            sqlite_conn = sqlite3.connect(config.DB_PATH)
+                            sqlite_conn.execute("PRAGMA busy_timeout = 5000")
+                            sqlite_conn.execute("UPDATE positions SET stop_loss_price=? WHERE stock_code=?",
+                                               (new_slp, stock_code))
+                            sqlite_conn.commit()
+                            sqlite_conn.close()
+                            logger.info(f"{stock_code} 动态止损脏数据已修正并持久化: {stop_loss_price:.2f} -> {new_slp:.2f}")
+                        except Exception as e:
+                            logger.warning(f"{stock_code} 修正止损价写入SQLite失败(内存已修正): {e}")
                     # else: 动态止盈价正常，不警告
                 else:
                     # 固定止损场景：止损价应该在成本价的0.85-1.0倍之间（0-15%止损）
