@@ -603,11 +603,13 @@ class PositionManager:
                                 logger.debug(f"更新SQLite记录: {stock_code}, 最高价:{highest_price:.2f}, 止损价:{stop_loss_price:.2f}")
                         else:
                             # 插入新记录，使用当前日期作为 open_date
+                            # available 字段在 SQLite 层不持久化（由实盘数据实时覆盖），
+                            # INSERT 时固定写 0，防止过期快照在系统重启时被误读。
                             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             cursor.execute("""
                                 INSERT INTO positions (stock_code, stock_name, volume, available, cost_price, base_cost_price, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, last_update)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (stock_code, stock_name, volume, available, cost_price, base_cost_price, current_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now))
+                                VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (stock_code, stock_name, volume, cost_price, base_cost_price, current_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now))
 
                             insert_count += 1
                             # 插入新记录后，立即从数据库读取 open_date，以确保内存数据库与数据库一致

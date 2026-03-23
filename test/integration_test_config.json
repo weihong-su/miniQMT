@@ -147,6 +147,14 @@
       ],
       "priority": "critical"
     },
+    "dual_layer_storage": {
+      "name": "双层存储架构专项测试",
+      "description": "验证内存数据库+SQLite双层存储的一致性：P1(INSERT路径available写0防止过期快照)、P4(grid_database建表Schema一致)、P5(UPDATE路径不写available、重启恢复链路、类型边界)",
+      "modules": [
+        "test.test_dual_layer_storage"
+      ],
+      "priority": "critical"
+    },
     "xtdata_data_source": {
       "name": "xtdata 行情数据源测试",
       "description": "验证 DataManager.ensure_subscribed 动态订阅（去重/异常处理）、get_latest_data xtdata->Mootdx fallback 三条路径、以及盘中新持仓加入时自动订阅的集成行为",
@@ -184,6 +192,7 @@
         "test.test_grid_validation_params",
         "test.test_trader_callback",
         "test.test_db_op_safety_verification",
+        "test.test_dual_layer_storage",
         "test.test_web_api_complete",
         "test.test_indicator_all_methods",
         "test.test_grid_trading_bug_fixes",

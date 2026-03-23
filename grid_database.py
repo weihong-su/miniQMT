@@ -51,10 +51,20 @@ class DatabaseManager:
             raise
 
     def _init_base_tables(self):
-        """初始化基础表(持仓、交易记录)"""
+        """初始化基础表(持仓、交易记录)
+
+        注意: positions 和 trade_records 表的权威 Schema 定义在
+        position_manager.py 的 _create_memory_table() 中，由 PositionManager
+        在启动时统一建表并管理。此处仅补全可能尚未创建的场景（如单独使用
+        DatabaseManager 时），以防 grid 模块在 PositionManager 之前初始化。
+        字段定义必须与 position_manager.py 保持一致，任何 Schema 变更须
+        同步修改两处。
+        """
         cursor = self.conn.cursor()
 
-        # 创建持仓表
+        # 创建持仓表（权威定义见 position_manager.py _create_memory_table）
+        # available 字段在 SQLite 层不持久化实时值，INSERT 时由 position_manager
+        # 统一写 0，由实盘同步覆盖，此处仅保证表结构存在。
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 stock_code TEXT PRIMARY KEY,
@@ -76,7 +86,7 @@ class DatabaseManager:
             )
         """)
 
-        # 创建交易记录表
+        # 创建交易记录表（权威定义见 position_manager.py）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS trade_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
