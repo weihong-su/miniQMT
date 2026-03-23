@@ -1988,16 +1988,17 @@ class PositionManager:
 
             # 4. 优先检查止损条件（最高优先级）
             if not profit_triggered:
-                # 🔑 使用安全计算的固定止损价格
+                # 🔑 始终以当前config参数实时计算止损价，确保Web参数修改后立即对已持仓生效
                 try:
                     stop_loss_ratio = getattr(config, 'STOP_LOSS_RATIO', -0.07)
                     safe_stop_loss_price = cost_price * (1 + stop_loss_ratio)
-                    
-                    # 如果数据库中的止损价格异常，使用安全计算的值
-                    if stop_loss_price <= 0 or stop_loss_price > cost_price * 1.5 or stop_loss_price < cost_price * 0.5:
-                        logger.warning(f"{stock_code} 数据库止损价异常: {stop_loss_price:.2f}，使用安全计算值: {safe_stop_loss_price:.2f}")
-                        stop_loss_price = safe_stop_loss_price
-                    
+
+                    # 始终使用实时计算值，忽略DB存储的历史止损价
+                    # （DB值可能是用旧参数算出的，参数修改后必须用新值）
+                    if stop_loss_price != safe_stop_loss_price:
+                        logger.debug(f"{stock_code} 止损价以最新参数重算: DB={stop_loss_price:.2f} -> 实时={safe_stop_loss_price:.2f}")
+                    stop_loss_price = safe_stop_loss_price
+
                     if current_price <= stop_loss_price:
                         # 🔑 最后验证：确保这是合理的止损
                         loss_ratio = (cost_price - current_price) / cost_price
