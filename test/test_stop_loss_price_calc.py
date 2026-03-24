@@ -46,6 +46,10 @@ class TestCalculateStopLossPriceBugFix(TestBase):
         self._orig_ratio = config.STOP_LOSS_RATIO
 
     def tearDown(self):
+        try:
+            self.pm.stop_sync_thread()
+        except Exception:
+            pass
         config.DYNAMIC_TAKE_PROFIT = self._orig_dynamic
         config.STOP_LOSS_RATIO = self._orig_ratio
         super().tearDown()
@@ -231,6 +235,10 @@ class TestCalculateStopLossEdgeCases(TestBase):
         self._orig_ratio = config.STOP_LOSS_RATIO
 
     def tearDown(self):
+        try:
+            self.pm.stop_sync_thread()
+        except Exception:
+            pass
         config.DYNAMIC_TAKE_PROFIT = self._orig_dynamic
         config.STOP_LOSS_RATIO = self._orig_ratio
         super().tearDown()

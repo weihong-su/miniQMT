@@ -36,6 +36,10 @@ class TestStopProfitAdvanced3(TestBase):
         logger.info(f"测试准备完成: {self._testMethodName}")
 
     def tearDown(self):
+        try:
+            self.position_manager.stop_sync_thread()
+        except Exception:
+            pass
         super().tearDown()
 
     def test_16_stop_loss_buy_position_limit(self):

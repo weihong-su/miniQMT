@@ -378,8 +378,8 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         self.trading_executor = MockTradingExecutor(self.qmt_trader)
         self.position_manager = MockPositionManager(self.qmt_trader)
 
-        # 初始化数据库和网格管理器
-        self.db = DatabaseManager()
+        # 初始化数据库和网格管理器（使用内存数据库，避免文件锁和状态污染）
+        self.db = DatabaseManager(':memory:')
         # 初始化网格交易表
         self.db.init_grid_tables()
         self.grid_manager = GridTradingManager(
@@ -397,6 +397,10 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
                 self.grid_manager.stop_grid_session(self.test_session.id, reason="test_completed")
             except:
                 pass
+        try:
+            self.db.close()
+        except:
+            pass
 
     def test_01_configuration_check(self):
         """测试1: 配置检查"""

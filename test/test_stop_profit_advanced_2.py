@@ -46,6 +46,10 @@ class TestStopProfitAdvanced2(TestBase):
         logger.info(f"测试准备完成: {self._testMethodName}")
 
     def tearDown(self):
+        try:
+            self.position_manager.stop_sync_thread()
+        except Exception:
+            pass
         super().tearDown()
 
     def _ensure_memory_schema(self):

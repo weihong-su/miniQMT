@@ -60,6 +60,9 @@ class TestBase(unittest.TestCase):
         # Override config for test mode
         cls._setup_test_config()
 
+        # Remove corrupted test database if it exists
+        cls._reset_test_db_if_corrupted()
+
         logger.info(f"Test class {cls.__name__} setup complete")
 
     @classmethod
@@ -150,6 +153,42 @@ class TestBase(unittest.TestCase):
         config.SIMULATION_BALANCE = 100000.0
 
         logger.info("Test configuration applied")
+
+    @classmethod
+    def _reset_test_db_if_corrupted(cls):
+        """Delete or recreate test database if it is corrupted or malformed"""
+        test_db = "data/trading_test.db"
+        if not os.path.exists(test_db):
+            return
+        try:
+            conn = sqlite3.connect(test_db)
+            result = conn.execute("PRAGMA quick_check").fetchone()
+            conn.close()
+            if result and result[0] == 'ok':
+                return  # DB is healthy
+            raise sqlite3.DatabaseError(f"Integrity check failed: {result[0] if result else 'unknown'}")
+        except Exception as e:
+            logger.warning(f"Test database corrupted ({e}), recreating: {test_db}")
+            # Try to delete first
+            for ext in ('', '-wal', '-shm'):
+                path = test_db + ext
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            # If deletion failed (file still in use), overwrite with fresh empty DB
+            if os.path.exists(test_db):
+                try:
+                    import shutil
+                    new_conn = sqlite3.connect(test_db + '.new')
+                    new_conn.close()
+                    shutil.move(test_db + '.new', test_db)
+                    logger.info(f"Recreated test database: {test_db}")
+                except Exception as e2:
+                    logger.warning(f"Failed to recreate test database: {e2}")
+            else:
+                logger.info(f"Corrupted test database removed: {test_db}")
 
     @classmethod
     def _cleanup_test_artifacts(cls):

@@ -59,25 +59,31 @@ class PositionManager:
         # 持仓监控线程
         self.monitor_thread = None
         self.stop_flag = False
-        
-        # 初始化交易接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 客户端）
-        self.qmt_trader = _create_qmt_trader()
 
-        # 🔧 修复：检查QMT连接结果
-        connect_result = self.qmt_trader.connect()
-
-        if connect_result is None:
-            logger.error("❌ QMT未连接")
-            logger.warning("⚠️ 离线模式")
-            # 🔧 设置标志位，标记QMT未连接
+        # 模拟模式: 跳过 QMT 连接，避免无 QMT 时测试卡住
+        if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+            logger.warning("[SIMULATION] 模拟模式: 跳过 QMT 连接")
+            self.qmt_trader = None
             self.qmt_connected = False
         else:
-            logger.info("✅ QMT已连接")
-            self.qmt_connected = True
-            # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
-            self.qmt_trader.register_trade_callback(self._on_trade_callback)
-            # 🔧 Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
-            self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
+            # 初始化交易接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 客户端）
+            self.qmt_trader = _create_qmt_trader()
+
+            # 修复：检查QMT连接结果
+            connect_result = self.qmt_trader.connect()
+
+            if connect_result is None:
+                logger.error("[ERROR] QMT未连接")
+                logger.warning("[WARNING] 离线模式")
+                # 设置标志位，标记QMT未连接
+                self.qmt_connected = False
+            else:
+                logger.info("[OK] QMT已连接")
+                self.qmt_connected = True
+                # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
+                self.qmt_trader.register_trade_callback(self._on_trade_callback)
+                # Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
+                self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
 
         # 创建内存数据库
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -203,6 +209,8 @@ class PositionManager:
             return True
         if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
             return False  # XtQuantManager 有自己的重连机制
+        if self.qmt_trader is None:
+            return False  # 模拟模式下 qmt_trader 为 None
 
         with self._reconnect_lock:
             now = time.time()
@@ -233,15 +241,15 @@ class PositionManager:
                     logger.info('[RECONNECT] 已重新注册 disconnect_callback')
                 except Exception as e:
                     logger.warning(f'[RECONNECT] 重新注册 disconnect_callback 失败 (非致命): {e}')
-                logger.info('✅ [RECONNECT] QMT 重连成功，恢复正常运行')
+                logger.info('[RECONNECT] QMT 重连成功，恢复正常运行')
                 return True
             else:
                 self.qmt_connected = False
-                logger.error('❌ [RECONNECT] QMT 重连失败，等待下次冷却后重试')
+                logger.error('[RECONNECT] QMT 重连失败，等待下次冷却后重试')
                 return False
         except Exception as e:
             self.qmt_connected = False
-            logger.error(f'❌ [RECONNECT] QMT 重连异常: {e}')
+            logger.error(f'[RECONNECT] QMT 重连异常: {e}')
             return False
 
     def _on_qmt_disconnect(self):
@@ -255,7 +263,7 @@ class PositionManager:
         避免因上次重连留下的冷却时间延误新一轮恢复。
         """
         if not config.ENABLE_SIMULATION_MODE and not getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
-            logger.error('⚠ [DISCONNECT] QMT 连接断开通知已接收，标记 qmt_connected=False')
+            logger.error('[DISCONNECT] QMT 连接断开通知已接收，标记 qmt_connected=False')
             self.qmt_connected = False
             # 重置冷却时间：新的断连事件意味着需要重新建立连接，
             # 不应因上次重连失败留下的冷却时间而延误本轮恢复
@@ -746,6 +754,10 @@ class PositionManager:
                 return positions_df.copy() if not positions_df.empty else pd.DataFrame()
 
             # 实盘模式：调用QMT API
+            if self.qmt_trader is None:
+                logger.warning("qmt_trader未初始化，返回空DataFrame")
+                return pd.DataFrame()
+
             current_time = time.time()
 
             # 只在时间间隔到达后更新数据
@@ -1625,6 +1637,9 @@ class PositionManager:
                 }
 
             # 使用qmt_trader获取账户信息
+            if self.qmt_trader is None:
+                logger.warning("qmt_trader未初始化，返回None")
+                return None
             account_df = self.qmt_trader.balance()
 
             # ===== 新增：None检查和类型检查 =====

@@ -700,6 +700,13 @@ class GridTradingManager:
                 return 'deviation'
 
         # 2. 盈亏检测：严格配对模式 - 必须至少完成1次买入+1次卖出
+        # DESIGN-4说明: 此处有意要求 sell_count > 0 才进入 P&L 检测。
+        # 原因: 在仅有买入、尚无卖出的阶段，P&L = -total_buy / max_investment（负数），
+        #       若在此阶段检查 stop_loss，可能在完成第一笔买入后即因单档亏损触发退出，
+        #       与网格"持仓等待反弹"的核心设计相悖。
+        # 保底机制: deviation 检测（第1步）负责极端单边下跌场景的退出保护，
+        #           默认 max_deviation=15% 限制了"仅买无卖"阶段的最大回撤风险。
+        # 测试文档: 见 test_grid_bugfix_c1.py::TestDesign4StopLossWithoutSell
         if session.buy_count > 0 and session.sell_count > 0:
             profit_ratio = session.get_profit_ratio()
             logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, "
@@ -1158,6 +1165,16 @@ class GridTradingManager:
             trade_id = result.get('order_id', '')
             logger.info(f"[GRID] _execute_grid_buy: 实盘网格买入成功: {stock_code}, trade_id={trade_id}")
 
+        # BUG-C1修复: 下单成功后立即记录冷却时间，防止DB写入失败时重复下单。
+        # 背景: 原逻辑将 last_buy_times 更新置于 DB 写入成功之后（函数末尾）。
+        # 若实盘模式下 QMT 已接受委托但后续 DB 写入抛出异常，except 块会回滚
+        # 内存统计（current_investment 等），导致下一个 tick 重新检测到买入信号并
+        # 再次下单，形成重复委托。
+        # 修复方案: 将时间戳记录提前到订单确认后、DB 操作之前。即使 DB 失败，
+        # GRID_BUY_COOLDOWN 保护依然有效，阻止在冷却期内重新触发买入。
+        self.last_buy_times[session.id] = time.time()
+        logger.debug(f"[GRID] _execute_grid_buy: BUG-C1修复 last_buy_times[{session.id}]已记录(DB写入前)")
+
         # 4. 更新会话统计
         old_trade_count = session.trade_count
         old_buy_count = session.buy_count
@@ -1226,8 +1243,7 @@ class GridTradingManager:
         logger.debug(f"[GRID] _execute_grid_buy: 重建网格")
         self._rebuild_grid(session, trigger_price)
 
-        # 8. 记录本次买入时间，供 GRID_BUY_COOLDOWN 检查使用
-        self.last_buy_times[session.id] = time.time()
+        # (BUG-C1修复: last_buy_times 已在订单确认后立即记录，此处无需重复)
 
         logger.info(f"[GRID] _execute_grid_buy: 网格买入成功! stock_code={stock_code}, volume={volume}, amount={actual_amount:.2f}, "
                    f"investment={session.current_investment:.2f}/{session.max_investment:.2f}, trade_id={trade_id}")

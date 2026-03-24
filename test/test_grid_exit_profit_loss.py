@@ -178,17 +178,12 @@ class TestGridExitProfitLoss(unittest.TestCase):
 
     def setUp(self):
         """每个测试前初始化"""
-        # 清理数据库
-        db_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'positions.db')
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
         # 创建Mock对象
         self.mock_trader = MockXtQuantTrader()
         self.mock_data_manager = MockDataManager()
 
-        # 创建数据库管理器
-        self.db_manager = DatabaseManager()
+        # 创建数据库管理器（使用内存数据库，避免文件锁和状态污染）
+        self.db_manager = DatabaseManager(':memory:')
         # 初始化网格交易表
         self.db_manager.init_grid_tables()
 

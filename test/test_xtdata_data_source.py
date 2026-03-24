@@ -258,6 +258,13 @@ class TestPositionManagerDynamicSubscribe(TestBase):
         self.mock_dm.conn = self.pm.data_manager.conn  # 保留真实 conn
         self.pm.data_manager = self.mock_dm
 
+    def tearDown(self):
+        try:
+            self.pm.stop_sync_thread()
+        except Exception:
+            pass
+        super().tearDown()
+
     def test_simulate_buy_new_stock_calls_ensure_subscribed(self):
         """simulate_buy_position 买入新股票后应调用 ensure_subscribed"""
         with patch.object(self.pm, '_simulate_update_position', return_value=True), \

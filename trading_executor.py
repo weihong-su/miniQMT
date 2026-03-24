@@ -800,17 +800,27 @@ class TradingExecutor:
                 price_disp = f"{price:.2f}" if price is not None else "None"
                 amount_disp = f"{amount:.2f}" if amount is not None else "None"
                 logger.info(f"开始买入处理: {stock_code}, volume={volume}, price={price_disp}, amount={amount_disp}, price_type={price_type}")
-        
-                # 检查qmt_trader是否初始化
-                if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
-                    logger.error("qmt_trader未初始化，无法下单")
-                    return None
-                    
+
+                # 检查是否为模拟交易模式
+                is_simulation = hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
+                logger.info(f"是否为模拟交易模式: {is_simulation}")
+
+                # 检查qmt_trader是否初始化（模拟模式跳过此检查）
+                if not is_simulation:
+                    if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
+                        logger.error("qmt_trader未初始化，无法下单")
+                        return None
+
                 # 确保股票代码格式正确（添加市场后缀）
                 formatted_stock_code = stock_code
                 if '.' not in stock_code:
-                    formatted_stock_code = self.position_manager.qmt_trader.adjust_stock(stock=stock_code)
-                    logger.info(f"股票代码格式化: {stock_code} -> {formatted_stock_code}")
+                    if not is_simulation and hasattr(self.position_manager, 'qmt_trader') and self.position_manager.qmt_trader is not None:
+                        formatted_stock_code = self.position_manager.qmt_trader.adjust_stock(stock=stock_code)
+                        logger.info(f"股票代码格式化: {stock_code} -> {formatted_stock_code}")
+                    else:
+                        # 模拟模式下的简单格式化：假设SZ股票
+                        formatted_stock_code = f"{stock_code}.SZ"
+                        logger.info(f"模拟模式股票代码格式化: {stock_code} -> {formatted_stock_code}")
                     
                 # 检查是否为模拟交易模式
                 is_simulation = hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
@@ -1030,17 +1040,27 @@ class TradingExecutor:
                 price_str = f"{price:.2f}" if price is not None else "None"
                 ratio_str = f"{ratio:.2f}" if ratio is not None else "None"
                 logger.info(f"开始卖出处理: {stock_code}, volume={volume}, price={price_str}, ratio={ratio_str}, price_type={price_type}")
-                
-                # 检查qmt_trader是否初始化
-                if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
-                    logger.error("qmt_trader未初始化，无法下单")
-                    return None
-                    
-                # 确保股票代码格式正确（添加市场后缀）
+
+                # 检查是否为模拟交易模式
+                is_simulation = hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
+                logger.info(f"是否为模拟交易模式: {is_simulation}")
+
+                # 检查qmt_trader是否初始化（模拟模式跳过此检查）
+                if not is_simulation:
+                    if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
+                        logger.error("qmt_trader未初始化，无法下单")
+                        return None
+
+                # 股票代码格式化
                 formatted_stock_code = stock_code
                 if '.' not in stock_code:
-                    formatted_stock_code = self.position_manager.qmt_trader.adjust_stock(stock=stock_code)
-                    logger.info(f"股票代码格式化: {stock_code} -> {formatted_stock_code}")
+                    if not is_simulation and hasattr(self.position_manager, 'qmt_trader') and self.position_manager.qmt_trader is not None:
+                        formatted_stock_code = self.position_manager.qmt_trader.adjust_stock(stock=stock_code)
+                        logger.info(f"股票代码格式化: {stock_code} -> {formatted_stock_code}")
+                    else:
+                        # 模拟模式下的简单格式化：假设SZ股票
+                        formatted_stock_code = f"{stock_code}.SZ"
+                        logger.info(f"模拟模式股票代码格式化: {stock_code} -> {formatted_stock_code}")
                     
                 # 检查是否为模拟交易模式
                 is_simulation = hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE

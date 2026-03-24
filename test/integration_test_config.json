@@ -79,6 +79,14 @@
       ],
       "priority": "high"
     },
+    "grid_bugfix_c1": {
+      "name": "网格BUG-C1修复验证测试",
+      "description": "验证BUG-C1修复（实盘下单成功+DB失败时last_buy_times提前记录防重复下单）及DESIGN-4设计约束（sell_count=0时止损不触发，deviation作为兜底）。覆盖T-1~T-6缺失测试场景。",
+      "modules": [
+        "test.test_grid_bugfix_c1"
+      ],
+      "priority": "critical"
+    },
     "grid_bug_regression": {
       "name": "网格交易Bug回归验证测试",
       "description": "验证4个已修复的网格交易Bug：P0-1格式化异常(price/ratio为None)、P0-2会话停止后信号残留、P1-1信号重复生成、P1-2执行失败信号残留",
@@ -196,6 +204,7 @@
         "test.test_web_api_complete",
         "test.test_indicator_all_methods",
         "test.test_grid_trading_bug_fixes",
+        "test.test_grid_bugfix_c1",
         "test.test_premarket_xttrader_reinit",
         "test.test_max_investment_strict",
         "test.test_stop_loss_price_calc"
