@@ -116,7 +116,7 @@ class TestStopProfitSignalFlow(TestBase):
         )
         signal_type, info = self.pm.check_trading_signals(stock_code, current_price=current_price)
         self.assertEqual(signal_type, "stop_loss")
-        self.assertEqual(info.get("reason"), "validated_stop_loss")
+        self.assertEqual(info.get("reason"), "stop_loss_0")
 
     def test_stop_loss_reject_small_loss(self):
         # current_price <= stop_loss_price 但亏损比例不足

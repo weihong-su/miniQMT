@@ -2060,40 +2060,53 @@ class PositionManager:
                 return None, None
 
             # 4. 优先检查止损条件（最高优先级）
-            if not profit_triggered:
-                # 🔑 始终以当前config参数实时计算止损价，确保Web参数修改后立即对已持仓生效
-                try:
-                    stop_loss_ratio = getattr(config, 'STOP_LOSS_RATIO', -0.07)
-                    safe_stop_loss_price = cost_price * (1 + stop_loss_ratio)
+            # 🔑 无论是否触发过首次止盈，都必须执行止损保护
+            try:
+                stop_loss_ratio = getattr(config, 'STOP_LOSS_RATIO', -0.07)
+                safe_stop_loss_price = cost_price * (1 + stop_loss_ratio)
 
-                    # 始终使用实时计算值，忽略DB存储的历史止损价
-                    # （DB值可能是用旧参数算出的，参数修改后必须用新值）
-                    if stop_loss_price != safe_stop_loss_price:
-                        logger.debug(f"{stock_code} 止损价以最新参数重算: DB={stop_loss_price:.2f} -> 实时={safe_stop_loss_price:.2f}")
-                    stop_loss_price = safe_stop_loss_price
+                # 始终使用实时计算值，忽略DB存储的历史止损价
+                # （DB值可能是用旧参数算出的，参数修改后必须用新值）
+                if stop_loss_price != safe_stop_loss_price:
+                    logger.debug(f"{stock_code} 止损价以最新参数重算: DB={stop_loss_price:.2f} -> 实时={safe_stop_loss_price:.2f}")
+                stop_loss_price = safe_stop_loss_price
 
-                    if current_price <= stop_loss_price:
-                        # 🔑 最后验证：确保这是合理的止损
-                        loss_ratio = (cost_price - current_price) / cost_price
-                        expected_loss_ratio = abs(stop_loss_ratio)
-                        
-                        # 允许一定的误差范围
-                        if loss_ratio >= expected_loss_ratio * 0.5:  # 至少达到预期止损的50%
-                            logger.warning(f"{stock_code} 触发固定止损，当前价格: {current_price:.2f}, 止损价格: {stop_loss_price:.2f}")
-                            return 'stop_loss', {
-                                'current_price': current_price,
-                                'stop_loss_price': stop_loss_price,
-                                'cost_price': cost_price,
-                                'volume': position['available'],
-                                'reason': 'validated_stop_loss'
-                            }
+                if current_price <= stop_loss_price:
+                    # 🔑 最后验证：确保这是合理的止损
+                    loss_ratio = (cost_price - current_price) / cost_price
+                    expected_loss_ratio = abs(stop_loss_ratio)
+
+                    # 允许一定的误差范围
+                    if loss_ratio >= expected_loss_ratio * 0.5:  # 至少达到预期止损的50%
+                        if profit_triggered:
+                            logger.warning(
+                                f"⚠️ {stock_code} 首次止盈后回落触发止损保护，当前价格: {current_price:.2f}, "
+                                f"止损价格: {stop_loss_price:.2f}"
+                            )
+                            reason = 'stop_loss_1'
                         else:
-                            logger.warning(f"🚨 {stock_code} 止损信号异常，亏损比例不符合预期: 实际{loss_ratio:.2%} vs 预期{expected_loss_ratio:.2%}")
-                            return None, None
-                            
-                except Exception as stop_calc_error:
-                    logger.error(f"{stock_code} 止损计算出错: {stop_calc_error}")
-                    return None, None
+                            logger.warning(
+                                f"{stock_code} 触发固定止损，当前价格: {current_price:.2f}, 止损价格: {stop_loss_price:.2f}"
+                            )
+                            reason = 'stop_loss_0'
+
+                        return 'stop_loss', {
+                            'current_price': current_price,
+                            'stop_loss_price': stop_loss_price,
+                            'cost_price': cost_price,
+                            'volume': position['available'],
+                            'reason': reason,
+                            'profit_triggered': profit_triggered
+                        }
+                    else:
+                        logger.warning(
+                            f"🚨 {stock_code} 止损信号异常，亏损比例不符合预期: 实际{loss_ratio:.2%} vs 预期{expected_loss_ratio:.2%}"
+                        )
+                        return None, None
+
+            except Exception as stop_calc_error:
+                logger.error(f"{stock_code} 止损计算出错: {stop_calc_error}")
+                return None, None
             
             # 5. 检查止盈逻辑（如果启用动态止盈功能）
             if not config.ENABLE_DYNAMIC_STOP_PROFIT:
