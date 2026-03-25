@@ -4,14 +4,18 @@
 测试范围：
 T-1: 实盘模式 executor 下单成功但 DB 失败 -> last_buy_times 已记录 -> 冷却保护生效
 T-2: 验证 last_buy_times 在 DB 写入之前已被设置（修复后行为）
-T-3: sell_count=0 时止损阈值被突破 -> 止损不触发（设计决策验证）
+T-3: DESIGN-4 止损非对称设计验证（2026-03-25 更新）
+     T-3a: buy_count>0 sell_count=0 时亏损超限 -> 止损正常触发（防止单边下跌无限亏损）
+     T-3b: 价格大幅偏离 -> deviation 退出兜底
+     T-3c: buy+sell 配对后亏损超限 -> 止损正常触发
 T-4: 跳空低开严重超过 max_deviation -> 偏离退出优先于买入信号
 T-5: 卖出使用过期持仓快照（QMT层面失败）-> 系统优雅恢复不崩溃
 T-6: GRID_BUY_COOLDOWN=0 时仅靠 level_cooldown 和投入限额保护
 
 覆盖的设计约束：
 - BUG-C1: last_buy_times 必须在下单成功后、DB 写入前记录
-- DESIGN-4: sell_count=0 阶段跳过 P&L 止损检查，deviation 作为兜底
+- DESIGN-4 (2026-03-25 修订): 止损允许"仅买未卖"阶段触发（防单边下跌风险无限扩大）；
+  止盈仍需买卖配对（sell_count > 0）才能触发
 """
 
 import sys
@@ -226,13 +230,17 @@ class TestBugC1DbFailureProtection(unittest.TestCase):
 
 
 # ==========================================================================
-# T-3: DESIGN-4 验证 —— sell_count=0 时止损不触发，deviation 作为兜底
+# T-3: DESIGN-4 验证 —— 止损非对称设计（2026-03-25 修订）
+# 止损允许"仅买未卖"阶段触发；止盈仍需 sell_count > 0
 # ==========================================================================
 
 class TestDesign4StopLossWithoutSell(unittest.TestCase):
     """
-    T-3: 仅有买入无卖出时，即使价格跌破 stop_loss 阈值，P&L 止损也不触发；
-         由 deviation 检测提供兜底退出保护。
+    T-3: DESIGN-4 非对称止损/止盈设计验证（2026-03-25 修订）
+
+    止损（stop_loss）：仅需 buy_count > 0 即可触发，防止单边下跌行情无限亏损。
+    止盈（take_profit）：需 sell_count > 0，确保完成至少一次买卖配对后再判定盈利。
+    deviation 兜底：极端行情下由偏离度检测提供退出保护。
     """
 
     def setUp(self):
@@ -252,11 +260,12 @@ class TestDesign4StopLossWithoutSell(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_t3_stop_loss_not_triggered_without_sell(self):
-        """T-3a: buy_count>0 sell_count=0 时，价格跌破 stop_loss 阈值不退出"""
-        print("\n=== T-3a: sell_count=0 时止损不触发 ===")
+    def test_t3_stop_loss_triggered_without_sell(self):
+        """T-3a: buy_count>0 sell_count=0 时，价格跌破 stop_loss 阈值应触发止损（DESIGN-4 修订）"""
+        print("\n=== T-3a: sell_count=0 时止损正常触发（防单边下跌） ===")
 
-        # 已买入 2000 元，亏损 12%（超过 stop_loss=-10%），但无卖出
+        # 已买入 2000 元，亏损 20%（超过 stop_loss=-10%），无卖出
+        # DESIGN-4 修订：仅买入阶段也应触发止损，防止单边下跌无限亏损
         session = _make_session(
             self.db,
             max_investment=10000,
@@ -269,8 +278,7 @@ class TestDesign4StopLossWithoutSell(unittest.TestCase):
             max_deviation=0.50,  # 放宽偏离限制，避免 deviation 先退出
         )
 
-        # 模拟亏损 12%：profit_ratio = (0 - 2000) / 10000 = -20%
-        # 远超 stop_loss=-10%，但 sell_count=0，不应触发止损
+        # profit_ratio = (0 - 2000) / 10000 = -20%，超过 stop_loss=-10%
         current_price = session.center_price  # 价格不变，偏离度为 0
 
         exit_reason = self.manager._check_exit_conditions(
@@ -278,10 +286,10 @@ class TestDesign4StopLossWithoutSell(unittest.TestCase):
             position_snapshot={'volume': 1000, 'cost_price': 10.0}
         )
 
-        self.assertIsNone(exit_reason,
-                          "sell_count=0 时止损不应触发，应返回 None")
+        self.assertEqual(exit_reason, 'stop_loss',
+                         "buy_count>0 时亏损超限应触发止损，即使 sell_count=0")
         print(f"  profit_ratio = {session.get_profit_ratio()*100:.1f}% (< stop_loss={session.stop_loss*100:.1f}%)")
-        print(f"  退出原因: {exit_reason} (预期: None)")
+        print(f"  退出原因: {exit_reason} (预期: stop_loss)")
 
     def test_t3b_deviation_exits_when_price_drifts_far(self):
         """T-3b: 价格大幅偏离时 deviation 退出优先（兜底保护有效）"""

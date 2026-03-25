@@ -641,28 +641,35 @@ def validate_trading_signal(self, stock_code, signal_type, signal_info):
 
 ### 信号冲突处理
 
-**优先级规则**:
-1. 止盈止损信号优先于网格信号
-2. 同一股票同时触发多个信号时,按优先级顺序执行
-3. 网格交易中若触发止盈止损,立即退出网格会话
+**优先级规则**（三级体系）:
 
-**实现逻辑**:
+| 优先级 | 信号类型 | 说明 |
+|--------|---------|------|
+| 最高 | `stop_loss` | 可覆盖任何已有信号，并触发强制退出网格会话 |
+| 中 | `grid_buy` / `grid_sell` | 不被普通止盈信号覆盖 |
+| 低 | `take_profit_initial` / `take_profit_dynamic` | 不能覆盖网格信号 |
+
+**硬优先级机制**（position_manager.py）:
+- 检测到 `stop_loss` 时，立即设置 `force_grid_stop = True`
+- 在 `signal_lock` **外部**调用 `grid_manager.stop_grid_session()`，避免 `signal_lock → grid_manager.lock` 潜在死锁
+- 网格会话在止损信号进入策略线程前已被强制停止
+
 ```python
-def process_signals(stock_code):
-    # 1. 检查止盈止损信号
-    stop_signal = check_stop_loss_take_profit(stock_code)
-    if stop_signal:
-        # 优先处理止盈止损,取消网格信号
-        if has_active_grid_session(stock_code):
-            force_exit_grid_session(stock_code, reason="触发止盈止损")
-        execute_stop_signal(stop_signal)
-        return
+# position_manager.py - 监控循环信号检测
+with self.signal_lock:
+    if signal_type == 'stop_loss':
+        force_grid_stop = True  # 标记需要强制停止网格
+        self.latest_signals[stock_code] = {...}
+    elif existing_signal and existing_signal['type'] in ['grid_buy', 'grid_sell']:
+        pass  # 不覆盖网格信号
+    else:
+        self.latest_signals[stock_code] = {...}
 
-    # 2. 检查网格信号
-    if ENABLE_GRID_TRADING:
-        grid_signal = check_grid_signals(stock_code)
-        if grid_signal:
-            execute_grid_signal(grid_signal)
+# signal_lock 外部执行强制退出（防止锁顺序死锁）
+if force_grid_stop and self.grid_manager:
+    session = self.grid_manager.sessions.get(normalized_code)
+    if session and session.status == 'active':
+        self.grid_manager.stop_grid_session(session.id, 'stop_loss')
 ```
 
 ---
@@ -681,7 +688,8 @@ stateDiagram-v2
     PENDING --> ACTIVE: 首次买入成功
     ACTIVE --> ACTIVE: 持续网格买入
     ACTIVE --> EXITED: 触发退出条件
-    ACTIVE --> FORCE_EXITED: 强制退出(止盈止损)
+    ACTIVE --> FORCE_EXITED: 强制退出(止损硬优先级)
+å¤æ³¨ï¼æ­¢æåè®¸å¨ä»ä¹°å¥æªååºé¶æ®µè§¦åï¼æ­¢çä»è¦æ±ä¹°åéå¯¹å®æã
     PENDING --> CANCELLED: 创建失败/取消
     EXITED --> [*]
     FORCE_EXITED --> [*]
@@ -691,8 +699,8 @@ stateDiagram-v2
 **会话状态说明**:
 - `PENDING`: 等待首次买入
 - `ACTIVE`: 活跃交易中
-- `EXITED`: 正常退出(达到止盈/止损/超时)
-- `FORCE_EXITED`: 强制退出(触发止盈止损策略)
+- `EXITED`: 正常退出（达到止盈/止损/偏离度/超时/持仓清空）
+- `FORCE_EXITED`: 强制退出（持仓止损硬优先级触发）
 - `CANCELLED`: 已取消
 
 ### 网格交易工作流程
@@ -745,15 +753,29 @@ sequenceDiagram
 
 ### 网格退出条件
 
-网格会话在以下任一条件满足时退出:
+网格会话在以下任一条件满足时退出（按检测顺序）:
 
-| 条件 | 公式 | 默认值 | 说明 |
-|------|------|--------|------|
-| **止盈** | `total_profit_ratio >= GRID_TAKE_PROFIT_RATIO` | 8% | 总盈利比例达到目标 |
-| **止损** | `total_profit_ratio <= GRID_STOP_LOSS_RATIO` | -10% | 总亏损比例超过阈值 |
-| **超时** | `duration >= GRID_MAX_HOLD_DAYS` | 30天 | 持有时间过长 |
+| 优先级 | 条件 | 触发阶段 | 公式 | 默认值 | 说明 |
+|--------|------|---------|------|--------|------|
+| 1 | **偏离度** | 任意阶段 | `max(drift_dev, market_dev) > max_deviation` | 15% | 双重偏离：网格漂移偏离 + 市价偏离，取最大值 |
+| 2 | **止盈** | 买卖配对后 | `profit_ratio >= target_profit` (需 `sell_count > 0`) | 8% | 必须至少完成1笔买入+1笔卖出后才检测 |
+| 2 | **止损** | 仅买入后即可 | `profit_ratio <= stop_loss` (仅需 `buy_count > 0`) | -10% | 允许"仅买未卖"阶段触发，防止单边下跌风险扩大 |
+| 3 | **超时** | 任意阶段 | `now > end_time` | 7天 | 会话运行时长超限 |
+| 4 | **持仓清空** | 任意阶段 | `volume == 0` | - | 持仓被外部清空（止盈止损策略卖出） |
 
-**强制退出**: 当普通持仓触发止盈止损策略时,同股票的网格会话立即强制退出。
+**止盈与止损的非对称设计**（DESIGN-4）:
+- **止盈要求买卖配对**：避免在首次买入后立即因单档亏损触发错误止盈
+- **止损允许仅买阶段触发**：防止单边下跌行情中持续分批买入导致风险无限扩大
+- **偏离度作为保底**：仅买未卖阶段的极端下跌由偏离度检测（第1步）保护
+
+**双重偏离度检测**:
+```python
+drift_deviation = session.get_deviation_ratio()           # 网格中心漂移偏离
+market_deviation = abs(current_price - current_center) / current_center  # 市价偏离
+deviation = max(drift_deviation, market_deviation)         # 取最大值
+```
+
+**强制退出（硬优先级）**: 当普通持仓触发止损信号时，在 `signal_lock` 外立即调用 `stop_grid_session()`，避免锁顺序死锁，确保网格会话在止损执行前完全停止。
 
 ### 网格盈亏计算
 
@@ -934,8 +956,8 @@ CREATE TABLE grid_sessions (
 |---------|---------|---------|
 | PENDING | 首次买入成功 | ACTIVE |
 | PENDING | 创建失败/手动取消 | CANCELLED |
-| ACTIVE | 达到止盈/止损/超时条件 | EXITED |
-| ACTIVE | 持仓触发止盈止损策略 | FORCE_EXITED |
+| ACTIVE | 达到止盈(需买卖配对)/止损(仅买即可)/偏离度/超时/持仓清空 | EXITED |
+| ACTIVE | 持仓触发止损信号（硬优先级强制） | FORCE_EXITED |
 
 #### grid_trades (网格交易记录表)
 
@@ -1256,6 +1278,15 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 ---
 
-**文档版本**: v1.2
-**最后更新**: 2026-03-13
+**文档版本**: v1.3
+**最后更新**: 2026-03-25
 **维护者**: miniQMT Team
+
+### 变更记录
+
+| 版本 | 日期 | 变更说明 |
+|------|------|---------|
+| v1.3 | 2026-03-25 | 更新网格退出条件（止盈/止损非对称设计、双重偏离度）；新增信号三级优先级体系；记录 stop_loss 硬优先级防死锁机制 |
+| v1.2 | 2026-03-13 | 新增 QMT Fail-Safe 重连架构；XtQuantManager 三级健康监控 |
+| v1.1 | 2026-02-01 | 新增无人值守运行架构；线程自愈机制 |
+| v1.0 | 2026-01-24 | 初始版本 |
