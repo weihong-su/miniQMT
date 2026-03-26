@@ -804,9 +804,9 @@ class PositionManager:
                             positions_df[col] = pd.to_numeric(positions_df[col], errors='coerce').fillna(0)
 
                     if 'profit_triggered' in positions_df.columns:
-                        positions_df['profit_triggered'] = positions_df['profit_triggered'].fillna(False)
+                        positions_df['profit_triggered'] = positions_df['profit_triggered'].fillna(False).astype(bool)
                     if 'profit_breakout_triggered' in positions_df.columns:
-                        positions_df['profit_breakout_triggered'] = positions_df['profit_breakout_triggered'].fillna(False)
+                        positions_df['profit_breakout_triggered'] = positions_df['profit_breakout_triggered'].fillna(False).astype(bool)
 
                 return positions_df.copy() if not positions_df.empty else pd.DataFrame()
 
@@ -854,10 +854,10 @@ class PositionManager:
                                 new_cache[col] = pd.to_numeric(new_cache[col], errors='coerce').fillna(0)
 
                         if 'profit_triggered' in new_cache.columns:
-                            new_cache['profit_triggered'] = new_cache['profit_triggered'].fillna(False)
+                            new_cache['profit_triggered'] = new_cache['profit_triggered'].fillna(False).astype(bool)
 
                         if 'profit_breakout_triggered' in new_cache.columns:
-                            new_cache['profit_breakout_triggered'] = new_cache['profit_breakout_triggered'].fillna(False)
+                            new_cache['profit_breakout_triggered'] = new_cache['profit_breakout_triggered'].fillna(False).astype(bool)
 
                     # 原子赋值：CPython STORE_ATTR 是单字节码操作，确保其他线程
                     # 读到的 self.positions_cache 始终是完整对象
