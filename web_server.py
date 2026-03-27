@@ -1517,44 +1517,43 @@ def push_realtime_data():
 
     while not stop_push_flag:
         try:
-            # 只在交易时间更新数据
-            if config.is_trade_time():
-                # 更新所有持仓的最新价格
-                position_manager.update_all_positions_price()
+            # 不限制交易时间：只要 xtquant 接口正常，随时更新 web 持仓数据
+            # 更新所有持仓的最新价格（内部已做 None 判断，非交易时段价格不变则跳过）
+            position_manager.update_all_positions_price()
 
-                # ⚠️ 检查停止标志，如果已设置则立即退出
-                if stop_push_flag:
-                    logger.info("[推送线程] 检测到停止标志，退出循环")
-                    break
+            # ⚠️ 检查停止标志，如果已设置则立即退出
+            if stop_push_flag:
+                logger.info("[推送线程] 检测到停止标志，退出循环")
+                break
 
-                # 获取所有持仓数据
-                positions_all_df = position_manager.get_all_positions_with_all_fields()
+            # 获取所有持仓数据
+            positions_all_df = position_manager.get_all_positions_with_all_fields()
 
-                # ⚠️ 再次检查停止标志
-                if stop_push_flag:
-                    logger.info("[推送线程] 检测到停止标志，退出循环")
-                    break
+            # ⚠️ 再次检查停止标志
+            if stop_push_flag:
+                logger.info("[推送线程] 检测到停止标志，退出循环")
+                break
 
-                # 处理NaN值
-                positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
+            # 处理NaN值
+            positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
 
-                # 转换为字典列表
-                positions_all = positions_all_df.to_dict('records')
+            # 转换为字典列表
+            positions_all = positions_all_df.to_dict('records')
 
-                # ⭐ 为positions_all添加grid_session_active字段 (必须在to_dict之后)
-                grid_manager = position_manager.grid_manager
-                if grid_manager:
-                    for pos in positions_all:
-                        stock_code = pos.get('stock_code')
-                        session = grid_manager.sessions.get(stock_code)
-                        pos['grid_session_active'] = (session is not None and session.status == 'active')
-                else:
-                    # 如果grid_manager未初始化，所有股票设为False
-                    for pos in positions_all:
-                        pos['grid_session_active'] = False
+            # ⭐ 为positions_all添加grid_session_active字段 (必须在to_dict之后)
+            grid_manager = position_manager.grid_manager
+            if grid_manager:
+                for pos in positions_all:
+                    stock_code = pos.get('stock_code')
+                    session = grid_manager.sessions.get(stock_code)
+                    pos['grid_session_active'] = (session is not None and session.status == 'active')
+            else:
+                # 如果grid_manager未初始化，所有股票设为False
+                for pos in positions_all:
+                    pos['grid_session_active'] = False
 
-                # 更新实时数据
-                realtime_data['positions_all'] = positions_all
+            # 更新实时数据
+            realtime_data['positions_all'] = positions_all
 
             # 休眠间隔（分段休眠，更快响应停止信号）
             for _ in range(30):  # 3秒 = 30 * 0.1秒
