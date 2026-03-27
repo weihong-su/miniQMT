@@ -129,6 +129,8 @@ class TestGridValidationParams(unittest.TestCase):
         self.assertTrue(is_valid)
 
         config['callback_ratio'] = 0.10
+        # C-1修复后：callback_ratio=0.10 需搭配 price_interval > 0.10 才能通过跨字段校验
+        config['price_interval'] = 0.15
         is_valid, _ = validate_grid_config(config)
         self.assertTrue(is_valid)
 
@@ -206,9 +208,10 @@ class TestGridValidationParams(unittest.TestCase):
         self.assertTrue(is_valid)
 
     def test_stop_loss_range(self):
-        """测试止损比例验证 (-50%-0%)
+        """测试止损比例验证 (-50%到-0.1%)
         VAL-2修复：测试 stop_loss 最大幅度边界时，需同时满足交叉验证约束，
         否则仅当 target_profit=0.01 AND stop_loss=-0.50 同时处于各自边界才豁免
+        C-4修复：stop_loss=0 不再合法，max=-0.001（至少容忍 0.1% 回撤）
         """
         config = self.valid_config.copy()
 
@@ -228,11 +231,17 @@ class TestGridValidationParams(unittest.TestCase):
         is_valid, _ = validate_grid_config(config)
         self.assertTrue(is_valid, "stop_loss=-0.50 且 target_profit=0.50 应通过验证")
 
-        # 零值（极端保守，止盈即任何净亏损）：允许但风险极高
+        # C-4修复：stop_loss=0 现在不合法（零止损 = 买入即触发退出）
         config['stop_loss'] = 0
-        config['target_profit'] = 0.10  # 恢复正常目标盈利
+        config['target_profit'] = 0.10
         is_valid, _ = validate_grid_config(config)
-        self.assertTrue(is_valid, "stop_loss=0 应通过验证（允许但极端保守）")
+        self.assertFalse(is_valid, "C-4修复: stop_loss=0 应被拒绝（零止损无意义）")
+
+        # C-4边界：stop_loss=-0.001 应通过（新 max 边界）
+        config['stop_loss'] = -0.001
+        config['target_profit'] = 0.01  # target >= |stop_loss|
+        is_valid, _ = validate_grid_config(config)
+        self.assertTrue(is_valid, "C-4修复: stop_loss=-0.001（新max边界）应通过验证")
 
     def test_duration_days_range(self):
         """测试运行时长验证 (1-365天)"""
@@ -349,6 +358,66 @@ class TestGridValidationParams(unittest.TestCase):
         is_valid, errors = validate_grid_config(config)
         self.assertFalse(is_valid)
         self.assertIn('max_investment', errors)
+
+    def test_callback_ratio_must_be_less_than_price_interval(self):
+        """C-1验证：回调比例必须小于网格价格间隔
+
+        若 callback_ratio >= price_interval，回调信号会在价格尚未回到上一档时触发，
+        导致交易方向与网格逻辑矛盾。
+        """
+        # callback_ratio == price_interval：应拒绝
+        config = self.valid_config.copy()
+        config['callback_ratio'] = 0.05
+        config['price_interval'] = 0.05
+        is_valid, errors = validate_grid_config(config)
+        self.assertFalse(is_valid, "C-1: callback_ratio == price_interval 应被拒绝")
+        self.assertIn('callback_ratio', errors)
+
+        # callback_ratio > price_interval：应拒绝
+        config = self.valid_config.copy()
+        config['callback_ratio'] = 0.10
+        config['price_interval'] = 0.05
+        is_valid, errors = validate_grid_config(config)
+        self.assertFalse(is_valid, "C-1: callback_ratio > price_interval 应被拒绝")
+
+        # callback_ratio < price_interval：应通过
+        config = self.valid_config.copy()
+        config['callback_ratio'] = 0.005
+        config['price_interval'] = 0.05
+        is_valid, _ = validate_grid_config(config)
+        self.assertTrue(is_valid, "C-1: callback_ratio < price_interval 应通过")
+
+        # 默认值也应通过（0.005 < 0.05）
+        config = self.valid_config.copy()
+        is_valid, _ = validate_grid_config(config)
+        self.assertTrue(is_valid, "C-1: 默认配置应通过交叉校验")
+
+    def test_investment_ratio_feasibility(self):
+        """A-2验证：max_investment × position_ratio 必须 >= 100元
+
+        买入金额 = max_investment × position_ratio，若 < 100 元则无法执行任何买入。
+        """
+        # 乘积 < 100：应拒绝
+        config = self.valid_config.copy()
+        config['max_investment'] = 5000.0
+        config['position_ratio'] = 0.01  # 5000 × 0.01 = 50 < 100
+        is_valid, errors = validate_grid_config(config)
+        self.assertFalse(is_valid, "A-2: max_investment×position_ratio < 100 应被拒绝")
+        self.assertIn('max_investment', errors)
+
+        # 乘积恰好 100：应通过（边界值）
+        config = self.valid_config.copy()
+        config['max_investment'] = 10000.0
+        config['position_ratio'] = 0.01  # 10000 × 0.01 = 100
+        is_valid, _ = validate_grid_config(config)
+        self.assertTrue(is_valid, "A-2: max_investment×position_ratio = 100 应通过")
+
+        # 合理组合：应通过
+        config = self.valid_config.copy()
+        config['max_investment'] = 10000.0
+        config['position_ratio'] = 0.25  # 10000 × 0.25 = 2500
+        is_valid, _ = validate_grid_config(config)
+        self.assertTrue(is_valid, "A-2: 合理组合应通过")
 
 
 def run_tests():

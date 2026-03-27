@@ -59,8 +59,12 @@ class TestGridTradeBuy(unittest.TestCase):
         if hasattr(self, 'db') and self.db:
             self.db.close()
 
-    def _create_test_session(self, max_investment=10000, current_investment=0):
-        """创建测试会话"""
+    def _create_test_session(self, max_investment=10000, current_investment=0, position_ratio=0.20):
+        """创建测试会话
+
+        T-GAP-8修复：position_ratio 默认 0.20，与原硬编码 20% 保持向后兼容。
+        新测试可通过 position_ratio 参数验证不同比例的买入行为。
+        """
         session = GridSession(
             id=None,
             stock_code="000001.SZ",
@@ -68,7 +72,7 @@ class TestGridTradeBuy(unittest.TestCase):
             center_price=10.0,
             current_center_price=10.0,
             price_interval=0.05,
-            position_ratio=0.25,
+            position_ratio=position_ratio,
             callback_ratio=0.005,
             max_investment=max_investment,
             current_investment=current_investment,
@@ -432,6 +436,54 @@ class TestGridTradeBuy(unittest.TestCase):
 
         print(f"[OK] DB写入失败后内存状态完整回滚: buy_count={session.buy_count}, "
               f"investment={session.current_investment:.2f}")
+
+
+    def test_buy_uses_position_ratio(self):
+        """T-GAP-8验证：买入金额应使用 position_ratio 而非硬编码比例
+
+        场景：position_ratio=0.30 时，单次买入金额应为 max_investment × 0.30，
+        而非旧逻辑的 max_investment × 0.20。
+        """
+        print("\n========== T-GAP-8: 买入使用 position_ratio 而非硬编码 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        # position_ratio=0.30, max_investment=10000
+        # 单次买入金额 = 10000 × 0.30 = 3000 元
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=0,
+            position_ratio=0.30
+        )
+
+        signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
+
+        result = self.manager._execute_grid_buy(session, signal)
+        self.assertTrue(result, "买入应成功")
+
+        # 验证：10000×0.30=3000, 3000/10=300股, 300×10=3000元
+        expected_amount = 3000.0
+        self.assertAlmostEqual(session.current_investment, expected_amount, places=2,
+                               msg=f"position_ratio=0.30 时，买入金额应为 {expected_amount}")
+        print(f"[OK] position_ratio=0.30: 买入金额={session.current_investment:.2f}, "
+              f"预期={expected_amount:.2f}")
+
+        # 对比：position_ratio=0.10 时
+        session2 = self._create_test_session(
+            max_investment=10000,
+            current_investment=0,
+            position_ratio=0.10
+        )
+
+        result2 = self.manager._execute_grid_buy(session2, signal)
+        self.assertTrue(result2, "买入应成功")
+
+        # 10000×0.10=1000, 1000/10=100股, 100×10=1000元
+        expected_amount2 = 1000.0
+        self.assertAlmostEqual(session2.current_investment, expected_amount2, places=2,
+                               msg=f"position_ratio=0.10 时，买入金额应为 {expected_amount2}")
+        print(f"[OK] position_ratio=0.10: 买入金额={session2.current_investment:.2f}, "
+              f"预期={expected_amount2:.2f}")
 
 
 def run_tests():

@@ -14,7 +14,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from datetime import datetime
 from dataclasses import asdict
 
@@ -238,52 +238,56 @@ class TestGridTradeFundManagement(unittest.TestCase):
         print(f"[OK] 已达限额{session.max_investment:.2f}, 正确拒绝买入")
 
     def test_buy_sell_cycle_fund_tracking(self):
-        """测试6: 买卖循环资金追踪（适配V3严格防护：单次买入≤20%总额度）"""
+        """测试6: 买卖循环资金追踪（适配V3严格防护：单次买入≤position_ratio×总额度）"""
         print("\n========== 测试6: 买卖循环资金追踪 ==========")
 
-        session = self._create_test_session(max_investment=10000, current_investment=0)
+        # 禁用买卖冷却以测试完整买卖循环（A-4修复引入了GRID_SELL_COOLDOWN）
+        with patch.object(config, 'GRID_BUY_COOLDOWN', 0), \
+             patch.object(config, 'GRID_SELL_COOLDOWN', 0):
 
-        # 第1次买入（最多2000元）
-        buy_signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
-        self.manager._execute_grid_buy(session, buy_signal)
-        investment_after_buy1 = session.current_investment
-        print(f"  第1次买入后投入={investment_after_buy1:.2f}")
-        self.assertGreater(investment_after_buy1, 0, "买入后投入应>0")
+            session = self._create_test_session(max_investment=10000, current_investment=0)
 
-        # Mock持仓
-        position = {'volume': 200, 'cost_price': 10.0}
-        self.position_manager.get_position.return_value = position
+            # 第1次买入（最多2000元）
+            buy_signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
+            self.manager._execute_grid_buy(session, buy_signal)
+            investment_after_buy1 = session.current_investment
+            print(f"  第1次买入后投入={investment_after_buy1:.2f}")
+            self.assertGreater(investment_after_buy1, 0, "买入后投入应>0")
 
-        # 第1次卖出
-        sell_signal = {'trigger_price': 10.5, 'grid_level': 'upper'}
-        self.manager._execute_grid_sell(session, sell_signal)
-        investment_after_sell1 = session.current_investment
-        print(f"  第1次卖出后投入={investment_after_sell1:.2f}")
+            # Mock持仓
+            position = {'volume': 200, 'cost_price': 10.0}
+            self.position_manager.get_position.return_value = position
 
-        # 第2次买入（如果卖出后有剩余额度，才能买入）
-        self.manager._execute_grid_buy(session, buy_signal)
-        investment_after_buy2 = session.current_investment
-        print(f"  第2次买入后投入={investment_after_buy2:.2f}")
+            # 第1次卖出
+            sell_signal = {'trigger_price': 10.5, 'grid_level': 'upper'}
+            self.manager._execute_grid_sell(session, sell_signal)
+            investment_after_sell1 = session.current_investment
+            print(f"  第1次卖出后投入={investment_after_sell1:.2f}")
 
-        # 验证资金追踪（适配V3：如果卖出后投入已归零，第2次买入会重新开始）
-        self.assertLess(investment_after_sell1, investment_after_buy1, "卖出后资金应减少")
-        # V3适配：如果第2次买入成功，投入应>卖出后；如果失败（额度不足），投入=卖出后
-        if investment_after_buy2 > investment_after_sell1:
-            print(f"  ✓ 第2次买入成功，投入增加")
-        else:
-            print(f"  ✓ 第2次买入被拒绝（剩余额度不足），投入保持不变")
+            # 第2次买入（如果卖出后有剩余额度，才能买入）
+            self.manager._execute_grid_buy(session, buy_signal)
+            investment_after_buy2 = session.current_investment
+            print(f"  第2次买入后投入={investment_after_buy2:.2f}")
 
-        # 第2次卖出
-        position['volume'] = 400
-        self.manager._execute_grid_sell(session, sell_signal)
-        investment_after_sell2 = session.current_investment
-        print(f"  第2次卖出后投入={investment_after_sell2:.2f}")
-        self.assertLess(investment_after_sell2, investment_after_buy2, "卖出后资金应减少")
+            # 验证资金追踪（适配V3：如果卖出后投入已归零，第2次买入会重新开始）
+            self.assertLess(investment_after_sell1, investment_after_buy1, "卖出后资金应减少")
+            # V3适配：如果第2次买入成功，投入应>卖出后；如果失败（额度不足），投入=卖出后
+            if investment_after_buy2 > investment_after_sell1:
+                print(f"  ✓ 第2次买入成功，投入增加")
+            else:
+                print(f"  ✓ 第2次买入被拒绝（剩余额度不足），投入保持不变")
 
-        # 验证最终投入不为负
-        self.assertGreaterEqual(session.current_investment, 0, "投入不应为负")
+            # 第2次卖出
+            position['volume'] = 400
+            self.manager._execute_grid_sell(session, sell_signal)
+            investment_after_sell2 = session.current_investment
+            print(f"  第2次卖出后投入={investment_after_sell2:.2f}")
+            self.assertLess(investment_after_sell2, investment_after_buy2, "卖出后资金应减少")
 
-        print(f"[OK] 买卖循环资金追踪正确")
+            # 验证最终投入不为负
+            self.assertGreaterEqual(session.current_investment, 0, "投入不应为负")
+
+            print(f"[OK] 买卖循环资金追踪正确")
 
     def test_partial_investment_limit(self):
         """测试7: 部分投入限额测试"""

@@ -184,7 +184,7 @@ class TestExecutorCalledWithVolumePrice(MaxInvTestBase):
 
         # 预期 volume
         remaining = max_inv - session.current_investment
-        buy_amount = min(remaining, max_inv * 0.2)
+        buy_amount = min(remaining, max_inv * session.position_ratio)
         expected_volume = (int(buy_amount / trigger) // 100) * 100
 
         received = {'volume': None}
@@ -437,7 +437,7 @@ class TestHardCapValidation(MaxInvTestBase):
 
         # 预计算
         remaining = max_inv - before_inv
-        buy_amount = min(remaining, max_inv * 0.2)
+        buy_amount = min(remaining, max_inv * session.position_ratio)
         expected_volume = (int(buy_amount / trigger) // 100) * 100
         expected_delta = expected_volume * trigger
 
@@ -715,7 +715,7 @@ class TestMaxInvestmentEndToEnd(MaxInvTestBase):
                     after_inv = session.current_investment
 
                 # 计算期望：如果理论上能买100股则应成功，否则失败
-                expected_vol = (int(min(remaining_yuan, max_inv * 0.2) / trigger_price) // 100) * 100
+                expected_vol = (int(min(remaining_yuan, max_inv * session.position_ratio) / trigger_price) // 100) * 100
                 if expected_vol >= 100:
                     # 可以买，但不超限
                     self.assertLessEqual(after_inv, max_inv + 0.01,

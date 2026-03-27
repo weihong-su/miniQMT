@@ -221,6 +221,7 @@ class GridTradingManager:
         self.trackers: Dict[int, PriceTracker] = {}
         self.level_cooldowns: Dict[tuple, float] = {}
         self.last_buy_times: Dict[int, float] = {}  # {session_id: timestamp} 每次成功买入后记录时间，支持 GRID_BUY_COOLDOWN
+        self.last_sell_times: Dict[int, float] = {}  # {session_id: timestamp} 每次成功卖出后记录时间，支持 GRID_SELL_COOLDOWN（A-4修复）
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
 
         # 初始化:从数据库加载活跃会话
@@ -1096,15 +1097,15 @@ class GridTradingManager:
 
         # 2. 计算买入金额和数量
         remaining_investment = session.max_investment - session.current_investment
-        # 单次买入金额 = min(剩余额度, 总额度的20%)
-        # 设计说明: position_ratio 字段仅控制【卖出】时每次卖出持仓的比例（见 _execute_grid_sell），
-        # 【买入】每次固定使用 max_investment 的 20% 作为单档投入额，
-        # 以保证均匀分仓、防止早期满仓（最多 5 次即可用完 100%）。
-        # 如需调整买入比例，修改此处的 0.2 常量或将其提升为配置项。
-        target_buy_amount = session.max_investment * 0.2
+        # 单次买入金额 = min(剩余额度, 总额度 × position_ratio)
+        # T-GAP-8/A-1修复：买入与卖出使用同一个 position_ratio 字段，语义统一为"每档交易比例"。
+        # 原设计注释中说"买入固定用 max_investment×20%"是历史遗留，现改为以 position_ratio 为准：
+        # - 用户可通过调整 position_ratio 同时控制买入每档额度和卖出每档数量。
+        # - 默认 position_ratio=0.25 即单次买入不超过总额度 25%（最多 4 档），与原 20% 逻辑类似但更灵活。
+        target_buy_amount = session.max_investment * session.position_ratio
         buy_amount = min(remaining_investment, target_buy_amount)
         logger.debug(f"[GRID] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, "
-                    f"target_buy_amount(20%)={target_buy_amount:.2f}, buy_amount={buy_amount:.2f}")
+                    f"target_buy_amount(position_ratio={session.position_ratio*100:.0f}%)={target_buy_amount:.2f}, buy_amount={buy_amount:.2f}")
 
         if buy_amount < 100:  # 最小买入金额
             logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 可用买入金额{buy_amount:.2f}不足100元, 跳过买入")
@@ -1260,6 +1261,17 @@ class GridTradingManager:
         trigger_price = signal['trigger_price']
         logger.info(f"[GRID] _execute_grid_sell: 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
 
+        # 0.5 检查成功卖出冷却时间 (GRID_SELL_COOLDOWN) - 对称于买入冷却 BUG-C1/A-4修复
+        # 防止价格在上轨附近震荡时短时间内级联触发多次卖出
+        sell_cooldown = getattr(config, 'GRID_SELL_COOLDOWN', 0)
+        if sell_cooldown > 0:
+            last_sell = self.last_sell_times.get(session.id, 0)
+            elapsed = time.time() - last_sell
+            if elapsed < sell_cooldown:
+                logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中 "
+                               f"(剩余{sell_cooldown - elapsed:.0f}秒), 跳过卖出")
+                return False
+
         # 1. 获取当前持仓（优先使用调用方预取的快照，避免在持有 self.lock 时再次获取锁）
         position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
         if not position:
@@ -1267,29 +1279,41 @@ class GridTradingManager:
             return False
 
         current_volume = position.get('volume', 0)
+        # A-3修复：T+1 规则 - 当日买入的股份 available=0，不可当日卖出。
+        # 使用 available（可卖数量）而非 volume（总持仓）作为卖出上限，防止向 QMT 提交无效委托。
+        # 若持仓字典中无 available 字段（如部分 mock 或旧版快照），则退化为 current_volume（向后兼容）。
+        available_volume = position.get('available', current_volume)
         cost_price = position.get('cost_price', trigger_price)
-        logger.debug(f"[GRID] _execute_grid_sell: 当前持仓 volume={current_volume}, cost_price={cost_price:.2f}")
+        logger.debug(f"[GRID] _execute_grid_sell: 当前持仓 volume={current_volume}, "
+                     f"available={available_volume}, cost_price={cost_price:.2f}")
 
         if current_volume == 0:
             logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 持仓为0, 跳过卖出")
             return False
 
+        if available_volume == 0:
+            logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 可卖数量为0"
+                           f"（T+1限制：今日买入的{current_volume}股无法当日卖出）, 跳过卖出")
+            return False
+
         # 2. 计算卖出数量
-        # position_ratio 字段的语义说明：仅用于控制每次卖出持仓比例（此处），
-        # 买入每档固定使用 max_investment 的 20%，两者不对称，属于设计上的有意差异。
+        # position_ratio 字段控制每次卖出可卖持仓的比例（买入使用相同字段，语义统一）。
+        # A-3修复：基于 available_volume（可卖数量）而非 current_volume（总持仓），
+        # 遵守 T+1 规则，避免包含当日买入股份导致无效委托。
         # BUG-1修复：改用 (int(x) // 100) * 100 形式，语义更清晰：
         # 先计算应卖股数（浮点转整数截断），再向下取整到100的倍数
         # 与买入逻辑的整百方式统一，两者数值等价但表达一致
-        sell_volume = (int(current_volume * session.position_ratio) // 100) * 100
-        logger.debug(f"[GRID] _execute_grid_sell: 计算卖出数量 position_ratio={session.position_ratio*100:.1f}%, 初步sell_volume={sell_volume}")
+        sell_volume = (int(available_volume * session.position_ratio) // 100) * 100
+        logger.debug(f"[GRID] _execute_grid_sell: 计算卖出数量 position_ratio={session.position_ratio*100:.1f}%, "
+                     f"available_volume={available_volume}, 初步sell_volume={sell_volume}")
 
         if sell_volume == 0:
             sell_volume = 100  # 最少卖100股
             logger.debug(f"[GRID] _execute_grid_sell: 卖出数量为0, 调整为最小值100")
 
-        if sell_volume > current_volume:
-            sell_volume = int(current_volume / 100) * 100
-            logger.debug(f"[GRID] _execute_grid_sell: 卖出数量超过持仓, 调整为{sell_volume}")
+        if sell_volume > available_volume:
+            sell_volume = int(available_volume / 100) * 100
+            logger.debug(f"[GRID] _execute_grid_sell: 卖出数量超过可卖持仓(T+1可卖={available_volume}), 调整为{sell_volume}")
 
         if sell_volume == 0:
             logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 可卖数量不足100股, 跳过")
@@ -1320,6 +1344,12 @@ class GridTradingManager:
                 return False
             trade_id = result.get('order_id', '')
             logger.info(f"[GRID] _execute_grid_sell: 实盘网格卖出成功: {stock_code}, trade_id={trade_id}")
+
+        # A-4修复（BUG-C1对称）: 下单成功后立即记录卖出冷却时间，防止DB写入失败时重复下单。
+        # 与买入 BUG-C1 修复完全对称：即使后续 DB 操作抛出异常并回滚内存统计，
+        # GRID_SELL_COOLDOWN 保护依然有效，阻止在冷却期内再次触发卖出。
+        self.last_sell_times[session.id] = time.time()
+        logger.debug(f"[GRID] _execute_grid_sell: A-4修复 last_sell_times[{session.id}]已记录(DB写入前)")
 
         # 4. 更新会话统计
         old_trade_count = session.trade_count

@@ -84,11 +84,18 @@ class TestGridTradeSell(unittest.TestCase):
 
         return session
 
-    def _mock_position(self, volume=1000, cost_price=10.0):
-        """Mock持仓信息"""
+    def _mock_position(self, volume=1000, cost_price=10.0, available=None):
+        """Mock持仓信息
+
+        Args:
+            volume: 总持仓量
+            cost_price: 成本价
+            available: 可卖数量（T+1规则）。若为 None 则默认等于 volume（无T+1限制）。
+        """
         return {
             'stock_code': '000001.SZ',
             'volume': volume,
+            'available': available if available is not None else volume,
             'cost_price': cost_price,
             'current_price': 10.5
         }
@@ -461,6 +468,122 @@ class TestGridTradeSell(unittest.TestCase):
 
         print(f"[OK] DB写入失败后内存状态完整回滚: sell_count={session.sell_count}, "
               f"investment={session.current_investment:.2f}")
+
+    def test_sell_t_plus_1_available_check(self):
+        """A-3验证：卖出数量受 available（T+1可卖数量）限制
+
+        场景：持仓 volume=1000, available=400（今日买入600股不可卖），
+        position_ratio=0.25 → 应卖 min(1000*0.25, 400) 范围内的整百数。
+        """
+        print("\n========== A-3: T+1 available 检查 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000,
+            position_ratio=0.25
+        )
+
+        # 持仓1000股，但只有400股可卖（今日买入600股受T+1限制）
+        position = self._mock_position(volume=1000, cost_price=10.0, available=400)
+        self.position_manager.get_position.return_value = position
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': 10.5,
+            'grid_level': 'upper',
+            'peak_price': 10.6,
+            'callback_ratio': 0.005
+        }
+
+        result = self.manager._execute_grid_sell(session, signal)
+        self.assertTrue(result, "卖出应成功")
+
+        # position_ratio=0.25, available=400 → min(100, 400×0.25=100)
+        expected_sell_volume = 100  # min(int(400*0.25)//100*100, available)
+        expected_sell_amount = expected_sell_volume * 10.5
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT volume FROM grid_trades WHERE session_id=? AND trade_type='SELL'", (session.id,))
+        trade = cursor.fetchone()
+        actual_sell = trade['volume'] if trade else 0
+
+        self.assertLessEqual(actual_sell, 400,
+                             f"卖出数量{actual_sell}不应超过可卖数量400（T+1限制）")
+        print(f"[OK] T+1检查: 实际卖出={actual_sell}股, 可卖=400股, volume=1000股")
+
+    def test_sell_rejected_when_available_zero(self):
+        """A-3验证：available=0（当日全仓买入）时拒绝卖出
+
+        场景：volume=1000, available=0（今日全部买入），应拒绝卖出。
+        """
+        print("\n========== A-3: available=0 拒绝卖出 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000
+        )
+
+        # 持仓1000股但全部不可卖（今日买入）
+        position = self._mock_position(volume=1000, cost_price=10.0, available=0)
+        self.position_manager.get_position.return_value = position
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': 10.5,
+            'grid_level': 'upper',
+            'peak_price': 10.6,
+            'callback_ratio': 0.005
+        }
+
+        result = self.manager._execute_grid_sell(session, signal)
+        self.assertFalse(result, "available=0 时应拒绝卖出（T+1限制）")
+        self.assertEqual(session.sell_count, 0, "卖出次数应为0")
+        print("[OK] available=0 时正确拒绝卖出")
+
+    def test_sell_cooldown_prevents_rapid_repeated(self):
+        """A-4/B-5验证：GRID_SELL_COOLDOWN 阻止短时间内连续卖出
+
+        场景：第一次卖出成功后，GRID_SELL_COOLDOWN=60 秒内再次卖出应被阻止。
+        """
+        print("\n========== A-4/B-5: 卖出冷却机制 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000,
+            position_ratio=0.25
+        )
+
+        position = self._mock_position(volume=2000, cost_price=10.0)
+        self.position_manager.get_position.return_value = position
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': 10.5,
+            'grid_level': 'upper',
+            'peak_price': 10.6,
+            'callback_ratio': 0.005
+        }
+
+        with patch.object(config, 'GRID_SELL_COOLDOWN', 60):
+            # 第一次卖出：应成功
+            result1 = self.manager._execute_grid_sell(session, signal)
+            self.assertTrue(result1, "第一次卖出应成功")
+
+            # 第二次卖出：应被冷却阻止
+            result2 = self.manager._execute_grid_sell(session, signal)
+            self.assertFalse(result2,
+                             "GRID_SELL_COOLDOWN 期间内，第二次卖出应被阻止")
+
+        print("[OK] 卖出冷却机制验证通过")
 
 
 def run_tests():

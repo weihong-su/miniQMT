@@ -54,7 +54,10 @@ class GridConfigSchema(Schema):
     )
 
     stop_loss = fields.Float(
-        validate=validate.Range(min=-0.50, max=0, error='止损比例必须在-0.50-0之间（-50%-0%）')
+        # C-4修复：max 从 0 改为 -0.001，禁止 stop_loss=0（即"亏损0%就止损"）。
+        # stop_loss=0 意味着首次买入后只要浮亏就触发退出，与止损的本意（容忍一定回撤）矛盾。
+        # 新 max=-0.001 要求止损比例至少为 -0.1%，确保"止损"语义上确实在容忍一定亏损。
+        validate=validate.Range(min=-0.50, max=-0.001, error='止损比例必须在-0.50到-0.001之间（-50%到-0.1%）')
     )
 
     duration_days = fields.Int(
@@ -62,7 +65,13 @@ class GridConfigSchema(Schema):
     )
 
     @validates_schema
-    def validate_profit_and_loss(self, data, **kwargs):
+    def validate_cross_fields(self, data, **kwargs):
+        """跨字段校验入口"""
+        self._validate_profit_and_loss(data)
+        self._validate_callback_vs_interval(data)
+        self._validate_investment_feasibility(data)
+
+    def _validate_profit_and_loss(self, data):
         """验证目标盈利和止损的合理性
 
         VAL-2修复：精确化豁免逻辑。
@@ -84,6 +93,37 @@ class GridConfigSchema(Schema):
 
             if not both_at_extreme_boundary and data['target_profit'] < abs(data['stop_loss']):
                 raise ValidationError('目标盈利应大于或等于止损幅度', 'target_profit')
+
+    def _validate_callback_vs_interval(self, data):
+        """C-1修复：校验回调比例必须小于网格价格间隔
+
+        语义约束：callback_ratio 是价格从峰/谷回落的触发阈值，price_interval 是网格档位间距。
+        若 callback_ratio >= price_interval，回调信号在价格尚未回到上一档时就触发，
+        导致在错误方向上执行交易（如价格仍在下轨以下时就触发买入回调卖出）。
+        """
+        if 'callback_ratio' in data and 'price_interval' in data:
+            if data['callback_ratio'] >= data['price_interval']:
+                raise ValidationError(
+                    f'回调比例({data["callback_ratio"]})必须小于网格价格间隔({data["price_interval"]})，'
+                    '否则信号触发方向与网格逻辑矛盾',
+                    'callback_ratio'
+                )
+
+    def _validate_investment_feasibility(self, data):
+        """A-2修复：校验 max_investment × position_ratio 可行性
+
+        买入金额 = max_investment × position_ratio，需至少 100 元才能生成最低 100 股的订单。
+        若乘积 < 100，则每次买入都会因金额不足被拒绝，会话永远无法执行任何交易。
+        """
+        if 'max_investment' in data and 'position_ratio' in data:
+            min_trade_amount = data['max_investment'] * data['position_ratio']
+            if min_trade_amount < 100:
+                raise ValidationError(
+                    f'最大投入({data["max_investment"]})×每档比例({data["position_ratio"]})'
+                    f'={min_trade_amount:.2f}元 < 100元最低买入额，'
+                    '组合无法执行任何交易，请增大max_investment或position_ratio',
+                    'max_investment'
+                )
 
 
 class GridTemplateSchema(Schema):
@@ -115,7 +155,8 @@ class GridTemplateSchema(Schema):
     )
 
     stop_loss = fields.Float(
-        validate=validate.Range(min=-0.50, max=0, error='止损比例必须在-0.50-0之间')
+        # C-4修复：同 GridConfigSchema，禁止 stop_loss=0
+        validate=validate.Range(min=-0.50, max=-0.001, error='止损比例必须在-0.50到-0.001之间')
     )
 
     duration_days = fields.Int(

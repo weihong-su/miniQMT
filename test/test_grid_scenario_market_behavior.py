@@ -120,11 +120,13 @@ class TestGridScenarioMarketBehavior(unittest.TestCase):
         # 保存并覆盖配置
         self._orig_sim = config.ENABLE_SIMULATION_MODE
         self._orig_buy_cooldown = getattr(config, 'GRID_BUY_COOLDOWN', 0)
+        self._orig_sell_cooldown = getattr(config, 'GRID_SELL_COOLDOWN', 0)
         self._orig_level_cooldown = getattr(config, 'GRID_LEVEL_COOLDOWN', 60)
         self._orig_require_profit = getattr(config, 'GRID_REQUIRE_PROFIT_TRIGGERED', True)
 
         config.ENABLE_SIMULATION_MODE = True   # 不依赖真实交易接口
         config.GRID_BUY_COOLDOWN = 0           # 禁用买入冷却以支持快速连续买入
+        config.GRID_SELL_COOLDOWN = 0          # 禁用卖出冷却以支持快速连续卖出（A-4修复引入）
         config.GRID_LEVEL_COOLDOWN = 0         # 禁用档位冷却以支持价格序列快速推进
         config.GRID_REQUIRE_PROFIT_TRIGGERED = False  # 不要求已触发止盈
 
@@ -132,6 +134,7 @@ class TestGridScenarioMarketBehavior(unittest.TestCase):
         """每个测试后恢复配置."""
         config.ENABLE_SIMULATION_MODE = self._orig_sim
         config.GRID_BUY_COOLDOWN = self._orig_buy_cooldown
+        config.GRID_SELL_COOLDOWN = self._orig_sell_cooldown
         config.GRID_LEVEL_COOLDOWN = self._orig_level_cooldown
         config.GRID_REQUIRE_PROFIT_TRIGGERED = self._orig_require_profit
         if hasattr(self, 'db'):
