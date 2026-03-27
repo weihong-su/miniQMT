@@ -952,7 +952,11 @@ class DataManager:
                 raise
 
             if not latest_quote or stock_code not in latest_quote:
-                logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
+                # 交易时段返回空是异常（WARNING）；非交易时段是正常行为（DEBUG），避免盘前/盘后刷屏
+                if config.is_trade_time():
+                    logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
+                else:
+                    logger.debug(f"xtdata:未获取到 {stock_code} 的tick行情（非交易时段）")
                 self._record_xtdata_failure("empty_quote")
                 return {}  # 返回空字典而不是None
 
