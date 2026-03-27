@@ -181,6 +181,14 @@
       ],
       "priority": "high"
     },
+    "grid_qa_gap_supplement": {
+      "name": "网格交易QA审查缺口补充测试",
+      "description": "覆盖MECE审查发现的5个测试缺口: SP-1(信号优先级冲突:stop_loss>grid>take_profit)、SP-2(卖出最小100股vs position_ratio边界/M-1)、SP-3(position_snapshot=None降级路径/RISK-3)、SP-4(_normalize_code键一致性/H-1)、SP-5(极端行情连续触发稳定性)",
+      "modules": [
+        "test.test_grid_qa_gap_supplement"
+      ],
+      "priority": "critical"
+    },
     "grid_simulation": {
       "name": "网格交易价格模拟测试",
       "description": "使用自动化脚本模拟持仓数据波动，验证网格交易是否能正确触发买卖信号（30个测试用例）",
@@ -207,7 +215,8 @@
         "test.test_grid_bugfix_c1",
         "test.test_premarket_xttrader_reinit",
         "test.test_max_investment_strict",
-        "test.test_stop_loss_price_calc"
+        "test.test_stop_loss_price_calc",
+        "test.test_grid_qa_gap_supplement"
       ],
       "priority": "critical"
     }
