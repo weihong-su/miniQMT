@@ -373,8 +373,8 @@ while not stop_flag:
 
 **关键配置**:
 - `ENABLE_GRID_TRADING`: 启用/禁用网格交易
-- `GRID_BUY_INTERVAL`: 网格买入间隔时间(秒)
-- `GRID_MAX_POSITIONS`: 单只股票最大网格持仓数
+- `GRID_CALLBACK_RATIO`: 回调触发比例(0.5%)
+- `GRID_BUY_COOLDOWN` / `GRID_SELL_COOLDOWN`: 买入/卖出冷却时间(秒)
 
 #### 5. 卖出监控线程 (sell_monitor.py)
 
@@ -684,24 +684,17 @@ if force_grid_stop and self.grid_manager:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: 创建会话
-    PENDING --> ACTIVE: 首次买入成功
-    ACTIVE --> ACTIVE: 持续网格买入
-    ACTIVE --> EXITED: 触发退出条件
-    ACTIVE --> FORCE_EXITED: 强制退出(止损硬优先级)
-å¤æ³¨ï¼æ­¢æåè®¸å¨ä»ä¹°å¥æªååºé¶æ®µè§¦åï¼æ­¢çä»è¦æ±ä¹°åéå¯¹å®æã
-    PENDING --> CANCELLED: 创建失败/取消
-    EXITED --> [*]
-    FORCE_EXITED --> [*]
-    CANCELLED --> [*]
+    [*] --> active: 创建会话(status=active)
+    active --> active: 持续网格买卖
+    active --> stopped: 触发退出条件(stop_reason记录原因)
+    stopped --> [*]
 ```
 
-**会话状态说明**:
-- `PENDING`: 等待首次买入
-- `ACTIVE`: 活跃交易中
-- `EXITED`: 正常退出（达到止盈/止损/偏离度/超时/持仓清空）
-- `FORCE_EXITED`: 强制退出（持仓止损硬优先级触发）
-- `CANCELLED`: 已取消
+**数据库状态值**（`grid_trading_sessions.status`）:
+- `'active'`: 活跃交易中（创建时默认）
+- `'stopped'`: 已停止（所有退出路径均写入此状态，具体原因存储在 `stop_reason` 字段）
+
+**常见 stop_reason 值**: `'deviation'`、`'target_profit'`、`'stop_loss'`、`'expired'`、`'position_cleared'`、`'stop_loss_hard'`、`'manual'`、`'init_error'`
 
 ### 网格交易工作流程
 
@@ -811,23 +804,41 @@ total_profit = sold_revenue + holding_value - total_cost
 total_profit_ratio = total_profit / total_cost
 ```
 
-### 网格买入策略
+### 网格买卖信号触发逻辑
 
-**触发条件**:
-1. 当前无活跃网格会话或距上次买入超过 `GRID_BUY_INTERVAL` 秒
-2. 当前价格低于上次买入价格的 `(1 - GRID_PRICE_DROP_THRESHOLD)`
-3. 未达到最大持仓数 `GRID_MAX_POSITIONS`
+**三级网格价格**:
+```
+lower = current_center_price × (1 - price_interval)
+center = current_center_price
+upper = current_center_price × (1 + price_interval)
+```
 
-**买入金额**:
-- 每次买入固定金额 `GRID_BUY_AMOUNT` (默认5000元)
-- 不足100股则向上取整到100的倍数
+**买入触发**:
+1. 价格穿越 `lower` 向下 → 等待回调（`waiting_callback=True`）
+2. 价格从谷值反弹 ≥ `callback_ratio`（默认0.5%）→ 触发买入
 
-**示例配置**:
+**卖出触发**:
+1. 价格穿越 `upper` 向上 → 等待回调（`waiting_callback=True`）
+2. 价格从峰值下跌 ≥ `callback_ratio`（默认0.5%）→ 触发卖出
+
+**每次交易后重建网格**:
 ```python
-GRID_BUY_AMOUNT = 5000          # 每次买入5000元
-GRID_PRICE_DROP_THRESHOLD = 0.02  # 价格下跌2%触发买入
-GRID_BUY_INTERVAL = 300         # 两次买入间隔至少5分钟
-GRID_MAX_POSITIONS = 10         # 单只股票最多10个网格位
+current_center_price = trigger_price  # 以成交价为新中心
+tracker.reset(trigger_price)          # 重置价格追踪器
+```
+
+**关键配置**:
+```python
+GRID_DEFAULT_PRICE_INTERVAL = 0.05   # 价格间隔5%
+GRID_DEFAULT_POSITION_RATIO = 0.25   # 每档交易持仓25%
+GRID_CALLBACK_RATIO = 0.005          # 回调触发比例0.5%
+GRID_BUY_COOLDOWN = 300              # 买入冷却时间(秒)
+GRID_SELL_COOLDOWN = 300             # 卖出冷却时间(秒)
+GRID_LEVEL_COOLDOWN = 60             # 同档位冷却时间(秒)
+GRID_MAX_DEVIATION_RATIO = 0.15      # 最大偏离度15%
+GRID_TARGET_PROFIT_RATIO = 0.10      # 目标盈利10%
+GRID_STOP_LOSS_RATIO = -0.10         # 止损-10%
+GRID_DEFAULT_DURATION_DAYS = 7       # 默认运行7天
 ```
 
 ### 线程安全保护
@@ -894,16 +905,15 @@ CREATE TABLE positions (
 ```sql
 CREATE TABLE trade_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    stock_code TEXT,                   -- 股票代码
-    stock_name TEXT,                   -- 股票名称
-    trade_time TIMESTAMP,              -- 交易时间
-    trade_type TEXT,                   -- BUY, SELL
-    price REAL,                        -- 交易价格
-    volume INTEGER,                    -- 交易数量
-    amount REAL,                       -- 交易金额
-    trade_id TEXT,                     -- 订单ID
-    commission REAL,                   -- 手续费
-    strategy TEXT                      -- 策略标识(simu/auto_partial/stop_loss/grid等)
+    stock_code TEXT NOT NULL,              -- 股票代码
+    trade_type TEXT NOT NULL,              -- BUY, SELL
+    price REAL NOT NULL,                   -- 交易价格
+    volume INTEGER NOT NULL,               -- 交易数量
+    amount REAL NOT NULL,                  -- 交易金额
+    trade_id TEXT,                         -- 订单ID
+    strategy TEXT,                         -- 策略标识
+    trade_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 交易时间
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
@@ -928,54 +938,87 @@ CREATE TABLE stock_daily_data (
 )
 ```
 
-#### grid_sessions (网格会话表)
+#### grid_trading_sessions (网格会话表)
 
 ```sql
-CREATE TABLE grid_sessions (
-    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE grid_trading_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     stock_code TEXT NOT NULL,              -- 股票代码
-    stock_name TEXT,                       -- 股票名称
-    status TEXT DEFAULT 'PENDING',         -- 会话状态: PENDING/ACTIVE/EXITED/FORCE_EXITED/CANCELLED
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 创建时间
-    update_time TIMESTAMP,                 -- 最后更新时间
-    exit_time TIMESTAMP,                   -- 退出时间
-    exit_reason TEXT,                      -- 退出原因
-    initial_price REAL,                    -- 首次买入价格
-    total_buy_volume INTEGER DEFAULT 0,    -- 累计买入数量
+    status TEXT NOT NULL DEFAULT 'active', -- 会话状态: active | stopped
+
+    -- 价格配置
+    center_price REAL NOT NULL,            -- 初始中心价格
+    current_center_price REAL,             -- 当前中心价格(每次交易后重建)
+    price_interval REAL NOT NULL DEFAULT 0.05,  -- 价格间隔(5%)
+
+    -- 交易配置
+    position_ratio REAL NOT NULL DEFAULT 0.25,  -- 每档交易比例(25%)
+    callback_ratio REAL NOT NULL DEFAULT 0.005, -- 回调触发比例(0.5%)
+
+    -- 资金配置
+    max_investment REAL NOT NULL,          -- 最大投入金额
+    current_investment REAL DEFAULT 0,     -- 当前已投入金额
+
+    -- 退出配置
+    max_deviation REAL DEFAULT 0.15,       -- 最大偏离度(15%)
+    target_profit REAL DEFAULT 0.10,       -- 目标盈利(10%, 需sell_count>0)
+    stop_loss REAL DEFAULT -0.10,          -- 止损比例(-10%)
+
+    -- 统计数据
+    trade_count INTEGER DEFAULT 0,         -- 总交易次数
+    buy_count INTEGER DEFAULT 0,           -- 买入次数
+    sell_count INTEGER DEFAULT 0,          -- 卖出次数
     total_buy_amount REAL DEFAULT 0,       -- 累计买入金额
-    total_sell_volume INTEGER DEFAULT 0,   -- 累计卖出数量
     total_sell_amount REAL DEFAULT 0,      -- 累计卖出金额
-    realized_profit REAL DEFAULT 0,        -- 已实现盈亏
-    config_snapshot TEXT                   -- 创建时的配置快照(JSON)
+
+    -- 时间戳
+    start_time TEXT NOT NULL,              -- 会话开始时间
+    end_time TEXT NOT NULL,                -- 会话预定结束时间
+    stop_time TEXT,                        -- 实际停止时间
+    stop_reason TEXT,                      -- 停止原因
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- 分类信息
+    risk_level TEXT DEFAULT 'moderate',    -- 风险等级
+    template_name TEXT                     -- 使用的模板名称
 )
 ```
 
 **状态转换**:
 
-| 当前状态 | 触发事件 | 下一状态 |
-|---------|---------|---------|
-| PENDING | 首次买入成功 | ACTIVE |
-| PENDING | 创建失败/手动取消 | CANCELLED |
-| ACTIVE | 达到止盈(需买卖配对)/止损(仅买即可)/偏离度/超时/持仓清空 | EXITED |
-| ACTIVE | 持仓触发止损信号（硬优先级强制） | FORCE_EXITED |
+| 当前状态 | 触发事件 | 下一状态 | stop_reason |
+|---------|---------|---------|-------------|
+| `active` | 达到目标盈利(需买卖配对) | `stopped` | `'target_profit'` |
+| `active` | 触发止损 | `stopped` | `'stop_loss'` |
+| `active` | 偏离度超限 | `stopped` | `'deviation'` |
+| `active` | 持仓被清空 | `stopped` | `'position_cleared'` |
+| `active` | 会话超时 | `stopped` | `'expired'` |
+| `active` | 持仓止损硬优先级强制停止 | `stopped` | `'stop_loss_hard'` |
+| `active` | Web API手动停止 | `stopped` | `'manual'` |
 
 #### grid_trades (网格交易记录表)
 
 ```sql
 CREATE TABLE grid_trades (
-    trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL,           -- 所属会话ID
     stock_code TEXT NOT NULL,              -- 股票代码
-    trade_type TEXT NOT NULL,             -- BUY / SELL
-    price REAL NOT NULL,                  -- 成交价格
-    volume INTEGER NOT NULL,              -- 成交数量
-    amount REAL NOT NULL,                 -- 成交金额
-    commission REAL DEFAULT 0,            -- 手续费
-    order_id TEXT,                        -- QMT订单ID
-    trade_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 成交时间
-    grid_level INTEGER,                   -- 网格层级(第几次买入)
-    note TEXT,                            -- 备注
-    FOREIGN KEY (session_id) REFERENCES grid_sessions(session_id)
+    trade_type TEXT NOT NULL,              -- BUY / SELL
+    grid_level REAL NOT NULL,              -- 网格触发价位
+    trigger_price REAL NOT NULL,           -- 实际触发价格
+    volume INTEGER NOT NULL,               -- 成交数量
+    amount REAL NOT NULL,                  -- 成交金额
+    peak_price REAL,                       -- 价格追踪峰值
+    valley_price REAL,                     -- 价格追踪谷值
+    callback_ratio REAL,                   -- 实际回调比例
+    trade_id TEXT,                         -- QMT订单ID
+    trade_time TEXT NOT NULL,              -- 成交时间
+    grid_center_before REAL,               -- 交易前网格中心价
+    grid_center_after REAL,                -- 交易后网格中心价
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
 )
 ```
 
@@ -1000,11 +1043,11 @@ CREATE TABLE system_config (
 
 **常用配置键**:
 ```
-ENABLE_AUTO_TRADING        -- 自动交易开关
-ENABLE_GRID_TRADING        -- 网格交易开关
-STOP_LOSS_RATIO            -- 止损比例
-INITIAL_TAKE_PROFIT_RATIO  -- 首次止盈比例
-GRID_BUY_AMOUNT            -- 网格买入金额
+ENABLE_AUTO_TRADING              -- 自动交易开关
+ENABLE_GRID_TRADING              -- 网格交易开关
+STOP_LOSS_RATIO                  -- 止损比例
+INITIAL_TAKE_PROFIT_RATIO        -- 首次止盈比例
+GRID_DEFAULT_PRICE_INTERVAL      -- 网格价格间隔
 ```
 
 #### config_history (配置历史表)
@@ -1204,8 +1247,8 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | `ENABLE_SIMULATION_MODE` | `True` | 模拟/实盘切换 |
 | `ENABLE_AUTO_TRADING` | `False` | 自动交易执行开关 |
 | `ENABLE_THREAD_MONITOR` | `True` | 线程健康监控 |
-| `ENABLE_GRID_TRADING` | `False` | 网格交易功能开关 |
-| `ENABLE_SELL_MONITOR` | `False` | 卖出监控功能开关 |
+| `ENABLE_GRID_TRADING` | `True` | 网格交易功能开关 |
+| `ENABLE_SELL_MONITOR` | `True` | 卖出监控功能开关 |
 | `ENABLE_XTQUANT_MANAGER` | `False` | XtQuantManager HTTP网关（多账户） |
 | `ENABLE_HEARTBEAT_LOG` | `True` | 心跳日志（每30分钟输出系统状态） |
 | `ENABLE_PREMARKET_XTQUANT_REINIT` | `True` | 盘前9:25自动重新初始化xtquant |
@@ -1235,13 +1278,17 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 | 配置项 | 默认值 | 说明 |
 |-------|--------|------|
-| `GRID_BUY_AMOUNT` | `5000` | 每次网格买入金额(元) |
-| `GRID_PRICE_DROP_THRESHOLD` | `0.02` | 价格下跌阈值(2%) |
-| `GRID_BUY_INTERVAL` | `300` | 两次买入最小间隔(秒) |
-| `GRID_MAX_POSITIONS` | `10` | 单只股票最大网格持仓数 |
-| `GRID_TAKE_PROFIT_RATIO` | `0.08` | 网格止盈比例(8%) |
-| `GRID_STOP_LOSS_RATIO` | `-0.10` | 网格止损比例(-10%) |
-| `GRID_MAX_HOLD_DAYS` | `30` | 网格最大持有天数 |
+| `GRID_DEFAULT_PRICE_INTERVAL` | `0.05` | 默认价格间隔(5%) |
+| `GRID_DEFAULT_POSITION_RATIO` | `0.25` | 默认每档交易比例(25%) |
+| `GRID_CALLBACK_RATIO` | `0.005` | 回调触发比例(0.5%) |
+| `GRID_BUY_COOLDOWN` | `300` | 买入冷却时间(秒) |
+| `GRID_SELL_COOLDOWN` | `300` | 卖出冷却时间(秒) |
+| `GRID_LEVEL_COOLDOWN` | `60` | 同档位冷却时间(秒) |
+| `GRID_MAX_DEVIATION_RATIO` | `0.15` | 最大偏离度(15%) |
+| `GRID_TARGET_PROFIT_RATIO` | `0.10` | 目标盈利比例(10%) |
+| `GRID_STOP_LOSS_RATIO` | `-0.10` | 止损比例(-10%) |
+| `GRID_DEFAULT_DURATION_DAYS` | `7` | 默认运行天数 |
+| `GRID_DEFAULT_MAX_INVESTMENT_RATIO` | `0.5` | 默认最大投入为持仓市值50% |
 
 #### 委托单管理
 
@@ -1278,14 +1325,15 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 ---
 
-**文档版本**: v1.3
-**最后更新**: 2026-03-25
+**文档版本**: v1.4
+**最后更新**: 2026-03-28
 **维护者**: miniQMT Team
 
 ### 变更记录
 
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
+| v1.4 | 2026-03-28 | 修正数据库表结构（grid_trading_sessions/grid_trades真实字段）；修正会话状态值（active/stopped）；更新网格交易配置参数（GRID_DEFAULT_PRICE_INTERVAL等）；修正ENABLE_GRID_TRADING/ENABLE_SELL_MONITOR默认值 |
 | v1.3 | 2026-03-25 | 更新网格退出条件（止盈/止损非对称设计、双重偏离度）；新增信号三级优先级体系；记录 stop_loss 硬优先级防死锁机制 |
 | v1.2 | 2026-03-13 | 新增 QMT Fail-Safe 重连架构；XtQuantManager 三级健康监控 |
 | v1.1 | 2026-02-01 | 新增无人值守运行架构；线程自愈机制 |

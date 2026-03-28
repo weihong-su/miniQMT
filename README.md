@@ -185,11 +185,11 @@ ENABLE_AUTO_TRADING = False     # 自动交易执行开关 ⚠️
 
 # 策略功能
 ENABLE_DYNAMIC_STOP_PROFIT = True  # 止盈止损功能
-ENABLE_GRID_TRADING = False        # 网格交易功能
+ENABLE_GRID_TRADING = True         # 网格交易功能
 
 # 系统功能
 ENABLE_THREAD_MONITOR = True    # 线程健康监控（无人值守必需）⭐
-ENABLE_SELL_MONITOR = False     # 卖出监控开关
+ENABLE_SELL_MONITOR = True      # 卖出监控开关
 ENABLE_XTQUANT_MANAGER = False  # XtQuantManager HTTP网关（多账户时开启）
 DEBUG = False                   # 调试模式
 ```
@@ -217,20 +217,22 @@ DYNAMIC_TAKE_PROFIT = [
 ### 网格交易配置
 
 ```python
-ENABLE_GRID_TRADING = False     # 网格交易功能开关
-GRID_BUY_AMOUNT = 5000          # 每次买入金额(元)
-GRID_PRICE_DROP_THRESHOLD = 0.02  # 价格下跌阈值(2%)
-GRID_TAKE_PROFIT_RATIO = 0.08   # 网格止盈比例(8%)
-GRID_STOP_LOSS_RATIO = -0.10    # 网格止损比例(-10%)
-GRID_MAX_HOLD_DAYS = 30         # 最大持有天数
+ENABLE_GRID_TRADING = True                   # 网格交易功能开关（默认已启用）
+GRID_DEFAULT_PRICE_INTERVAL = 0.05           # 价格间隔5%（下跌触发买入/上涨触发卖出）
+GRID_DEFAULT_POSITION_RATIO = 0.25           # 每档交易持仓比例25%
+GRID_CALLBACK_RATIO = 0.005                  # 回调触发比例0.5%
+GRID_BUY_COOLDOWN = 300                      # 买入冷却时间(秒)
+GRID_SELL_COOLDOWN = 300                     # 卖出冷却时间(秒)
+GRID_MAX_DEVIATION_RATIO = 0.15              # 最大偏离度15%（触发退出）
+GRID_TARGET_PROFIT_RATIO = 0.10              # 目标盈利10%（需买卖配对后触发）
+GRID_STOP_LOSS_RATIO = -0.10                 # 止损-10%
+GRID_DEFAULT_DURATION_DAYS = 7               # 默认运行7天
 ```
 
 ### 委托单管理配置
 
 ```python
-ENABLE_SELL_MONITOR = False     # 卖出监控开关
-SELL_ORDER_TIMEOUT = 30         # 委托单超时时间(秒)
-ORDER_CHECK_INTERVAL = 2        # 委托单检查间隔(秒)
+ENABLE_SELL_MONITOR = True      # 卖出监控开关（默认已启用）
 ```
 
 ---
@@ -263,6 +265,7 @@ python test/run_integration_regression_tests.py --all
 python test/run_integration_regression_tests.py --group system_integration  # 系统集成
 python test/run_integration_regression_tests.py --group stop_profit         # 止盈止损
 python test/run_integration_regression_tests.py --group grid_comprehensive  # 网格综合
+python test/run_integration_regression_tests.py --group grid_full_range_coverage  # 全区间覆盖（114用例）
 
 # 其他选项
 python test/run_integration_regression_tests.py --all --retry-failed   # 失败重试
@@ -350,12 +353,10 @@ tail -n 100 logs/qmt_trading.log
 
 ### Q6: 如何启用网格交易?
 
-**A**: 修改 `config.py`:
+**A**: 网格交易默认已启用（`ENABLE_GRID_TRADING = True`）。通过 Web 界面创建网格会话即可。网格会话支持自动止盈（需买卖配对）、止损和超时退出。如需禁用，修改 `config.py`：
 ```python
-ENABLE_GRID_TRADING = True  # 启用网格交易
-GRID_BUY_AMOUNT = 5000      # 每次买入5000元
+ENABLE_GRID_TRADING = False
 ```
-通过 Web 界面创建网格会话，系统会自动检测买入信号并执行。网格会话支持自动止盈、止损和超时退出。
 
 ### Q7: 如何通过Web界面修改配置?
 
@@ -407,6 +408,16 @@ GRID_BUY_AMOUNT = 5000      # 每次买入5000元
 <div align="center">
 
 **⭐ 如果这个项目对你有帮助,请给个Star支持一下! ⭐**
+
+I would be delighted if you could consider **buying me a coffee** ☕️ to support my work.
+
+<a href="https://buymeacoffee.com/suweihongc">
+  <img src="https://www.buymeacoffee.com/assets/img/guidelines/download-assets-sm-2.svg" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;" >
+</a>
+
+You can also support via WeChat or Alipay:
+
+<img src="https://get.spdt.work/FreeAI_pay.jpg" alt="Donation QR Code" width="200">
 
 Made with ❤️ by miniQMT Team
 
