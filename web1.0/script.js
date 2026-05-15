@@ -140,8 +140,6 @@
         StopLossEnabled: document.getElementById('StopLossEnabled'),
         singleStockMaxPosition: document.getElementById('singleStockMaxPosition'),
         totalMaxPosition: document.getElementById('totalMaxPosition'),
-        connectPort: document.getElementById('connectPort'),
-        totalAccounts: document.getElementById('totalAccounts'),
         apiToken: document.getElementById('apiToken'),
         globalAllowBuySell: document.getElementById('globalAllowBuySell'),
         simulationMode: document.getElementById('simulationMode'),
@@ -153,7 +151,6 @@
         stockStopLossError: document.getElementById('stockStopLossError'),
         singleStockMaxPositionError: document.getElementById('singleStockMaxPositionError'),
         totalMaxPositionError: document.getElementById('totalMaxPositionError'),
-        connectPortError: document.getElementById('connectPortError'),
         // 账户信息和状态
         accountId: document.getElementById('accountId'),
         availableBalance: document.getElementById('availableBalance'),
@@ -289,15 +286,6 @@
             "最大总持仓"
         ) && isValid;
         
-        // 验证端口号
-        isValid = validateParameter(
-            elements.connectPort, 
-            elements.connectPortError, 
-            paramRanges.connectPort?.min, 
-            paramRanges.connectPort?.max,
-            "端口号"
-        ) && isValid;
-        
         return isValid;
     }
     
@@ -388,20 +376,6 @@
             }
         });
         
-        elements.connectPort.addEventListener('change', () => {
-            if (validateParameter(
-                elements.connectPort, 
-                elements.connectPortError, 
-                paramRanges.connectPort?.min, 
-                paramRanges.connectPort?.max,
-                "端口号"
-            )) {
-                throttledSyncParameter('connectPort', parseInt(elements.connectPort.value));
-                // 端口更改后更新API基础URL
-                updateApiBaseUrl();
-            }
-        });
-        
         // 开关类参数的实时同步
         elements.allowBuy.addEventListener('change', (event) => {
             throttledSyncParameter('allowBuy', event.target.checked);
@@ -459,12 +433,6 @@
             throttledSyncParameter('StopLossEnabled', event.target.checked);
         });
         
-        // 监听IP地址变更
-        elements.totalAccounts.addEventListener('change', (event) => {
-            throttledSyncParameter('totalAccounts', event.target.value);
-            // IP变更后更新API基础URL
-            updateApiBaseUrl();
-        });
     }
     
     // 更新模拟交易模式UI
@@ -598,21 +566,13 @@
         }, 1000);
     }
 
-    // 更新API基础URL
-    function updateApiBaseUrl() {
-        const ip = elements.totalAccounts.value || '127.0.0.1';
-        const port = elements.connectPort.value || '5000';
-        API_BASE_URL = `http://${ip}:${port}`;
-        
-        // 更新所有API端点
-        // for (let key in API_ENDPOINTS) {
-        //     API_ENDPOINTS[key] = `${API_BASE_URL}${API_ENDPOINTS[key]}`;
-        // }
+    // API 基础 URL 始终指向当前页面的 origin（多账号下每个端口独立访问）
+    function _buildApiEndpoints() {
+        API_BASE_URL = window.location.origin;
         API_ENDPOINTS = {};
         for (let key in ORIGINAL_API_ENDPOINTS) {
             API_ENDPOINTS[key] = `${API_BASE_URL}${ORIGINAL_API_ENDPOINTS[key]}`;
         }
-        console.log("API Base URL updated:", API_BASE_URL);
     }
 
     // API请求函数 - 添加节流
@@ -690,8 +650,6 @@
         elements.StopLossEnabled.checked = config.StopLossEnabled ?? true;
         elements.singleStockMaxPosition.value = config.singleStockMaxPosition ?? '70000';
         elements.totalMaxPosition.value = config.totalMaxPosition ?? '400000';
-        elements.connectPort.value = config.connectPort ?? '5000';
-        elements.totalAccounts.value = config.totalAccounts ?? '127.0.0.1';
         elements.globalAllowBuySell.checked = config.globalAllowBuySell ?? true;
         elements.simulationMode.checked = config.simulationMode ?? false;
         
@@ -1672,8 +1630,6 @@
             StopLossEnabled: elements.StopLossEnabled.checked,
             singleStockMaxPosition: parseFloat(elements.singleStockMaxPosition.value) || 70000,
             totalMaxPosition: parseFloat(elements.totalMaxPosition.value) || 400000,
-            connectPort: elements.connectPort.value || '5000',
-            totalAccounts: elements.totalAccounts.value || '127.0.0.1',
             globalAllowBuySell: elements.globalAllowBuySell.checked,
             simulationMode: elements.simulationMode.checked            
         };
@@ -1786,8 +1742,8 @@
         // 二次确认
         if (!confirm("再次确认：您真的要执行初始化持仓数据吗？")) return;
 
-        // 更新API基础URL
-        updateApiBaseUrl();
+        // 构建 API 端点（基于当前页面的 origin）
+        if (!API_ENDPOINTS.initPositions) _buildApiEndpoints();
 
         // 先验证表单数据
         if (!validateForm()) {
@@ -2120,10 +2076,6 @@
         checkboxes.forEach(cb => cb.checked = isChecked);
     });
 
-    // IP/端口变化监听器
-    elements.totalAccounts.addEventListener('change', updateApiBaseUrl);
-    elements.connectPort.addEventListener('change', updateApiBaseUrl);
-
     // API Token localStorage 持久化
     const _savedToken = localStorage.getItem('qmt_api_token');
     if (_savedToken && elements.apiToken) elements.apiToken.value = _savedToken;
@@ -2133,8 +2085,7 @@
 
     // --- 初始数据加载 ---
     async function fetchAllData() {
-        // 初始化API基础URL
-        updateApiBaseUrl();
+        _buildApiEndpoints();
 
         showMessage("正在加载初始数据...", 'loading', 0);
 
