@@ -22,6 +22,34 @@ for _i, _arg in enumerate(_argv):
 # ─────────────────────────────────────────────────────────
 
 import config
+
+# ── 设置控制台窗口标题 + 写入 PID 文件（供 menu.bat / scripts/_launcher.py 跟踪进程）──
+def _setup_window_and_pid():
+    _aid = os.environ.get('QMT_ACCOUNT_ID', '').strip()
+    if sys.platform == 'win32' and _aid:
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW(f"miniQMT [{_aid}]")
+        except Exception:
+            pass
+    try:
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        pid_file = os.path.join(config.DATA_DIR, "pid.txt")
+        with open(pid_file, 'w', encoding='ascii') as f:
+            f.write(str(os.getpid()))
+        import atexit
+        def _cleanup_pid():
+            try:
+                if os.path.exists(pid_file):
+                    os.remove(pid_file)
+            except Exception:
+                pass
+        atexit.register(_cleanup_pid)
+    except Exception:
+        pass
+
+_setup_window_and_pid()
+
 from logger import get_logger, schedule_log_cleanup, clean_old_logs
 from data_manager import get_data_manager
 from indicator_calculator import get_indicator_calculator

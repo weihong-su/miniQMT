@@ -156,6 +156,22 @@
       ],
       "priority": "critical"
     },
+    "multi_account_isolation": {
+      "name": "多账号隔离测试",
+      "description": "验证 QMT_ACCOUNT_ID 触发的账号级配置隔离（DATA_DIR/DB/股票池/日志/端口/qmt_path）",
+      "modules": [
+        "test.test_multi_account_isolation"
+      ],
+      "priority": "critical"
+    },
+    "launcher_deployment": {
+      "name": "总控制台部署辅助测试",
+      "description": "验证 scripts/_launcher.py 的环境检查 / 配置校验函数",
+      "modules": [
+        "test.test_launcher_deployment"
+      ],
+      "priority": "high"
+    },
     "db_thread_safety": {
       "name": "数据库线程安全与缓存验证测试",
       "description": "验证 data_manager.py 数据库访问加锁保护（防止多线程SQLite事务冲突）及 web_server.py 账户信息缓存机制（防止阻塞8秒超时）",
@@ -243,7 +259,9 @@
         "test.test_stop_loss_price_calc",
         "test.test_grid_qa_gap_supplement",
         "test.test_grid_full_range_coverage",
-        "test.test_grid_true_pnl"
+        "test.test_grid_true_pnl",
+        "test.test_multi_account_isolation",
+        "test.test_launcher_deployment"
       ],
       "priority": "critical"
     }

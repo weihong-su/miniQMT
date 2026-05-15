@@ -113,17 +113,39 @@ DEFAULT_QMT_PATHS = [
     r'D:/光大证券金阳光QMT实盘/userdata_mini',
 ]
 
-def get_account_config():
-    """从外部文件读取账号配置（返回主账号，向后兼容）"""
+def _read_raw_account_config():
+    """读取原始 account_config.json 文件内容（无任何账号选择逻辑）。"""
     try:
         with open(ACCOUNT_CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        # 如果配置文件不存在，返回默认空配置
         return {"account_id": "", "account_type": "STOCK"}
     except Exception as e:
         print(f"读取账户配置文件失败: {str(e)}")
         return {"account_id": "", "account_type": "STOCK"}
+
+
+def get_account_config():
+    """
+    返回"当前进程"实际使用的账号配置。
+
+    选择规则（向后兼容）：
+    - 设置了环境变量 QMT_ACCOUNT_ID 且能在 accounts 列表中找到匹配项 → 返回该子配置；
+    - 否则 → 返回 account_config.json 顶层字段（与改动前完全一致）。
+
+    返回结构始终保留顶层的 accounts 字段，便于下游访问全量列表。
+    """
+    raw = _read_raw_account_config()
+    target_id = os.environ.get('QMT_ACCOUNT_ID', '').strip()
+    if target_id:
+        for acc in (raw.get("accounts") or []):
+            if acc.get("account_id") == target_id:
+                # 合并：以子账号字段为主，缺失字段用顶层兜底
+                merged = {k: v for k, v in raw.items() if k != "accounts"}
+                merged.update({k: v for k, v in acc.items() if v is not None})
+                merged["accounts"] = raw.get("accounts", [])
+                return merged
+    return raw
 
 
 def get_all_accounts_config():
@@ -141,14 +163,15 @@ def get_all_accounts_config():
     Returns:
         list[dict]: 账号配置列表，至少包含一个元素
     """
-    raw = get_account_config()
+    raw = _read_raw_account_config()
     accounts = raw.get("accounts")
     if accounts and isinstance(accounts, list):
         valid = [a for a in accounts if a.get("account_id")]
         if valid:
             return valid
-    # 兜底：单账号模式
-    return [raw]
+    # 兜底：单账号模式（剥离 accounts 字段，避免污染）
+    fallback = {k: v for k, v in raw.items() if k != "accounts"}
+    return [fallback]
 
 def get_qmt_path():
     """
@@ -635,6 +658,7 @@ def _apply_per_account_settings():
     单账号模式（不设置环境变量）时直接返回，行为与改动前完全一致。
     """
     global DATA_DIR, DB_PATH, STOCK2BUY_FILE, LOG_FILE, WEB_SERVER_PORT
+    global STOCK_POOL_FILE, STOCK_POOL
 
     account_id = os.environ.get('QMT_ACCOUNT_ID', '').strip()
     if not account_id:
@@ -655,8 +679,20 @@ def _apply_per_account_settings():
     LOG_FILE        = f"account_{account_id}.log"
     WEB_SERVER_PORT = 5000 + idx
 
+    # 股票池按账号隔离：data_<id>/stock_pool.json 存在则用，不存在则回落根目录
+    per_account_pool = os.path.join(DATA_DIR, "stock_pool.json")
+    if os.path.exists(per_account_pool):
+        STOCK_POOL_FILE = per_account_pool
+    else:
+        STOCK_POOL_FILE = "stock_pool.json"
+    STOCK_POOL = load_stock_pool(STOCK_POOL_FILE)
+
+    # QMT_PATH 和 ACCOUNT_CONFIG 在模块顶部已经通过 get_account_config()
+    # 读取到了正确的子账号值（get_account_config 感知 QMT_ACCOUNT_ID），无需此处重复刷新。
+
     print(f"[CONFIG] 账号 {account_id}（第 {idx + 1} 个）: "
-          f"DATA_DIR={DATA_DIR}, PORT={WEB_SERVER_PORT}, LOG={LOG_FILE}")
+          f"DATA_DIR={DATA_DIR}, PORT={WEB_SERVER_PORT}, LOG={LOG_FILE}, "
+          f"STOCK_POOL={STOCK_POOL_FILE}, QMT_PATH={QMT_PATH}")
 
 
 _apply_per_account_settings()
