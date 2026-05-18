@@ -182,30 +182,46 @@ def cmd_start(args) -> int:
     return 0
 
 
-def _send_ctrl_c(pid: int) -> bool:
-    """向指定 PID 的控制台进程发送 Ctrl+C 事件（Windows）。"""
-    if sys.platform != "win32":
-        return False
-    import ctypes
-    k = ctypes.windll.kernel32
-    CTRL_C_EVENT = 0
+def _request_graceful_stop(acc_id: str, pid: int) -> bool:
+    """请求账号进程优雅退出。写停止信号文件 + 尝试 Ctrl+C。
+
+    Windows 下 CREATE_NEW_CONSOLE 创建的进程有独立控制台，
+    GenerateConsoleCtrlEvent 无法可靠送达。因此主路径改为：
+    1) 写 data_<id>/stop_signal 文件 → main.py 主循环 1 秒内检测到并退出
+    2) 额外尝试 Ctrl+C 作为补充（对非 CREATE_NEW_CONSOLE 场景仍有效）
+
+    Returns:
+        True 表示至少写入了信号文件（可靠路径）
+    """
+    # 主路径：写信号文件
+    signal_file = PROJECT_ROOT / f"data_{acc_id}" / "stop_signal"
     try:
-        k.FreeConsole()
-        if not k.AttachConsole(pid):
-            return False
-        # 让本进程忽略 Ctrl+C，避免自己被信号杀掉
-        k.SetConsoleCtrlHandler(None, True)
-        ok = bool(k.GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0))
-        k.FreeConsole()
-        k.SetConsoleCtrlHandler(None, False)
-        return ok
+        signal_file.write_text(str(pid), encoding="ascii")
     except OSError:
         return False
+
+    # 补充路径：尝试 Ctrl+C（对同控制台进程有效）
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.FreeConsole()
+            if k.AttachConsole(pid):
+                k.SetConsoleCtrlHandler(None, True)
+                k.GenerateConsoleCtrlEvent(0, 0)
+                k.FreeConsole()
+                k.SetConsoleCtrlHandler(None, False)
+        except OSError:
+            pass
+
+    return True
 
 
 def cmd_stop(args) -> int:
     accounts = filter_accounts(load_accounts(), args.accounts)
-    stopped = 0
+
+    # ── 阶段 1：收集存活进程 ──
+    targets: list[tuple[str, int]] = []       # (account_id, pid)
     for acc in accounts:
         acc_id = acc["account_id"]
         pid = read_pid(acc_id)
@@ -216,27 +232,54 @@ def cmd_stop(args) -> int:
             print(f"[{acc_id}] PID={pid} 已不存在，清理 pid.txt")
             pid_file_for(acc_id).unlink(missing_ok=True)
             continue
+        targets.append((acc_id, pid))
 
+    if not targets:
+        print("没有需要停止的账号进程。")
+        return 0
+
+    # ── 阶段 2：向所有进程发 Ctrl+C（批量，不等待） ──
+    # 必须先全部发完再等待退出。原因是：
+    #   1) 顺序阻塞版"发 Ctrl+C → 等 30s → 发下一个"会让后面的账号
+    #      在前一个退出前完全没被通知，用户看到"只停了一个"。
+    #   2) Windows 的 GenerateConsoleCtrlEvent 发给整个控制台进程组；
+    #      CREATE_NEW_CONSOLE 创建的每个进程有独立控制台，必须逐个
+    #      AttachConsole → 发送。先发的那个退出后，FreeConsole +
+    #      恢复 handler 的时序可能影响后续 AttachConsole 成功率。
+    #   3) 批量发送更高效：所有进程同时开始优雅关闭。
+    ctrl_c_sent: list[tuple[str, int]] = []   # 成功发送 Ctrl+C 的
+    for acc_id, pid in targets:
         print(f"[{acc_id}] 准备停止 PID={pid}")
-        gracefully_exited = False
         if not args.force:
-            if _send_ctrl_c(pid):
-                print(f"  ✓ 已发送 Ctrl+C，等待优雅关闭（最多 {args.timeout}s）")
-                for waited in range(1, args.timeout + 1):
-                    time.sleep(1)
-                    if not pid_alive(pid):
-                        print(f"  ✓ 已优雅退出（耗时 {waited}s）")
-                        gracefully_exited = True
-                        break
+            if _request_graceful_stop(acc_id, pid):
+                print(f"  ✓ 已发送停止信号")
+                ctrl_c_sent.append((acc_id, pid))
             else:
-                print("  ⚠ Ctrl+C 发送失败，转为强制结束")
+                print(f"  ⚠ 停止信号发送失败，稍后强制结束")
+        else:
+            print(f"  跳过 Ctrl+C（--force 模式）")
 
-        if not gracefully_exited and pid_alive(pid):
-            print("  → 强制结束（taskkill /T /F）")
+    # ── 阶段 3：等待所有 Ctrl+C 进程退出 ──
+    deadline = time.time() + args.timeout
+    exited: set[int] = set()
+    while time.time() < deadline and len(exited) < len(ctrl_c_sent):
+        for acc_id, pid in ctrl_c_sent:
+            if pid in exited:
+                continue
+            if not pid_alive(pid):
+                exited.add(pid)
+                print(f"  ✓ [{acc_id}] PID={pid} 已退出")
+        if len(exited) < len(ctrl_c_sent):
+            time.sleep(1)
+
+    # ── 阶段 4：对未退出的进程强制结束 ──
+    stopped = 0
+    for acc_id, pid in targets:
+        if pid_alive(pid):
+            print(f"  → [{acc_id}] PID={pid} 强制结束（taskkill /T /F）")
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                            capture_output=True)
-            time.sleep(0.5)
-
+            time.sleep(0.3)
         pid_file_for(acc_id).unlink(missing_ok=True)
         stopped += 1
 

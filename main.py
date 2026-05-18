@@ -92,6 +92,24 @@ def signal_handler(sig, frame):
     stop_event.set()
     sys.exit(0)
 
+
+def _check_stop_signal():
+    """检查 launcher 写入的停止信号文件，实现跨控制台的优雅关闭。
+
+    Windows 下 CREATE_NEW_CONSOLE 创建的进程有独立控制台，
+    GenerateConsoleCtrlEvent 无法送达 Ctrl+C。
+    launcher 的 cmd_stop 在发送 Ctrl+C 的同时，也会写入
+    data_<id>/stop_signal 文件。主循环检测到该文件即触发优雅退出。
+    """
+    signal_path = os.path.join(config.DATA_DIR, "stop_signal")
+    if os.path.exists(signal_path):
+        logger.info("检测到停止信号文件，触发优雅退出")
+        try:
+            os.remove(signal_path)
+        except Exception:
+            pass
+        stop_event.set()
+
 def load_persisted_configs():
     """从数据库加载持久化配置"""
     logger.info("加载持久化配置")
@@ -536,6 +554,7 @@ def main():
         # 等待退出信号
         logger.info("✅ 系统启动完成")
         while not stop_event.is_set():
+            _check_stop_signal()
             time.sleep(1)
 
     except Exception as e:
