@@ -692,12 +692,15 @@ def _apply_per_account_settings():
     LOG_FILE        = f"account_{account_id}.log"
     WEB_SERVER_PORT = 5000 + idx
 
-    # 股票池按账号隔离：data_<id>/stock_pool.json 存在则用，不存在则回落根目录
-    per_account_pool = os.path.join(DATA_DIR, "stock_pool.json")
-    if os.path.exists(per_account_pool):
-        STOCK_POOL_FILE = per_account_pool
-    else:
-        STOCK_POOL_FILE = "stock_pool.json"
+    # 股票池按账号无条件隔离到 data_<id>/stock_pool.json:
+    # 旧逻辑用 "文件存在才走账号目录,否则回落根目录" — 首次启动时账号目录
+    # 都还没有 stock_pool.json,两个账号都写根目录,position_manager 的
+    # _update_stock_positions_file 每轮持仓监控会比较文件与自身持仓,
+    # 互不一致就覆盖,导致两个账号每 10 秒互相覆盖一次。
+    # 现在无条件用账号目录;load_stock_pool 读不到文件会返回 DEFAULT_STOCK_POOL
+    # 兜底,所以"账号目录里还没建文件"也是安全的。
+    os.makedirs(DATA_DIR, exist_ok=True)
+    STOCK_POOL_FILE = os.path.join(DATA_DIR, "stock_pool.json")
     STOCK_POOL = load_stock_pool(STOCK_POOL_FILE)
 
     # QMT_PATH 和 ACCOUNT_CONFIG 在模块顶部已经通过 get_account_config()

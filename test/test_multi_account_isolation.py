@@ -147,33 +147,61 @@ class TestMultiAccountIsolation(unittest.TestCase):
         self.assertEqual(r["data_dir"], "data")  # 未触发覆写
         self.assertEqual(r["web_port"], 5000)
 
-    # -------- 4. 股票池：默认回落到根目录 stock_pool.json --------
-    def test_stock_pool_falls_back_when_no_per_account_file(self):
-        # 根目录写一个全局股票池
+    # -------- 4. 股票池：多账号模式无条件走账号目录,不再回落根目录 --------
+    # 历史上是"账号目录文件存在才走账号目录,否则回落根目录"。但 position_manager
+    # 每轮持仓监控会把当前持仓覆盖写回该文件,两个账号写同一份会互相覆盖。
+    # 现行设计:多账号模式下无条件用 data_<id>/stock_pool.json;文件不存在则由
+    # load_stock_pool 兜底为 DEFAULT_STOCK_POOL。position_manager 启动后会很快
+    # 把当前持仓写入,从而完成隔离。
+    def test_stock_pool_uses_account_dir_even_when_file_missing(self):
+        # 根目录写一个全局股票池(应被忽略)
         with open(os.path.join(self.tmpdir, "stock_pool.json"), "w", encoding="utf-8") as f:
             json.dump(["111111.SZ", "222222.SH"], f)
 
+        # BBB 账号目录里没有 stock_pool.json
         r = _run_config_in_subprocess(self.tmpdir, account_id="BBB")
-        self.assertEqual(r["stock_pool_file"], "stock_pool.json")
-        self.assertEqual(r["stock_pool"], ["111111.SZ", "222222.SH"])
+        self.assertEqual(r["stock_pool_file"], os.path.join("data_BBB", "stock_pool.json"))
+        # 文件不存在,load_stock_pool 兜底 DEFAULT_STOCK_POOL,不是根目录内容
+        self.assertNotEqual(r["stock_pool"], ["111111.SZ", "222222.SH"])
+        # 应是 config.DEFAULT_STOCK_POOL 的内容(平安/招行/美的/茅台/五粮液)
+        self.assertIn("000001.SZ", r["stock_pool"])
 
-    # -------- 5. 股票池：账号目录有 stock_pool.json 时优先使用 --------
-    def test_stock_pool_per_account_overrides_global(self):
+    # -------- 5. 股票池：账号目录有 stock_pool.json 时按账号读取 --------
+    def test_stock_pool_per_account_isolation(self):
+        # 根目录写一个全局股票池(应被忽略 — 多账号下不应再用)
         with open(os.path.join(self.tmpdir, "stock_pool.json"), "w", encoding="utf-8") as f:
             json.dump(["GLOBAL.SH"], f)
+
+        # BBB 有自己的池子
         bbb_dir = os.path.join(self.tmpdir, "data_BBB")
         os.makedirs(bbb_dir, exist_ok=True)
         with open(os.path.join(bbb_dir, "stock_pool.json"), "w", encoding="utf-8") as f:
             json.dump(["BBB_ONLY.SZ"], f)
 
+        # AAA 也有自己的池子(独立内容)
+        aaa_dir = os.path.join(self.tmpdir, "data_AAA")
+        os.makedirs(aaa_dir, exist_ok=True)
+        with open(os.path.join(aaa_dir, "stock_pool.json"), "w", encoding="utf-8") as f:
+            json.dump(["AAA_ONLY.SZ"], f)
+
         r_b = _run_config_in_subprocess(self.tmpdir, account_id="BBB")
         self.assertEqual(r_b["stock_pool_file"], os.path.join("data_BBB", "stock_pool.json"))
         self.assertEqual(r_b["stock_pool"], ["BBB_ONLY.SZ"])
 
-        # A 没自己的池，仍然用全局
         r_a = _run_config_in_subprocess(self.tmpdir, account_id="AAA")
-        self.assertEqual(r_a["stock_pool_file"], "stock_pool.json")
-        self.assertEqual(r_a["stock_pool"], ["GLOBAL.SH"])
+        self.assertEqual(r_a["stock_pool_file"], os.path.join("data_AAA", "stock_pool.json"))
+        self.assertEqual(r_a["stock_pool"], ["AAA_ONLY.SZ"])
+        # 关键:AAA 没读到根目录的 GLOBAL.SH
+        self.assertNotIn("GLOBAL.SH", r_a["stock_pool"])
+
+    # -------- 5b. 单账号模式(不设 QMT_ACCOUNT_ID)保持读根目录 — 向后兼容 --------
+    def test_stock_pool_single_account_mode_keeps_root(self):
+        with open(os.path.join(self.tmpdir, "stock_pool.json"), "w", encoding="utf-8") as f:
+            json.dump(["SOLO_ROOT.SZ"], f)
+
+        r = _run_config_in_subprocess(self.tmpdir, account_id=None)
+        self.assertEqual(r["stock_pool_file"], "stock_pool.json")
+        self.assertEqual(r["stock_pool"], ["SOLO_ROOT.SZ"])
 
     # -------- 6. get_all_accounts_config 始终返回全列表，不受 QMT_ACCOUNT_ID 影响 --------
     def test_all_accounts_list_invariant(self):
