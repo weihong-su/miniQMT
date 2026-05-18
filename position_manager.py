@@ -1642,9 +1642,12 @@ class PositionManager:
                         if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
                             current_price = float(latest_quote['lastPrice'])
 
-                            # 只有价格有显著变化时才更新
+                            # 只有价格真实变化时才更新（实盘下原 0.3% 比例阈值过高，
+                            # 盘中 A 股单 tick 难以触发，导致 data_version 长时间不增、
+                            # SSE 不推送 changed=true，前端持仓刷新被卡在 60 秒兜底轮询。
+                            # 改为 1 分钱绝对阈值——A 股最小 tick——盘中能正常驱动版本号。）
                             old_price = safe_numeric_values['current_price']
-                            if abs(current_price - old_price) / max(old_price, 0.01) > 0.003:  # 防止除零
+                            if abs(current_price - old_price) >= 0.01:
                                 # 使用安全转换后的值来更新
                                 self.update_position(
                                     stock_code=stock_code,
