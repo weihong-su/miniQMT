@@ -15,7 +15,7 @@ export function fmtNumber(v: number | null | undefined, digits = 0): string {
 
 export function fmtPrice(v: number | null | undefined): string {
   if (v == null || isNaN(v) || v === 0) return '--'
-  return v.toFixed(3)
+  return v.toFixed(2)
 }
 
 export function fmtTime(ts: string | null | undefined): string {
