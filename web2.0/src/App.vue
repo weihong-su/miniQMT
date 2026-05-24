@@ -5,12 +5,11 @@ import { usePositionsStore } from './stores/positions'
 import { useGridStore } from './stores/grid'
 import { useSSE } from './composables/useSSE'
 import { usePolling } from './composables/usePolling'
-import { onMounted, watch } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 
 import HeaderBar from './components/HeaderBar.vue'
 import SimulationBanner from './components/SimulationBanner.vue'
 import ConfigPanel from './components/ConfigPanel.vue'
-import BuyPanel from './components/BuyPanel.vue'
 import HoldingsTable from './components/HoldingsTable.vue'
 import OrderLog from './components/OrderLog.vue'
 
@@ -31,7 +30,11 @@ async function init() {
   system.fetchConnection()
 }
 
-onMounted(() => { init(); setTimeout(() => sseConnect(), 1000); startPolling() })
+onMounted(() => {
+  init(); setTimeout(() => sseConnect(), 1000); startPolling()
+  window.addEventListener('refresh-data', refreshAll)
+})
+onUnmounted(() => window.removeEventListener('refresh-data', refreshAll))
 
 watch(() => system.currentAccountId, () => {
   positions.dataVersion = 0; positions.positions = []; positions.trades = []; grid.sessions = []
@@ -48,7 +51,6 @@ watch(() => system.currentAccountId, () => {
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-5">
         <div class="lg:col-span-2 space-y-3 md:space-y-5">
           <ConfigPanel />
-          <BuyPanel @refresh="refreshAll" />
           <HoldingsTable @refresh="refreshAll" />
         </div>
         <div class="space-y-3 md:space-y-5">

@@ -2,14 +2,18 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 import { useConfigStore } from '../stores/config'
+import { usePositionsStore } from '../stores/positions'
 import { useSSE } from '../composables/useSSE'
 import { usePolling } from '../composables/usePolling'
 import * as xqApi from '../api/xtquant'
+import * as flaskApi from '../api/flask'
+import type { BuyStrategy } from '../types'
 import type { AccountEntry } from '../api/accounts'
 import ConnectionSettings from './ConnectionSettings.vue'
 
 const system = useSystemStore()
 const config = useConfigStore()
+const positions = usePositionsStore()
 const { healthy: sseHealthy, connect: sseConnect } = useSSE()
 const { start: startPolling, stop: stopPolling } = usePolling()
 
@@ -43,6 +47,40 @@ function toggleConfigBool(key: string) {
   config.saveConfig({ [key]: val } as any)
 }
 async function loadStopProfitStatus() { try { const d = await xqApi.getStopProfitStatus(); if (d?.config) stopProfitEnabled.value = d.config.enabled } catch {} }
+
+// Buy actions
+const buyStrategy = ref<BuyStrategy>('random_pool')
+const buyQty = ref(1)
+const buying = ref(false); const clearing = ref(false); const importing = ref(false); const initializing = ref(false)
+const showBuyDialog = ref(false)
+const buyDialogTitle = ref(''); const buyDialogStocks = ref(''); const buyIsRandom = ref(true)
+
+async function handleBuy() {
+  if (buyStrategy.value === 'random_pool') {
+    const pool = await flaskApi.getStockPool()
+    if (pool.length === 0) { alert('备选池为空'); return }
+    buyIsRandom.value = true; buyDialogTitle.value = `从备选池随机买入 ${buyQty.value} 只`; buyDialogStocks.value = pool.join(', ')
+  } else {
+    buyIsRandom.value = false; buyDialogTitle.value = `自定义股票买入 ${buyQty.value} 只`; buyDialogStocks.value = ''
+  }
+  showBuyDialog.value = true
+}
+
+async function doBuyConfirm() {
+  buying.value = true
+  const stocks = buyDialogStocks.value.split(/[,，\s]+/).filter(s => s.trim())
+  const r = await flaskApi.executeBuy(buyStrategy.value, buyQty.value, stocks, config.configData)
+  buying.value = false; showBuyDialog.value = false
+  if (r.success) { positions.dataVersion = 0; window.dispatchEvent(new Event('refresh-data')) } else { alert(r.message || '买入失败') }
+}
+
+async function doClear() { clearing.value = true; await flaskApi.clearLogs(); clearing.value = false; window.dispatchEvent(new Event('refresh-data')) }
+async function doImport() { importing.value = true; await flaskApi.importData(); importing.value = false; window.dispatchEvent(new Event('refresh-data')) }
+async function doInit() {
+  if (!confirm('确定重新初始化持仓数据？将从 QMT 重新同步。')) return
+  initializing.value = true; await flaskApi.initHoldings(config.configData)
+  initializing.value = false; positions.dataVersion = 0; window.dispatchEvent(new Event('refresh-data'))
+}
 
 onMounted(() => { document.addEventListener('click', onClickOutside); loadStopProfitStatus() })
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
@@ -120,7 +158,38 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
         <span v-if="system.lastUpdateTime" class="text-[10px] text-slate-400 font-mono hidden sm:inline">{{ system.lastUpdateTime }}</span>
       </div>
     </div>
+
+    <!-- Row 3: Buy actions -->
+    <div class="px-4 md:px-6 pb-2.5 flex items-center gap-2 flex-wrap text-[12px]">
+      <select v-model="buyStrategy" class="input-field !w-auto !py-1 !text-[11px]">
+        <option value="random_pool">备选池随机</option>
+        <option value="custom_stock">自定义股票</option>
+      </select>
+      <input v-model.number="buyQty" type="number" min="1" max="100" class="input-field !w-14 !py-1 !text-[11px] text-center" />
+      <button @click="handleBuy" :disabled="buying" class="btn-primary btn-xs">{{ buying ? '...' : '买入' }}</button>
+      <span class="w-px h-4 bg-slate-200 mx-0.5"></span>
+      <button @click="doClear" :disabled="clearing" class="btn-outline btn-xs">清空今日</button>
+      <button @click="doImport" :disabled="importing" class="btn-outline btn-xs">导入配置</button>
+      <button @click="doInit" :disabled="initializing" class="btn-danger btn-xs">初始化持仓</button>
+    </div>
   </header>
+
+  <!-- Buy dialog -->
+  <Teleport to="body">
+    <div v-if="showBuyDialog" class="modal-overlay" @click.self="showBuyDialog = false">
+      <div class="modal-content w-[520px]">
+        <div class="px-6 py-4 border-b border-slate-100"><h3 class="text-lg font-semibold text-slate-800">{{ buyDialogTitle }}</h3></div>
+        <div class="p-6">
+          <label class="label-text">{{ buyIsRandom ? '股票列表（可编辑）' : '股票代码（逗号或换行分隔）' }}</label>
+          <textarea v-model="buyDialogStocks" rows="6" class="input-field font-mono text-sm" :placeholder="buyIsRandom ? '' : '000001.SZ, 600036.SH'"></textarea>
+        </div>
+        <div class="px-6 py-3 bg-slate-50/80 rounded-b-2xl flex justify-end gap-2">
+          <button @click="showBuyDialog = false" class="btn-ghost">取消</button>
+          <button @click="doBuyConfirm" :disabled="buying" class="btn-primary">{{ buying ? '提交中...' : '确定买入' }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- Account edit dialog -->
   <Teleport to="body">
