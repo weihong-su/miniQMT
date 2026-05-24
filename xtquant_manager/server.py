@@ -586,3 +586,103 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         cfg.enabled = enabled
         mon.update_config(cfg)
         return ApiResponse(success=True, data={"enabled": enabled, "message": "已启用" if enabled else "已暂停"})
+
+    # ------------------------------------------------------------------
+    # Flask web1.0 兼容端点 — 让 web2.0 前端在 xtquant_manager 上也能运行
+    # ------------------------------------------------------------------
+
+    def _first_account_id():
+        """获取第一个已注册账号 ID，用于兼容端点。"""
+        ids = _get_manager().list_accounts()
+        return ids[0] if ids else None
+
+    @app.get("/api/status", response_model=ApiResponse, tags=["兼容"])
+    async def flask_status():
+        """Flask 兼容: /api/status → 返回首个账号的状态"""
+        aid = _first_account_id()
+        if not aid:
+            return ApiResponse(success=False, error="无已注册账号")
+        try:
+            state = _get_manager().get_account_state(aid)
+            asset = _get_manager().query_asset(aid)
+            return ApiResponse(success=True, data={
+                "status": "success",
+                "isMonitoring": True,
+                "account": {
+                    "id": aid,
+                    "availableBalance": asset.get("可用金额", 0),
+                    "maxHoldingValue": asset.get("持仓市值", 0),
+                    "totalAssets": asset.get("总资产", 0),
+                    "timestamp": "",
+                },
+                "settings": {
+                    "isMonitoring": True,
+                    "enableAutoTrading": True,
+                    "positionMonitorRunning": True,
+                    "allowBuy": True,
+                    "allowSell": True,
+                    "simulationMode": False,
+                },
+            })
+        except Exception:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {aid}")
+
+    @app.get("/api/positions", response_model=ApiResponse, tags=["兼容"])
+    async def flask_positions(version: int = -1):
+        """Flask 兼容: /api/positions"""
+        aid = _first_account_id()
+        if not aid:
+            return ApiResponse(success=False, error="无已注册账号")
+        try:
+            positions = _get_manager().query_positions(aid)
+            return ApiResponse(success=True, data={
+                "positions": positions,
+                "metrics": {},
+                "positions_all": positions,
+                "data_version": 0,
+                "no_change": False,
+            })
+        except Exception:
+            return ApiResponse(success=True, data={"positions": [], "metrics": {}, "positions_all": [], "data_version": 0, "no_change": False})
+
+    @app.get("/api/positions-all", response_model=ApiResponse, tags=["兼容"])
+    async def flask_positions_all(version: int = 0):
+        """Flask 兼容: /api/positions-all"""
+        return await flask_positions(version=version)
+
+    @app.get("/api/connection/status", response_model=ApiResponse, tags=["兼容"])
+    async def flask_connection_status():
+        """Flask 兼容: /api/connection/status"""
+        aid = _first_account_id()
+        if not aid:
+            return ApiResponse(success=True, data={"status": "success", "connected": False})
+        state = _get_manager().get_account_state(aid)
+        return ApiResponse(success=True, data={
+            "status": "success",
+            "connected": state.get("connected", False),
+            "timestamp": "",
+        })
+
+    @app.get("/api/config", response_model=ApiResponse, tags=["兼容"])
+    async def flask_config():
+        """Flask 兼容: /api/config → 返回默认配置"""
+        return ApiResponse(success=True, data={
+            "singleBuyAmount": 35000,
+            "firstProfitSell": 5.0, "firstProfitSellEnabled": True,
+            "stockGainSellPencent": 60.0, "firstProfitSellPencent": True,
+            "allowBuy": True, "allowSell": True,
+            "stopLossBuy": 5.0, "stopLossBuyEnabled": True,
+            "stockStopLoss": 7.0, "StopLossEnabled": True,
+            "singleStockMaxPosition": 70000, "totalMaxPosition": 400000,
+            "globalAllowBuySell": True, "simulationMode": False,
+        }, ranges={})
+
+    @app.get("/api/trade-records", response_model=ApiResponse, tags=["兼容"])
+    async def flask_trade_records():
+        """Flask 兼容: /api/trade-records"""
+        aid = _first_account_id()
+        if not aid:
+            return ApiResponse(success=True, data={"status": "success", "data": []})
+        orders = _get_manager().query_orders(aid)
+        trades = _get_manager().query_trades(aid)
+        return ApiResponse(success=True, data={"status": "success", "data": trades or orders})
