@@ -5,7 +5,7 @@ export function fmtMoney(v: number | null | undefined, digits = 2): string {
 
 export function fmtPercent(v: number | null | undefined, digits = 2): string {
   if (v == null || isNaN(v)) return '--'
-  return (v >= 0 ? '+' : '') + (v * 100).toFixed(digits) + '%'
+  return (v >= 0 ? '+' : '') + v.toFixed(digits) + '%'
 }
 
 export function fmtNumber(v: number | null | undefined, digits = 0): string {
