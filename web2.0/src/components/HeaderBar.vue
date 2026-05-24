@@ -96,7 +96,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     <div class="px-4 md:px-6 pb-2 flex items-center justify-between gap-1.5 flex-wrap text-[11px]">
       <!-- Control toggles -->
       <div class="flex items-center gap-1 flex-wrap">
-        <button @click="toggleMonitoring" :class="['px-2 py-1 rounded-md font-semibold transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600']">监控 {{ system.isMonitoring ? 'OFF' : 'ON' }}</button>
+        <button @click="toggleMonitoring" :class="['px-2 py-1 rounded-md font-semibold transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
         <button @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2 py-1 rounded-md font-semibold transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
         <span class="text-slate-300 hidden sm:inline">|</span>
         <label class="flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer hover:bg-slate-100 transition-colors"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" /><span :class="config.config.allowBuy ? 'text-slate-700' : 'text-slate-400'">买</span></label>

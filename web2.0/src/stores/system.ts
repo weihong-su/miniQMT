@@ -22,7 +22,6 @@ export const useSystemStore = defineStore('system', () => {
   const currentAccount = computed(() =>
     accounts.value.find(a => a.id === currentAccountId.value) || accounts.value[0]
   )
-  const statusText = computed(() => isMonitoring.value ? '监控 ON' : '监控 OFF')
 
   function switchAccount(accountId: string) {
     currentAccountId.value = accountId
@@ -71,7 +70,7 @@ export const useSystemStore = defineStore('system', () => {
   return {
     connected, accounts, currentAccountId, currentAccount, account,
     isMonitoring, autoTrading, allowBuy, allowSell,
-    simulationMode, positionMonitorRunning, statusText, lastUpdateTime,
+    simulationMode, positionMonitorRunning, lastUpdateTime,
     switchAccount, addAccount, removeAccount,
     fetchStatus, fetchConnection, toggleMonitor,
   }
