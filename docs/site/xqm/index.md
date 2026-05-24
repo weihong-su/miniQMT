@@ -80,4 +80,4 @@
 - [多账号实战](guides/multi-account.md) — Python 代码示例
 
 !!! info "许可证"
-    miniQMT v3.0.0 起采用 **BSL 1.1** 授权。个人/非商业免费使用，商业用途需获授权。详见[许可证](../license.md)。
+    miniQMT v2.0 起采用 **BSL 1.1** 授权。个人/非商业免费使用，商业用途需获授权。详见[许可证](../license.md)。
