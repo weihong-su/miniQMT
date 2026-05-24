@@ -548,8 +548,11 @@ def main():
                 logger.warning(f"⚠️ 卖出监控器失败:{str(e)[:30]}")
                 logger.info("系统继续运行")
 
-        # 最后启动Web服务器，传入已初始化的position_manager
-        start_web_server_thread(position_manager)
+        # 启动Web服务器（web2.0 模式下跳过 Flask，用 xtquant_manager 托管界面）
+        if not os.environ.get("QMT_NO_FLASK"):
+            start_web_server_thread(position_manager)
+        else:
+            logger.info("web2.0 模式 — 跳过 Flask Web 服务器（由 xtquant_manager 托管）")
 
         # 等待退出信号
         logger.info("✅ 系统启动完成")

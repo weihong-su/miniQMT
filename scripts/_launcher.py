@@ -157,6 +157,8 @@ def cmd_start(args, web2: bool = False) -> int:
         # 避免 config.py 默认值在两个进程"不一致"——以前曾出现 5000 实盘 / 5001
         # 模拟混搭的局面（用户在 5000 web UI 切换了实盘，5001 没切）。
         env["ENABLE_SIMULATION_MODE"] = "true" if args.simulation else "false"
+        if getattr(args, "web2", False):
+            env["QMT_NO_FLASK"] = "1"
 
         creationflags = 0x00000010  # CREATE_NEW_CONSOLE
         try:
@@ -670,23 +672,27 @@ def cmd_xqm_ui(_args) -> int:
     host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
     port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
 
+    # 优先用 xtquant_manager 托管的 HTTP 服务打开
+    if _xqm_health_check(host, port):
+        url = f"http://{host}:{port}/"
+        print(f"  打开 web2.0: {url}")
+        webbrowser.open(url)
+        return 0
+
+    # 网关未运行，检查本地文件
     web2_dist = PROJECT_ROOT / "web2.0" / "dist" / "index.html"
     web1_index = PROJECT_ROOT / "web1.0" / "index.html"
 
     if web2_dist.exists():
-        url = web2_dist.as_uri()
-        print(f"  打开 web2.0: {url}")
-        webbrowser.open(url)
-        print()
-        print("  提示: 如需连接远程 QMT 服务，请在页面中点击齿轮 ⚙ 图标设置后端地址。")
-        print(f"  本地 xtquant_manager 网关: http://{host}:{port}")
+        print(f"  xtquant_manager 未运行，打开本地 web2.0 文件")
+        print(f"  注意: 本地文件模式下无法调用 API，请先启动 xtquant_manager")
+        webbrowser.open(web2_dist.as_uri())
     elif web1_index.exists():
-        url = web1_index.as_uri()
-        print(f"  web2.0 未构建，打开 web1.0: {url}")
-        webbrowser.open(url)
+        webbrowser.open(web1_index.as_uri())
     else:
-        print("  未找到 web 界面文件。请先构建 web2.0: cd web2.0 && npm run build")
+        print("  未找到 web 界面文件。请先: cd web2.0 && npm run build")
 
+    print(f"  提示: 用 miniqmt.bat 菜单 [d] 启动 xtquant_manager 后，访问 http://{host}:{port}/")
     return 0
 
 
@@ -758,7 +764,7 @@ def cmd_menu(_args) -> int:
             print()
             print("—— 步骤 2/2: 启动交易策略 (main.py) ——")
 
-        cmd_start(argparse.Namespace(accounts=accounts_str, simulation=simulation))
+        cmd_start(argparse.Namespace(accounts=accounts_str, simulation=simulation, web2=web2))
 
         if web2:
             print()
