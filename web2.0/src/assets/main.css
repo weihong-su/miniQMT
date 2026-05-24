@@ -167,5 +167,9 @@
     .btn { @apply px-2.5 py-1.5 text-xs; }
     table { font-size: 10px; }
     th, td { @apply px-1 py-1; }
+    .hide-on-mobile { @apply hidden; }
   }
 }
+
+/* ---- Utility: tabular numbers (monospaced digits in proportional font) ---- */
+.tabular-nums { font-variant-numeric: tabular-nums; }

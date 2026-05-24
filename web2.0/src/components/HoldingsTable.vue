@@ -34,18 +34,18 @@ const selectAll = computed({
 function openGridConfig(code: string) { gridStockCode.value = code; showGridDialog.value = true }
 
 const COLS = [
-  { k: 'stock_code',   l: '代码',     s: true,  c: '' },
-  { k: 'stock_name',   l: '名称',     s: false, c: 'text-slate-500' },
-  { k: 'current_price',l: '现价',     s: true,  c: 'text-right font-mono' },
-  { k: 'cost_price',   l: '成本',     s: true,  c: 'text-right font-mono text-slate-500' },
-  { k: 'profit_ratio', l: '盈亏率',   s: true,  c: 'text-right font-mono font-semibold' },
-  { k: 'market_value', l: '市值',     s: true,  c: 'text-right font-mono' },
-  { k: 'volume',       l: '持仓',     s: true,  c: 'text-right font-mono' },
-  { k: 'available',    l: '可用',     s: true,  c: 'text-right font-mono text-slate-500' },
+  { k: 'stock_code',   l: '代码',     s: true,  c: 'tabular-nums' },
+  { k: 'stock_name',   l: '名称',     s: false, c: 'text-slate-500 truncate max-w-[60px]' },
+  { k: 'current_price',l: '现价',     s: true,  c: 'text-right tabular-nums' },
+  { k: 'cost_price',   l: '成本',     s: true,  c: 'text-right tabular-nums text-slate-500' },
+  { k: 'profit_ratio', l: '盈亏',     s: true,  c: 'text-right tabular-nums font-semibold' },
+  { k: 'market_value', l: '市值',     s: true,  c: 'text-right tabular-nums' },
+  { k: 'volume',       l: '持仓',     s: true,  c: 'text-right tabular-nums' },
+  { k: 'available',    l: '可用',     s: true,  c: 'text-right tabular-nums text-slate-500' },
   { k: 'profit_triggered', l: '止盈',s: false, c: 'text-center' },
-  { k: 'highest_price',l: '最高价',   s: false, c: 'text-right font-mono' },
-  { k: 'stop_loss_price', l: '止损价',s: false, c: 'text-right font-mono text-slate-500' },
-  { k: 'open_date',    l: '建仓日',   s: true,  c: 'text-slate-500' },
+  { k: 'highest_price',l: '最高',     s: false, c: 'text-right tabular-nums' },
+  { k: 'stop_loss_price', l: '止损',s: false, c: 'text-right tabular-nums text-slate-500' },
+  { k: 'open_date',    l: '建仓',     s: true,  c: 'text-slate-500 whitespace-nowrap' },
 ]
 
 function cellValue(pos: any, col: typeof COLS[0]): string {
@@ -76,8 +76,9 @@ function profitBg(v: number): string {
       <span class="text-xs text-slate-400">总市值 <strong class="text-slate-700">{{ fmtMoney(positions.totalMarketValue) }}</strong></span>
     </div>
 
-    <div class="overflow-x-auto">
-      <table class="w-full text-xs">
+    <div class="overflow-x-auto -mx-3 md:mx-0">
+      <div class="min-w-[800px] md:min-w-0">
+        <table class="w-full text-xs">
         <thead>
           <tr class="bg-slate-50/80 border-b border-slate-200">
             <th class="pl-5 pr-2 py-2.5 w-10"><input type="checkbox" v-model="selectAll" class="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" /></th>
@@ -126,6 +127,7 @@ function profitBg(v: number): string {
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <GridConfigDialog v-if="showGridDialog" :stock-code="gridStockCode" @close="showGridDialog = false; $emit('refresh')" />
