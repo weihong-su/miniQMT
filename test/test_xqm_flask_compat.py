@@ -205,8 +205,8 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         p = r.json()["data"]["positions"][0]
         # market_value = 10.5 * 1000 = 10500; current = 10500/1000 = 10.5
         self.assertAlmostEqual(p["current_price"], 10.5, places=2)
-        # profit_ratio = (10.5-10)/10 = 0.05
-        self.assertAlmostEqual(p["profit_ratio"], 0.05, places=4)
+        # profit_ratio = 100 * (10.5-10)/10 = 5.0 (百分比，与 Flask 对齐)
+        self.assertAlmostEqual(p["profit_ratio"], 5.0, places=2)
 
     def test_positions_metrics_computed(self):
         r = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})

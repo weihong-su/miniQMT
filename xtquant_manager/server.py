@@ -655,7 +655,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         if not cur and vol:
             cur = mv / vol
         cur = cur or 0
-        profit_ratio = ((cur - cost) / cost) if cost else 0
+        profit_ratio = round(100 * (cur - cost) / cost, 2) if cost else 0  # 百分比，与 Flask 对齐
         code = p.get("证券代码", "")
 
         # SQLite 持久化元数据（由 _enrich_positions_from_sqlite 注入）
