@@ -643,22 +643,36 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             return {}
 
+    def _to_xt_code(code: str) -> str:
+        """6 位证券代码补全市场后缀（xtdata get_full_tick 要求带后缀）。
+        持仓接口返回的是 6 位裸代码，需按 A 股规则映射：
+        6/900→.SH（上交所），0/3/200→.SZ（深交所）。已带后缀则原样返回。"""
+        if not code or "." in code:
+            return code
+        if code.startswith(("6", "900")):
+            return f"{code}.SH"
+        if code.startswith(("0", "3", "200")):
+            return f"{code}.SZ"
+        return code
+
     def _enrich_positions_with_tick(positions: list, manager) -> None:
         """批量获取全推行情，为每个持仓 dict 注入 _tick_change_pct。
         失败时字段为 0，不抛异常。"""
-        codes = [p.get("证券代码", "") for p in positions if p.get("证券代码")]
-        if not codes:
+        # 持仓代码是 6 位裸码，get_full_tick 需带后缀，建立 裸码→后缀码 映射
+        bare_to_xt = {p.get("证券代码", ""): _to_xt_code(p.get("证券代码", ""))
+                      for p in positions if p.get("证券代码")}
+        if not bare_to_xt:
             return
         tick = {}
         try:
             accounts = manager.list_accounts()
             if accounts:
-                tick = manager.get_full_tick(accounts[0], codes) or {}
+                tick = manager.get_full_tick(accounts[0], list(bare_to_xt.values())) or {}
         except Exception:
             pass
         for p in positions:
             code = p.get("证券代码", "")
-            q = tick.get(code, {})
+            q = tick.get(bare_to_xt.get(code, code), {})
             lp = q.get("lastPrice", 0) or 0
             lc = q.get("lastClose", 0) or 0
             p["_tick_change_pct"] = round(100 * (lp - lc) / lc, 2) if lc else 0
