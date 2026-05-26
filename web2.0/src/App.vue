@@ -54,15 +54,9 @@ watch(() => system.currentAccountId, () => {
     <SimulationBanner />
 
     <main class="flex-1 p-3 md:p-5 space-y-3 md:space-y-5 max-w-[1600px] mx-auto w-full">
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-5">
-        <div class="lg:col-span-2 space-y-3 md:space-y-5">
-          <ConfigPanel />
-          <HoldingsTable @refresh="refreshAll" />
-        </div>
-        <div class="space-y-3 md:space-y-5">
-          <OrderLog />
-        </div>
-      </div>
+      <ConfigPanel />
+      <HoldingsTable @refresh="refreshAll" />
+      <OrderLog />
     </main>
   </div>
 </template>

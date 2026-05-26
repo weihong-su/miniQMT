@@ -29,7 +29,12 @@
     @apply min-h-screen text-slate-800 antialiased;
     background: linear-gradient(180deg, #f0f4f8 0%, #e8edf3 100%);
     background-attachment: fixed;
+    /* iPhone 安全区：避开刘海/灵动岛和底部 home indicator */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
+  /* 触摸滚动惯性 + 隐藏移动端横向滚动条占位 */
+  .overflow-x-auto, .overflow-y-auto { -webkit-overflow-scrolling: touch; }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
@@ -171,6 +176,8 @@
     table { font-size: 10px; }
     th, td { @apply px-1 py-1; }
     .hide-on-mobile { @apply hidden; }
+    /* iOS Safari: 表单字号 <16px 聚焦会触发页面自动缩放，强制 16px 视觉上仍用 transform 缩小 */
+    input[type="number"], input[type="text"], select, textarea { font-size: 16px; }
   }
 }
 

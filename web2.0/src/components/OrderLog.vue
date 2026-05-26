@@ -17,9 +17,10 @@ const positions = usePositionsStore()
         <svg class="w-10 h-10 text-slate-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         <p class="text-slate-400 font-medium text-sm">暂无交易记录</p>
       </div>
-      <div v-else class="max-h-[420px] overflow-y-auto divide-y divide-slate-50">
+      <div v-else class="max-h-[420px] overflow-y-auto overflow-x-auto">
+        <div class="min-w-[560px] md:min-w-0 divide-y divide-slate-50">
         <div v-for="(t, i) in positions.trades" :key="i"
-          class="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60 transition-colors text-xs">
+          class="flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2.5 hover:bg-slate-50/60 transition-colors text-xs">
           <!-- time -->
           <span class="text-[11px] text-slate-400 font-mono w-16 flex-shrink-0">{{ (t.trade_time || '').substring(11, 19) }}</span>
           <!-- badge -->
@@ -32,13 +33,14 @@ const positions = usePositionsStore()
           <!-- name -->
           <span class="text-slate-500 truncate w-16 flex-shrink-0">{{ t.stock_name || '--' }}</span>
           <!-- price -->
-          <span class="font-mono text-slate-600 w-16 text-right flex-shrink-0">{{ (t.price || 0).toFixed(2) }}</span>
+          <span class="font-mono text-slate-600 w-14 text-right flex-shrink-0">{{ (t.price || 0).toFixed(2) }}</span>
           <!-- volume -->
-          <span class="text-slate-400 w-20 text-right flex-shrink-0">{{ t.volume }} 股</span>
+          <span class="text-slate-400 w-16 text-right flex-shrink-0">{{ t.volume }} 股</span>
           <!-- amount -->
           <span class="font-mono text-slate-500 w-24 text-right flex-shrink-0">¥{{ ((t.price || 0) * (t.volume || 0)).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0}) }}</span>
           <!-- strategy tag -->
           <span class="badge-slate !text-[9px] flex-shrink-0">{{ t.strategy || '--' }}</span>
+        </div>
         </div>
       </div>
     </div>

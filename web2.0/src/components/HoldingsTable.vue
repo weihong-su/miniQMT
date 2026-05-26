@@ -55,7 +55,6 @@ function cellValue(pos: any, col: typeof COLS[0]): string {
   if (col.k === 'current_price' || col.k === 'cost_price' || col.k === 'highest_price' || col.k === 'stop_loss_price') return fmtPrice(v)
   if (col.k === 'market_value') return fmtMoney(v, 0)
   if (col.k === 'open_date') return (v || '').substring(0, 10) || '--'
-  if (col.k === 'profit_triggered') return v ? '是' : '否'
   return v ?? '--'
 }
 
@@ -121,8 +120,9 @@ function profitBg(v: number): string {
             <td v-for="col in COLS.slice(1)" :key="col.k"
               :class="['px-2 py-2 whitespace-nowrap', col.c,
                        (col.k === 'profit_ratio' || col.k === 'change_percentage') ? ((pos[col.k] ?? 0) > 0 ? 'text-red-600' : (pos[col.k] ?? 0) < 0 ? 'text-emerald-600' : 'text-slate-400') : '']">
-              <span v-if="col.k === 'profit_triggered'">
-                <span :class="pos.profit_triggered ? 'badge-green !text-[9px]' : 'badge-slate !text-[9px]'">{{ pos.profit_triggered ? '是' : '否' }}</span>
+              <span v-if="col.k === 'profit_triggered'" class="inline-flex items-center justify-center">
+                <svg v-if="pos.profit_triggered" class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="已触发首次止盈"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                <span v-else class="text-slate-300" title="未触发">—</span>
               </span>
               <span v-else>{{ cellValue(pos, col) }}</span>
             </td>
