@@ -33,7 +33,7 @@ function onSwitchAccount(accId: string) { system.switchAccount(accId); closeDrop
 function openAdd() { editForm.value = { id: '', label: '', flaskUrl: '' }; showAccountDialog.value = true; closeDropdown() }
 function openEdit(acc: AccountEntry) { editForm.value = { ...acc }; showAccountDialog.value = true; closeDropdown() }
 function saveAccount() { if (!editForm.value.id || !editForm.value.label) return; system.addAccount({ ...editForm.value }); showAccountDialog.value = false }
-function onConnectionChanged() { system.fetchStatus(); system.fetchConnection() }
+async function onConnectionChanged() { await system.syncAccountsFromGateway(); system.fetchStatus(); system.fetchConnection() }
 function onClickOutside(e: MouseEvent) { if (dropdownRef.value && !dropdownRef.value.contains(e.target as Node)) closeDropdown() }
 
 function toggleMonitoring() {
