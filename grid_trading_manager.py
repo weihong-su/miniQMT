@@ -2158,6 +2158,9 @@ class GridTradingManager:
             # 若不重置，任何 DB/网络异常都会导致 tracker.waiting_callback 留在 True，
             # 重现无限重试死循环。
             try:
+                if 'plan' in locals() and isinstance(plan, dict) and plan.get('submit_id'):
+                    with self.lock:
+                        self.submitting_grid_orders.pop(plan['submit_id'], None)
                 stock_code_for_reset = signal.get('stock_code', '')
                 if stock_code_for_reset:
                     with self.lock:

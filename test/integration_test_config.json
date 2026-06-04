@@ -49,6 +49,14 @@
       ],
       "priority": "high"
     },
+    "grid_mece_regression": {
+      "name": "网格交易MECE边界与失效回归测试",
+      "description": "按MECE原则覆盖网格会话状态机、下单并发预占、委托回调、真实账本、重启恢复与退出降级等边界和失效场景",
+      "modules": [
+        "test.test_grid_mece_regression"
+      ],
+      "priority": "critical"
+    },
     "grid_exit": {
       "name": "网格退出条件测试",
       "description": "验证网格交易的退出条件检测",
