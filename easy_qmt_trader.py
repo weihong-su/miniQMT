@@ -899,7 +899,8 @@ class easy_qmt_trader:
                 return pd.DataFrame(columns=columns)
             # 🔧 修复：检查xt_trader是否已正确初始化
             if not hasattr(self, 'xt_trader') or self.xt_trader is None or isinstance(self.xt_trader, str):
-                logger_error_msg = f"QMT未连接或连接失败，无法获取持仓。xt_trader类型: {type(self.xt_trader) if hasattr(self, 'xt_trader') else 'undefined'}"
+                # logger_error_msg = f"QMT未连接或连接失败，无法获取持仓。xt_trader类型: {type(self.xt_trader) if hasattr(self, 'xt_trader') else 'undefined'}"
+                logger_error_msg = f"QMT未连接或连接失败，无法获取持仓"                
                 logger.error(f"获取持仓信息时出错: {logger_error_msg}")
 
                 # 返回预定义空DataFrame
