@@ -10,6 +10,7 @@
 python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
   ├ 调度循环(每30s tick, 双触发: daily / interval / both)
   ├ 候选池筛选(多表并集)          ── 读 ──► C:\github-repo\stockquant\chan.db
+  ├ 大盘指数门禁                  ── 读 ──► 999999 / 399001 / 399005 日线 MA5
   ├ 防重过滤(前置)                ── 读 ──► 运行中 web /api/positions
   ├ 洗牌 + 惰性条件检查(命中即停)  ── import ──► data_manager / xtdata (进程内自取行情)
   └ HTTP 下单 + 记录              ── POST ──► 运行中 web /api/actions/execute_buy
@@ -31,8 +32,12 @@ python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
 ## 大候选池的惰性求值
 
 候选池可能数百只,而每轮只买 `max_buys_per_run`(默认 1)只。为避免对全部候选做昂贵的逐只行情/指标检查:
-**先防重过滤 → 洗牌 → 顺序惰性检查,收集到所需数量即停**。对均匀洗牌列表取"前 k 个通过项",
+**先做大盘指数门禁 → 防重过滤 → 洗牌 → 顺序惰性检查,收集到所需数量即停**。对均匀洗牌列表取"前 k 个通过项",
 数学上等价于在全部通过标的中均匀随机选 k 只,但通常只需检查少量标的即命中。
+
+## 大盘指数门禁
+
+自动买入前会检查 `999999`、`399001`、`399005` 三个指数。只要任一指数最近一根 MA5 大于前一根 MA5,本轮才继续执行个股防重、条件检查与下单;若三个指数 MA5 都未向上,本轮直接结束且不下单。
 
 ## 文件清单
 
@@ -56,6 +61,7 @@ python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
 - `latest_n_dates` — 每表取运行日前最近 N 个交易日(默认 2)
 
 ### [filter] 买入条件(均可独立开关 + 阈值可配)
+- 大盘门禁: `999999` / `399001` / `399005` 至少一个指数 MA5 向上才允许自动买入
 - 换手率 `>= min_turnover_rate`(默认 5%);`volume_unit_multiplier` 控制成交量单位换算(手→股填 100,已是股填 1)
 - 量比 `>= min_volume_ratio`(默认 2)
 - 涨幅 `>= min_pct_change`(默认关闭)
@@ -99,7 +105,7 @@ python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
 1. 编辑 `autobuy/miniqmt_autobuy.cfg`:确认 `chan.db` 路径与 `stg_chan/zs_pool` 表存在
 2. 确保目标账号 web_server 已运行(默认 :5000)
 3. `miniqmt.bat` → `[j]` 启动 → `[l]` 看状态 → `[m]` 看日志
-4. 首次跑 `--once`,查日志:目标交易日与命中数、洗牌后检查了几只即命中、下单结果;
+4. 首次跑 `--once`,查日志:目标交易日与命中数、大盘指数门禁结果、洗牌后检查了几只即命中、下单结果;
    核对 `turnover_rate` 实际值确认 `volume_unit_multiplier` 单位是否正确
 
 ## 注意事项

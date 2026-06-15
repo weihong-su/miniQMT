@@ -6,7 +6,7 @@ miniqmt_autobuy 独立进程入口与调度。
   interval — 距上次触发 >= cfg.interval_minutes (仅交易时段)
   both     — 两者都启用
 
-单轮流程: 拉候选池 → 防重过滤 → 洗牌后惰性条件检查(记决策日志) → HTTP下单(复用web买入API) → 记买入历史。
+单轮流程: 拉候选池 → 大盘指数门禁 → 防重过滤 → 洗牌后惰性条件检查(记决策日志) → HTTP下单(复用web买入API) → 记买入历史。
 下单后止盈止损由主程序 position_manager 自动接管。
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .config import DEFAULT_CFG_PATH, PROJECT_ROOT, get_autobuy_logger, load_con
 from .pool import normalize_code, read_candidates
 from .store import AutoBuyStore
 from .client import WebClient
-from .filter import BuyConditionFilter
+from .filter import BuyConditionFilter, MarketIndexFilter
 
 logger = get_autobuy_logger("autobuy")
 
@@ -43,6 +43,7 @@ class AutoBuyApp:
         from data_manager import get_data_manager
         self.dm = get_data_manager()
         self.filter = BuyConditionFilter(cfg, self.dm)
+        self.market_filter = MarketIndexFilter(self.dm)
 
         # 调度状态
         self._fired_daily = set()        # 当日已触发的 (h, m)
@@ -65,6 +66,14 @@ class AutoBuyApp:
             logger.info("候选池为空，结束本轮")
             self._write_status(status)
             return
+
+        market_ok, market_reason = self.market_filter.check()
+        status["market_filter"] = market_reason
+        if not market_ok:
+            logger.info(f"大盘指数门禁未通过，本轮不自动买入: {market_reason}")
+            self._write_status(status)
+            return
+        logger.info(f"大盘指数门禁通过: {market_reason}")
 
         # 防重过滤前置: 先剔除已持仓/窗口内已买，避免对不可买标的做昂贵的条件检查
         eligible = self._dedup_filter(codes)

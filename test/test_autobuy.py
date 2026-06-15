@@ -15,7 +15,7 @@ import pandas as pd
 
 from autobuy.config import AutoBuyConfig, load_config
 from autobuy.pool import normalize_code, read_candidates, recent_trading_dates, to_xt_code
-from autobuy.filter import BuyConditionFilter
+from autobuy.filter import MARKET_INDEX_CODES, MarketIndexFilter, BuyConditionFilter
 from autobuy.store import AutoBuyStore
 from autobuy.client import WebClient
 
@@ -243,6 +243,49 @@ class TestFilter(unittest.TestCase):
 
 
 # ===========================================================================
+# market filter
+# ===========================================================================
+class TestMarketIndexFilter(unittest.TestCase):
+    def _df(self, closes):
+        return pd.DataFrame({"close": closes})
+
+    def test_any_index_ma5_up_passes(self):
+        dm = MagicMock()
+        down = self._df([10, 9, 8, 7, 6, 5])
+        up = self._df([1, 2, 3, 4, 5, 6])
+        dm.download_history_data.side_effect = [down, up]
+
+        ok, reason = MarketIndexFilter(dm).check()
+
+        self.assertTrue(ok, reason)
+        self.assertEqual(reason["passed_index"], "399001")
+        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "999999.SH")
+        self.assertEqual(dm.download_history_data.call_args_list[1].args[0], "399001.SZ")
+
+    def test_index_alias_fallback(self):
+        dm = MagicMock()
+        up = self._df([1, 2, 3, 4, 5, 6])
+        dm.download_history_data.side_effect = [None, up]
+
+        ok, reason = MarketIndexFilter(dm, index_codes=("999999",)).check()
+
+        self.assertTrue(ok, reason)
+        self.assertEqual(reason["details"]["999999"]["code"], "sh.000001")
+        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "999999.SH")
+        self.assertEqual(dm.download_history_data.call_args_list[1].args[0], "sh.000001")
+
+    def test_all_index_ma5_down_blocks(self):
+        dm = MagicMock()
+        dm.download_history_data.return_value = self._df([10, 9, 8, 7, 6, 5])
+
+        ok, reason = MarketIndexFilter(dm).check()
+
+        self.assertFalse(ok)
+        self.assertEqual(len(reason["details"]), len(MARKET_INDEX_CODES))
+        self.assertTrue(all(not item.get("ma5_up", True) for item in reason["details"].values()))
+
+
+# ===========================================================================
 # store
 # ===========================================================================
 class TestStore(unittest.TestCase):
@@ -345,6 +388,8 @@ class TestRunOnceLazy(unittest.TestCase):
             app.filter.check.side_effect = lambda c: (check_result(c), {"code": c, "failed": []})
         else:
             app.filter.check.side_effect = lambda c: (check_result, {"code": c, "failed": []})
+        app.market_filter = MagicMock()
+        app.market_filter.check.return_value = (True, {"passed": True, "passed_index": "999999"})
         app._write_status = lambda status: None
         self._candidates = candidates
         return app
@@ -376,6 +421,16 @@ class TestRunOnceLazy(unittest.TestCase):
         app.client.get_held_codes.return_value = None  # 持仓查询失败
         app.run_once("test")
         self.assertEqual(app.client.buy.call_count, 0)  # 安全优先，不下单
+
+    @patch("autobuy.app.read_candidates")
+    def test_market_filter_blocks_before_stock_check(self, mock_read):
+        mock_read.return_value = ["600000.SH", "600001.SH"]
+        app = self._app(["600000.SH", "600001.SH"], check_result=True, max_buys=1)
+        app.market_filter.check.return_value = (False, {"passed": False})
+        app.run_once("test")
+        self.assertEqual(app.client.get_held_codes.call_count, 0)
+        self.assertEqual(app.filter.check.call_count, 0)
+        self.assertEqual(app.client.buy.call_count, 0)
 
 
 if __name__ == "__main__":

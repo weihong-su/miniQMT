@@ -19,6 +19,18 @@ logger = get_autobuy_logger("autobuy.filter")
 
 # 涨跌停价比较容差
 _PRICE_EPS = 0.001
+MARKET_INDEX_CODES = ("999999", "399001", "399005")
+_MARKET_INDEX_XT_CODES = {
+    "999999": "999999.SH",
+    "399001": "399001.SZ",
+    "399005": "399005.SZ",
+}
+_MARKET_INDEX_ALIASES = {
+    # 999999 是通达信口径的上证指数，Baostock 日线接口使用 sh.000001。
+    "999999": ("999999.SH", "sh.000001"),
+    "399001": ("399001.SZ", "sz.399001"),
+    "399005": ("399005.SZ", "sz.399005"),
+}
 
 
 def _first_positive(detail: dict, keys) -> float | None:
@@ -149,3 +161,71 @@ class BuyConditionFilter:
 
         passed = len(reason["failed"]) == 0
         return passed, reason
+
+
+class MarketIndexFilter:
+    """大盘指数门禁: 三个指数中至少一个 MA5 向上才允许自动买入。"""
+
+    def __init__(self, data_manager, index_codes=MARKET_INDEX_CODES):
+        self.dm = data_manager
+        self.index_codes = tuple(index_codes)
+
+    def check(self) -> tuple:
+        """返回 (是否通过, 详情)。
+
+        MA5 向上定义为最近一个 MA5 大于前一个 MA5。任一指数满足即通过。
+        """
+        details = {}
+        failed = []
+        for raw_code in self.index_codes:
+            aliases = _MARKET_INDEX_ALIASES.get(raw_code, (_MARKET_INDEX_XT_CODES.get(raw_code, raw_code),))
+            df = None
+            used_code = aliases[0]
+            errors = []
+            for code in aliases:
+                used_code = code
+                try:
+                    df = self.dm.download_history_data(code, period="day")
+                except Exception as e:
+                    errors.append(f"{code}: {e}")
+                    logger.warning(f"指数 {raw_code}({code}) 历史数据异常: {e}")
+                    continue
+                if df is not None and not getattr(df, "empty", True) and "close" in df.columns and len(df) >= 6:
+                    break
+                errors.append(f"{code}: 历史数据不足")
+
+            if df is None or getattr(df, "empty", True) or "close" not in df.columns or len(df) < 6:
+                details[raw_code] = {"code": used_code, "aliases": aliases, "error": "; ".join(errors)}
+                failed.append(f"{raw_code}历史数据不足")
+                continue
+
+            close = df["close"].astype(float)
+            ma5 = close.rolling(5).mean()
+            if len(ma5) < 6 or ma5.iloc[-1] != ma5.iloc[-1] or ma5.iloc[-2] != ma5.iloc[-2]:
+                details[raw_code] = {"code": used_code, "aliases": aliases, "error": "MA5无法计算"}
+                failed.append(f"{raw_code} MA5无法计算")
+                continue
+
+            ma5_now = float(ma5.iloc[-1])
+            ma5_prev = float(ma5.iloc[-2])
+            ma5_up = ma5_now > ma5_prev
+            details[raw_code] = {
+                "code": used_code,
+                "aliases": aliases,
+                "ma5": round(ma5_now, 4),
+                "ma5_prev": round(ma5_prev, 4),
+                "ma5_up": ma5_up,
+            }
+            if ma5_up:
+                return True, {
+                    "passed": True,
+                    "passed_index": raw_code,
+                    "details": details,
+                }
+            failed.append(f"{raw_code} MA5未向上")
+
+        return False, {
+            "passed": False,
+            "failed": failed,
+            "details": details,
+        }
