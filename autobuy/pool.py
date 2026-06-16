@@ -118,6 +118,7 @@ def read_candidates(cfg: AutoBuyConfig, reference_date=None) -> list:
 
     codes = []
     seen = set()
+    per_table = []
     target_dates = recent_trading_dates(cfg.latest_n_dates, reference_date)
     try:
         for tbl in cfg.tables:
@@ -145,9 +146,10 @@ def read_candidates(cfg: AutoBuyConfig, reference_date=None) -> list:
                     seen.add(key)
                     codes.append(to_xt_code(code))  # 统一系统标准格式
                     hit += 1
-            logger.info(f"候选池表 {tbl}: 目标交易日 {target_dates} 命中 {hit} 只")
+            logger.debug(f"候选池表 {tbl}: 目标交易日 {target_dates} 命中 {hit} 只")
+            per_table.append(f"{tbl}={hit}")
     finally:
         conn.close()
 
-    logger.info(f"候选池筛选完成: 目标交易日 {target_dates}, 合并去重后共 {len(codes)} 只候选 (表={cfg.tables})")
+    logger.info(f"候选池筛选: 交易日 {target_dates} → {' '.join(per_table)} 合计 {len(codes)} 只")
     return codes

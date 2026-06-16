@@ -433,5 +433,50 @@ class TestRunOnceLazy(unittest.TestCase):
         self.assertEqual(app.client.buy.call_count, 0)
 
 
+class TestScheduleTradeTime(unittest.TestCase):
+    """调度时段门禁: 非交易时段必须停止定时筛选。
+
+    回归点: 修复前 autobuy 误用 config.is_trade_time()，该函数在模拟模式下恒为
+    True，导致非交易时段(如 19:00)仍触发完整筛选。改用 config.is_market_hours()
+    后按真实市场时钟判断。
+    """
+
+    def _app(self, only_trade_time=True):
+        from datetime import datetime, timedelta
+        from autobuy.app import AutoBuyApp
+        app = AutoBuyApp.__new__(AutoBuyApp)
+        app.cfg = AutoBuyConfig()
+        app.cfg.mode = "interval"
+        app.cfg.only_trade_time = only_trade_time
+        app.cfg.interval_minutes = 30
+        app._fired_daily = set()
+        app._fired_daily_date = None
+        app._last_interval_run = datetime.now() - timedelta(hours=1)  # 确保 interval 已到点
+        app._safe_run = MagicMock()
+        return app
+
+    @patch("autobuy.app.config.is_market_hours", return_value=False)
+    def test_interval_skipped_outside_market_hours(self, _m):
+        app = self._app()
+        before = app._last_interval_run
+        app._tick()
+        app._safe_run.assert_not_called()
+        self.assertEqual(app._last_interval_run, before)  # 计时器未被消费 → 开盘后可立即触发
+
+    @patch("autobuy.app.config.is_market_hours", return_value=True)
+    def test_interval_runs_in_market_hours(self, _m):
+        app = self._app()
+        app._tick()
+        app._safe_run.assert_called_once()
+
+    @patch("autobuy.app.config.is_trade_time", return_value=True)
+    @patch("autobuy.app.config.is_market_hours", return_value=False)
+    def test_simulation_bypass_does_not_resume_scheduling(self, _mh, _tt):
+        # 即使 is_trade_time()=True(模拟旁路), 非交易时段仍须停止 —— 锁定原 bug
+        app = self._app()
+        app._tick()
+        app._safe_run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

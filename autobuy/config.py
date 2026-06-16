@@ -42,10 +42,11 @@ def get_autobuy_logger(name: str = "autobuy") -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # 文件只记 INFO+，控制体积；DEBUG 级决策明细已落库 autobuy.db，无需重复落盘。
     file_handler = RotatingFileHandler(
-        LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        LOG_PATH, maxBytes=3 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
 

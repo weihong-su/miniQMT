@@ -70,10 +70,17 @@ class AutoBuyApp:
         market_ok, market_reason = self.market_filter.check()
         status["market_filter"] = market_reason
         if not market_ok:
-            logger.info(f"大盘指数门禁未通过，本轮不自动买入: {market_reason}")
+            logger.info(f"大盘门禁未通过，本轮不买入: {market_reason.get('failed', market_reason)}")
             self._write_status(status)
             return
-        logger.info(f"大盘指数门禁通过: {market_reason}")
+        idx = market_reason.get("passed_index")
+        idx_detail = (market_reason.get("details") or {}).get(idx, {})
+        if "ma5" in idx_detail:
+            logger.info(
+                f"大盘门禁通过: 指数 {idx} MA5 {idx_detail['ma5_prev']}→{idx_detail['ma5']} 向上"
+            )
+        else:
+            logger.info(f"大盘门禁通过: 指数 {idx} MA5 向上")
 
         # 防重过滤前置: 先剔除已持仓/窗口内已买，避免对不可买标的做昂贵的条件检查
         eligible = self._dedup_filter(codes)
@@ -111,7 +118,7 @@ class AutoBuyApp:
             f"命中 {len(chosen)}/{need} 只: {chosen}"
         )
         if not chosen:
-            logger.info("检查完毕无标的通过条件，结束本轮")
+            logger.debug("检查完毕无标的通过条件，结束本轮")
             self._write_status(status)
             return
 
@@ -155,9 +162,8 @@ class AutoBuyApp:
     # 调度循环
     # ------------------------------------------------------------------
     def _should_skip_non_trade(self) -> bool:
-        if self.cfg.only_trade_time and not config.is_trade_time():
-            return True
-        return False
+        # 按真实市场时钟判断，避免模拟/调试模式下 is_trade_time() 恒为 True 的旁路
+        return self.cfg.only_trade_time and not config.is_market_hours()
 
     def _tick(self) -> None:
         now = datetime.now()
@@ -178,15 +184,13 @@ class AutoBuyApp:
                     else:
                         self._safe_run(f"daily-{h:02d}:{m:02d}")
 
-        # interval 触发
-        if mode in ("interval", "both"):
+        # interval 触发: 仅在交易时段计时与触发。非交易时段完全静默，且不消费
+        # 计时器，使开盘后能尽快触发首轮（而非从盘前的残留计时起算）。
+        if mode in ("interval", "both") and not self._should_skip_non_trade():
             elapsed = (now - self._last_interval_run).total_seconds()
             if elapsed >= self.cfg.interval_minutes * 60:
                 self._last_interval_run = now
-                if self._should_skip_non_trade():
-                    logger.debug("interval 命中但非交易时段，跳过")
-                else:
-                    self._safe_run(f"interval-{self.cfg.interval_minutes}m")
+                self._safe_run(f"interval-{self.cfg.interval_minutes}m")
 
     def _safe_run(self, trigger: str) -> None:
         try:

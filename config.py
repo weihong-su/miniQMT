@@ -454,23 +454,28 @@ GRID_POSITION_QUERY_TIMEOUT = 5.0  # 网格交易持仓查询超时(秒)
 HISTORY_DATA_DOWNLOAD_TIMEOUT = 5  # 启动时单只股票历史数据下载超时（秒），超时则跳过
 GRID_LOCK_ACQUIRE_TIMEOUT = 5.0   # 网格交易锁获取超时(秒)
 
-def is_trade_time():
-    """判断当前是否为交易时间"""
-    if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:
-        return True
+def is_market_hours():
+    """按真实市场时钟判断是否交易时段，不受模拟/调试开关影响。
 
+    用于需要严格遵循真实交易时段的场景（如 autobuy 定时筛选），区别于
+    is_trade_time() 在模拟/调试模式下恒为 True 的旁路语义。
+    """
     now = datetime.now()
     weekday = now.weekday() + 1  # 转换为1-7表示周一至周日
-    
+
     if weekday not in TRADE_TIME["trade_days"]:
         return False
-    
+
     current_time = now.strftime("%H:%M:%S")
-    if (TRADE_TIME["morning_start"] <= current_time <= TRADE_TIME["morning_end"]) or \
-       (TRADE_TIME["afternoon_start"] <= current_time <= TRADE_TIME["afternoon_end"]):
+    return (TRADE_TIME["morning_start"] <= current_time <= TRADE_TIME["morning_end"]) or \
+           (TRADE_TIME["afternoon_start"] <= current_time <= TRADE_TIME["afternoon_end"])
+
+
+def is_trade_time():
+    """判断当前是否为交易时间（模拟/调试模式下恒为 True 以绕过时间限制）。"""
+    if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:
         return True
-    
-    return False
+    return is_market_hours()
 
 # ======================= 预设股票池 =======================
 # 可以在这里定义预设的股票池，也可以从外部文件加载
