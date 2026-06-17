@@ -6,7 +6,6 @@
       "description": "验证 miniqmt_autobuy 候选池筛选/条件检查/防重/HTTP下单",
       "modules": [
         "test.test_autobuy",
-        "test.test_data_manager_history_dates",
         "test.test_strategy_buy_price_type"
       ],
       "priority": "high"
@@ -213,6 +212,7 @@
       "name": "xtdata 行情数据源测试",
       "description": "验证 DataManager.ensure_subscribed 动态订阅（去重/异常处理）、get_latest_data xtdata->Mootdx fallback 三条路径、以及盘中新持仓加入时自动订阅的集成行为",
       "modules": [
+        "test.test_data_manager_history_dates",
         "test.test_xtdata_data_source",
         "test.test_stock_name_resolution"
       ],
@@ -272,6 +272,7 @@
         "test.test_grid_exit_deviation",
         "test.test_grid_validation_params",
         "test.test_trader_callback",
+        "test.test_data_manager_history_dates",
         "test.test_db_op_safety_verification",
         "test.test_dual_layer_storage",
         "test.test_web_api_complete",

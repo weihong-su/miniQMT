@@ -91,6 +91,10 @@ DEFAULT_PERIOD = "1d"
 INITIAL_DAYS = 365
 # 定时更新间隔（秒）
 UPDATE_INTERVAL = 60
+# 单只股票历史数据更新节流时间（秒），避免策略线程每轮重复拉日线
+HISTORY_UPDATE_THROTTLE_SECONDS = 300
+# 同一股票同一数据源非法历史日期告警降噪间隔（秒）
+HISTORY_INVALID_DATE_LOG_INTERVAL = 600
 # 备选池股票文件路径
 STOCK2BUY_FILE = os.path.join(DATA_DIR, "stock2buy.json")
 
