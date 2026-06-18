@@ -643,6 +643,76 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             return {}
 
+    def _normalize_stock_code(code: str) -> str:
+        """股票代码归一化为 6 位裸代码，用于跨接口匹配 003025 / 003025.SZ。"""
+        return str(code or "").strip().split(".")[0]
+
+    def _load_grid_sessions_from_sqlite(aid: str) -> list:
+        """从 data_<aid>/trading.db 读取网格会话，供 Flask 兼容端点使用。"""
+        import sqlite3
+        import os as _os
+        db_path = _os.path.join(_os.path.dirname(__file__), "..", f"data_{aid}", "trading.db")
+        db_path = _os.path.normpath(db_path)
+        if not _os.path.exists(db_path):
+            return []
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM grid_trading_sessions "
+                "ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, "
+                "start_time DESC, id DESC"
+            ).fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
+        except Exception:
+            return []
+
+    def _active_grid_codes(aid: str) -> set:
+        """读取活跃网格股票集合，使用裸代码避免后缀差异导致误判。"""
+        return {
+            _normalize_stock_code(s.get("stock_code"))
+            for s in _load_grid_sessions_from_sqlite(aid)
+            if str(s.get("status") or "").lower() in ("active", "stopping")
+        }
+
+    def _grid_session_to_compat(row: dict) -> dict:
+        """SQLite 网格会话 → web2.0 兼容字段。"""
+        total_buy = float(row.get("total_buy_amount") or 0)
+        total_sell = float(row.get("total_sell_amount") or 0)
+        grid_profit = total_sell - total_buy
+        denominator = float(row.get("max_investment") or 0)
+        profit_ratio = grid_profit / denominator if denominator else 0
+        return {
+            "session_id": row.get("id"),
+            "stock_code": row.get("stock_code") or "",
+            "status": row.get("status") or "",
+            "center_price": row.get("center_price") or 0,
+            "current_center_price": row.get("current_center_price") or row.get("center_price") or 0,
+            "trade_count": row.get("trade_count") or 0,
+            "buy_count": row.get("buy_count") or 0,
+            "sell_count": row.get("sell_count") or 0,
+            "profit_ratio": profit_ratio,
+            "grid_profit": grid_profit,
+            "pnl_snapshot": {
+                "profit_ratio": profit_ratio,
+                "total_pnl": grid_profit,
+                "realized_pnl": grid_profit,
+                "unrealized_pnl": 0,
+                "method": "cash_flow_legacy",
+                "is_degraded": True,
+                "denominator": denominator,
+                "denominator_type": "max_investment",
+            },
+            "current_investment": row.get("current_investment") or 0,
+            "max_investment": row.get("max_investment") or 0,
+            "deviation_ratio": 0,
+            "start_time": row.get("start_time"),
+            "end_time": row.get("end_time"),
+            "stop_time": row.get("stop_time"),
+            "stop_reason": row.get("stop_reason"),
+        }
+
     def _load_trade_records_from_sqlite(aid: str) -> list:
         """从 data_<aid>/trading.db 的 trade_records 表读取交易记录。
 
@@ -756,7 +826,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             "stop_loss_price": sl_price,
             "open_date": (open_dt or "")[:10] or "--",
             "change_percentage": p.get("_tick_change_pct", 0),
-            "grid_session_active": False,
+            "grid_session_active": bool(p.get("_grid_session_active", False)),
         }
 
     def _map_trade_to_flask(t: dict) -> dict:
@@ -814,6 +884,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         try:
             raw = _get_manager().query_positions(aid)
             sqlite = _load_sqlite_enrichment(aid)
+            active_grid_codes = _active_grid_codes(aid)
             # 将 SQLite 持久化字段注入到 QMT 持仓 dict 中
             for p in raw:
                 code = p.get("证券代码", "")
@@ -823,6 +894,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
                 p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
                 p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
+                p["_grid_session_active"]      = _normalize_stock_code(code) in active_grid_codes
             _enrich_positions_with_tick(raw, _get_manager())
             positions = [_map_position_to_flask(p) for p in raw]
             total_mv = sum(p["market_value"] for p in positions)
@@ -862,6 +934,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         try:
             raw = _get_manager().query_positions(aid)
             sqlite = _load_sqlite_enrichment(aid)
+            active_grid_codes = _active_grid_codes(aid)
             for p in raw:
                 code = p.get("证券代码", "")
                 enr = sqlite.get(code, {})
@@ -870,6 +943,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
                 p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
                 p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
+                p["_grid_session_active"]      = _normalize_stock_code(code) in active_grid_codes
             _enrich_positions_with_tick(raw, _get_manager())
             positions = [_map_position_to_flask(p) for p in raw]
             return JSONResponse({
@@ -941,3 +1015,17 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             trades = _get_manager().query_orders(aid)
         mapped = [_map_trade_to_flask(t) for t in (trades or [])]
         return JSONResponse({"status": "success", "data": mapped})
+
+    @app.get("/api/grid/sessions", tags=["兼容"])
+    async def flask_grid_sessions(request: Request):
+        """Flask 兼容: /api/grid/sessions（网关模式下从 SQLite 返回会话状态）。"""
+        aid = _get_request_account_id(request)
+        if not aid:
+            return JSONResponse({"status": "success", "success": True, "sessions": [], "total": 0})
+        sessions = [_grid_session_to_compat(row) for row in _load_grid_sessions_from_sqlite(aid)]
+        return JSONResponse({
+            "status": "success",
+            "success": True,
+            "sessions": sessions,
+            "total": len(sessions),
+        })

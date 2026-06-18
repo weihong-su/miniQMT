@@ -44,8 +44,11 @@ export function useSSE() {
           }
           system.lastUpdateTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           if (msg.positions_update?.changed) {
-            setTimeout(() => positions.fetchPositions(), 100)
-            setTimeout(() => grid.fetchSessions(), 120)
+            setTimeout(() => {
+              grid.fetchSessions()
+                .then(() => positions.fetchPositions())
+                .catch(() => {})
+            }, 100)
           }
         } catch { /* ignore parse errors */ }
       }

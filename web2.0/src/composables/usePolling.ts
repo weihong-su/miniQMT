@@ -46,8 +46,9 @@ export function usePolling() {
     holdingCounter++
     if (holdingCounter >= 10) {
       holdingCounter = 0
-      positions.fetchPositions().catch(() => {})
-      grid.fetchSessions().catch(() => {})
+      grid.fetchSessions()
+        .then(() => positions.fetchPositions())
+        .catch(() => {})
     }
   }
 

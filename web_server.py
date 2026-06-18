@@ -164,6 +164,38 @@ realtime_data = {
     'positions_all': []  # Add new field for all positions data
 }
 
+
+def _find_active_grid_session(grid_manager, stock_code):
+    """按股票代码查找活跃网格会话，兼容 003025 与 003025.SZ 两种格式。"""
+    if not grid_manager or not stock_code:
+        return None
+
+    normalize = getattr(grid_manager, '_normalize_code', None)
+    keys = [stock_code]
+    if callable(normalize):
+        try:
+            keys.append(normalize(stock_code))
+        except Exception:
+            pass
+    if '.' not in stock_code:
+        keys.extend([f"{stock_code}.SH", f"{stock_code}.SZ"])
+    else:
+        keys.append(stock_code.split('.')[0])
+
+    seen = set()
+    for key in keys:
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        session = grid_manager.sessions.get(key)
+        if session and session.status in ('active', 'stopping'):
+            return session
+    return None
+
+
+def _is_grid_session_active(grid_manager, stock_code) -> bool:
+    return _find_active_grid_session(grid_manager, stock_code) is not None
+
 # 创建线程池用于超时调用(最大2个工作线程,避免资源消耗)
 api_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api_timeout")
 
@@ -448,14 +480,12 @@ def get_positions():
             # 为positions添加grid_session_active字段
             for pos in positions:
                 stock_code = pos.get('stock_code')
-                session = grid_manager.sessions.get(stock_code)
-                pos['grid_session_active'] = (session is not None and session.status == 'active')
+                pos['grid_session_active'] = _is_grid_session_active(grid_manager, stock_code)
 
             # 为positions_all添加grid_session_active字段
             for pos in realtime_data['positions_all']:
                 stock_code = pos.get('stock_code')
-                session = grid_manager.sessions.get(stock_code)
-                pos['grid_session_active'] = (session is not None and session.status == 'active')
+                pos['grid_session_active'] = _is_grid_session_active(grid_manager, stock_code)
 
         # 获取所有持仓数据
         positions_all_df = position_manager.get_all_positions_with_all_fields()
@@ -467,8 +497,7 @@ def get_positions():
         if grid_manager:
             for pos in realtime_data['positions_all']:
                 stock_code = pos.get('stock_code')
-                session = grid_manager.sessions.get(stock_code)
-                pos['grid_session_active'] = (session is not None and session.status == 'active')
+                pos['grid_session_active'] = _is_grid_session_active(grid_manager, stock_code)
 
         response = make_response(jsonify({
             'status': 'success',
@@ -1480,13 +1509,7 @@ def get_positions_all():
         if grid_manager:
             for pos in positions_all:
                 stock_code = pos.get('stock_code')
-                # 🔧 修复: 尝试带后缀和不带后缀两种格式查询
-                session = grid_manager.sessions.get(stock_code)
-                if not session and '.' not in stock_code:
-                    # 如果不带后缀，尝试添加.SH和.SZ后缀
-                    session = grid_manager.sessions.get(f"{stock_code}.SH") or \
-                              grid_manager.sessions.get(f"{stock_code}.SZ")
-                pos['grid_session_active'] = (session is not None and session.status == 'active')
+                pos['grid_session_active'] = _is_grid_session_active(grid_manager, stock_code)
         else:
             # 如果grid_manager未初始化，所有股票设为False
             for pos in positions_all:
@@ -1525,8 +1548,7 @@ def _refresh_realtime_positions_once(position_manager):
     if grid_manager:
         for pos in positions_all:
             stock_code = pos.get('stock_code')
-            session = grid_manager.sessions.get(stock_code)
-            pos['grid_session_active'] = (session is not None and session.status == 'active')
+            pos['grid_session_active'] = _is_grid_session_active(grid_manager, stock_code)
     else:
         for pos in positions_all:
             pos['grid_session_active'] = False
@@ -2244,6 +2266,94 @@ def get_grid_trades(session_id):
 
     except Exception as e:
         logger.error(f"获取网格交易历史失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/ledger/<int:session_id>', methods=['GET'])
+def get_grid_ledger_detail(session_id):
+    """获取网格真实账本详情。"""
+    try:
+        position_manager = get_position_manager_instance()
+        if not position_manager.grid_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        grid_manager = position_manager.grid_manager
+        db = grid_manager.db
+
+        active_session = None
+        for session in grid_manager.sessions.values():
+            if getattr(session, 'id', None) == session_id:
+                active_session = session
+                break
+
+        db_session = db.get_grid_session(session_id) if hasattr(db, 'get_grid_session') else None
+        if not active_session and not db_session:
+            return jsonify({'success': False, 'error': f'会话{session_id}不存在'}), 404
+
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        limit = min(max(limit or 50, 1), 500)
+        offset = max(offset or 0, 0)
+
+        current_price = request.args.get('current_price', type=float)
+        if current_price is None and active_session:
+            current_price = (
+                getattr(active_session, 'current_center_price', None)
+                or getattr(active_session, 'center_price', None)
+            )
+        if current_price is None and db_session:
+            current_price = (
+                db_session.get('current_center_price')
+                or db_session.get('center_price')
+            )
+
+        summary = db.get_grid_ledger_summary(session_id, current_price=current_price)
+        lots = db.get_grid_lots(session_id)
+        matches = db.get_grid_lot_matches(session_id)
+        trades = db.get_grid_trades(session_id, limit, offset)
+        total_count = db.get_grid_trade_count(session_id)
+
+        if active_session:
+            session_payload = {
+                'id': active_session.id,
+                'session_id': active_session.id,
+                'stock_code': active_session.stock_code,
+                'status': active_session.status,
+                'center_price': active_session.center_price,
+                'current_center_price': active_session.current_center_price,
+                'current_investment': active_session.current_investment,
+                'max_investment': active_session.max_investment,
+                'trade_count': active_session.trade_count,
+                'buy_count': active_session.buy_count,
+                'sell_count': active_session.sell_count,
+                'start_time': active_session.start_time.isoformat() if active_session.start_time else None,
+                'end_time': active_session.end_time.isoformat() if active_session.end_time else None,
+                'stop_time': active_session.stop_time.isoformat() if active_session.stop_time else None,
+                'stop_reason': active_session.stop_reason,
+            }
+        else:
+            session_payload = dict(db_session)
+            session_payload['session_id'] = session_payload.get('id')
+
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'session': session_payload,
+            'current_price': current_price,
+            'summary': summary,
+            'lots': lots,
+            'matches': matches,
+            'trades': trades,
+            'total_count': total_count,
+            'pagination': {
+                'limit': limit,
+                'offset': offset,
+                'has_more': offset + len(trades) < total_count
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"获取网格账本详情失败: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

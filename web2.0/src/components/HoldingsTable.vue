@@ -33,6 +33,10 @@ const selectAll = computed({
 
 function openGridConfig(code: string) { gridStockCode.value = code; showGridDialog.value = true }
 
+function hasActiveGrid(pos: any): boolean {
+  return pos.grid_session_active === true || grid.isActiveForStock(pos.stock_code)
+}
+
 const COLS = [
   { k: 'stock_code',   l: '代码',     s: true,  c: 'tabular-nums' },
   { k: 'stock_name',   l: '名称',     s: false, c: 'text-slate-500 truncate max-w-[60px]' },
@@ -64,6 +68,10 @@ function profitBg(v: number): string {
   if (v < 0) return 'bg-emerald-50/40'
   return ''
 }
+
+function shortName(pos: any): string {
+  return pos.stock_name || pos.stock_code
+}
 </script>
 
 <template>
@@ -77,7 +85,58 @@ function profitBg(v: number): string {
       <span class="text-xs text-slate-400">总市值 <strong class="text-slate-700">{{ fmtMoney(positions.totalMarketValue) }}</strong></span>
     </div>
 
-    <div class="overflow-x-auto -mx-3 md:mx-0">
+    <div class="md:hidden p-3 space-y-2">
+      <div v-if="sorted.length === 0" class="py-12 text-center">
+        <svg class="w-12 h-12 text-slate-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+        <p class="text-slate-400 font-medium">暂无持仓数据</p>
+      </div>
+
+      <article v-for="pos in sorted" :key="pos.stock_code" class="mobile-card">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <button @click="openGridConfig(pos.stock_code)" class="font-mono text-sm font-bold text-blue-700">
+              {{ pos.stock_code }}
+            </button>
+            <div class="mt-0.5 flex min-w-0 items-center gap-1.5">
+              <span class="min-w-0 truncate text-xs text-slate-500">{{ shortName(pos) }}</span>
+              <span v-if="hasActiveGrid(pos)" class="badge-green !text-[9px] !px-1.5 !py-0">网格</span>
+              <span v-if="pos.profit_triggered" class="badge-amber !text-[9px] !px-1.5 !py-0">止盈</span>
+            </div>
+          </div>
+          <div class="flex-shrink-0 text-right">
+            <div :class="['font-mono text-base font-bold tabular-nums', profitClass(pos.profit_ratio || 0)]">
+              {{ fmtPercent(pos.profit_ratio || 0) }}
+            </div>
+            <div :class="['mt-0.5 font-mono text-xs tabular-nums', profitClass(pos.change_percentage || 0)]">
+              今日 {{ fmtPercent(pos.change_percentage || 0) }}
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3 grid grid-cols-3 gap-2">
+          <div class="rounded-md bg-slate-50 px-2 py-1.5">
+            <div class="text-[10px] text-slate-400">现价</div>
+            <div class="truncate font-mono text-sm text-slate-700">{{ fmtPrice(pos.current_price) }}</div>
+          </div>
+          <div class="rounded-md bg-slate-50 px-2 py-1.5">
+            <div class="text-[10px] text-slate-400">成本</div>
+            <div class="truncate font-mono text-sm text-slate-700">{{ fmtPrice(pos.cost_price) }}</div>
+          </div>
+          <div class="rounded-md bg-slate-50 px-2 py-1.5">
+            <div class="text-[10px] text-slate-400">市值</div>
+            <div class="truncate font-mono text-sm text-slate-700">{{ fmtMoney(pos.market_value, 0) }}</div>
+          </div>
+        </div>
+
+        <div class="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+          <span>持仓 <strong class="font-mono text-slate-700">{{ pos.volume }}</strong></span>
+          <span>可用 <strong class="font-mono text-slate-700">{{ pos.available }}</strong></span>
+          <button @click="openGridConfig(pos.stock_code)" class="btn-outline btn-xs">网格</button>
+        </div>
+      </article>
+    </div>
+
+    <div class="hidden md:block overflow-x-auto -mx-3 md:mx-0">
       <div class="min-w-[800px] md:min-w-0">
         <table class="w-full text-xs">
         <thead>
@@ -114,7 +173,7 @@ function profitBg(v: number): string {
             <td class="px-2 py-2 font-semibold font-mono">
               <button @click="openGridConfig(pos.stock_code)" class="text-blue-700 hover:text-blue-500 hover:underline cursor-pointer inline-flex items-center gap-1">
                 {{ pos.stock_code }}
-                <span v-if="pos.grid_session_active" class="badge-green !text-[9px] !px-1 !py-0 leading-none">网格</span>
+                <span v-if="hasActiveGrid(pos)" class="badge-green !text-[9px] !px-1 !py-0 leading-none">网格</span>
               </button>
             </td>
             <td v-for="col in COLS.slice(1)" :key="col.k"

@@ -91,7 +91,9 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         self._create_test_db(ACC1, {
             "000001": {"stock_name": "平安银行", "open_date": "2026-03-15 10:30:00",
                         "stop_loss_price": 9.25, "profit_triggered": 0, "highest_price": 11.2},
-        })
+        }, grid_sessions=[
+            {"stock_code": "000001.SZ", "status": "active"},
+        ])
         self._create_test_db(ACC2, {
             "600036": {"stock_name": "招商银行", "open_date": "2026-04-20 14:00:00",
                         "stop_loss_price": 32.38, "profit_triggered": 1, "highest_price": 38.5},
@@ -102,7 +104,7 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         self.app = create_app(sec)
         self.client = TestClient(self.app)
 
-    def _create_test_db(self, aid: str, positions: dict):
+    def _create_test_db(self, aid: str, positions: dict, grid_sessions: list = None):
         """在项目根目录创建 data_<aid>/trading.db 临时 SQLite 文件。"""
         import os as _os
         tmp_dir = _os.path.join(_os.path.dirname(__file__), "..", f"data_{aid}")
@@ -121,6 +123,43 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
                 "INSERT OR REPLACE INTO positions (stock_code, stock_name, open_date, stop_loss_price, profit_triggered, highest_price) VALUES (?,?,?,?,?,?)",
                 (code, fields["stock_name"], fields["open_date"],
                  fields["stop_loss_price"], fields["profit_triggered"], fields["highest_price"]))
+        conn.execute("""CREATE TABLE IF NOT EXISTS grid_trading_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            center_price REAL NOT NULL DEFAULT 10,
+            current_center_price REAL DEFAULT 10,
+            price_interval REAL NOT NULL DEFAULT 0.05,
+            position_ratio REAL NOT NULL DEFAULT 0.25,
+            callback_ratio REAL NOT NULL DEFAULT 0.005,
+            max_investment REAL NOT NULL DEFAULT 10000,
+            current_investment REAL DEFAULT 0,
+            max_deviation REAL DEFAULT 0.15,
+            target_profit REAL DEFAULT 0.10,
+            stop_loss REAL DEFAULT -0.10,
+            trade_count INTEGER DEFAULT 0,
+            buy_count INTEGER DEFAULT 0,
+            sell_count INTEGER DEFAULT 0,
+            total_buy_amount REAL DEFAULT 0,
+            total_sell_amount REAL DEFAULT 0,
+            start_time TEXT NOT NULL DEFAULT '2026-03-15T10:30:00',
+            end_time TEXT NOT NULL DEFAULT '2026-03-22T10:30:00',
+            stop_time TEXT,
+            stop_reason TEXT
+        )""")
+        for s in grid_sessions or []:
+            conn.execute(
+                "INSERT INTO grid_trading_sessions "
+                "(stock_code, status, center_price, current_center_price, max_investment, current_investment, start_time, end_time) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    s["stock_code"], s.get("status", "active"),
+                    s.get("center_price", 10.0), s.get("current_center_price", 10.5),
+                    s.get("max_investment", 10000), s.get("current_investment", 2500),
+                    s.get("start_time", "2026-03-15T10:30:00"),
+                    s.get("end_time", "2026-03-22T10:30:00"),
+                )
+            )
         conn.commit()
         conn.close()
 
@@ -198,6 +237,23 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         self.assertEqual(r1.json()["data"]["positions"][0]["highest_price"], 11.2)
         r2 = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
         self.assertEqual(r2.json()["data"]["positions"][0]["highest_price"], 38.5)
+
+    def test_positions_grid_session_active_from_sqlite(self):
+        """网关兼容持仓应从 SQLite 网格会话识别活跃状态，兼容裸代码/带后缀。"""
+        r1 = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        self.assertTrue(r1.json()["data"]["positions"][0]["grid_session_active"])
+        r2 = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
+        self.assertFalse(r2.json()["data"]["positions"][0]["grid_session_active"])
+
+    def test_grid_sessions_compat_endpoint_from_sqlite(self):
+        """网关模式 /api/grid/sessions 应返回 SQLite 中的网格会话。"""
+        r = self.client.get("/api/grid/sessions", headers={"X-Account-Id": ACC1})
+        body = r.json()
+        self.assertEqual(body["status"], "success")
+        self.assertTrue(body["success"])
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["sessions"][0]["stock_code"], "000001.SZ")
+        self.assertEqual(body["sessions"][0]["status"], "active")
 
     def test_positions_current_price_computed(self):
         """市价为 None 时应从 市值/股票余额 估算 = 10.5"""

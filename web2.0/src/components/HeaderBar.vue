@@ -33,7 +33,12 @@ function onSwitchAccount(accId: string) { system.switchAccount(accId); closeDrop
 function openAdd() { editForm.value = { id: '', label: '', flaskUrl: '' }; showAccountDialog.value = true; closeDropdown() }
 function openEdit(acc: AccountEntry) { editForm.value = { ...acc }; showAccountDialog.value = true; closeDropdown() }
 function saveAccount() { if (!editForm.value.id || !editForm.value.label) return; system.addAccount({ ...editForm.value }); showAccountDialog.value = false }
-async function onConnectionChanged() { await system.syncAccountsFromGateway(); system.fetchStatus(); system.fetchConnection() }
+async function onConnectionChanged() {
+  gatewayMode.value = isGatewayMode()
+  await system.syncAccountsFromGateway()
+  system.fetchStatus()
+  system.fetchConnection()
+}
 function onClickOutside(e: MouseEvent) { if (dropdownRef.value && !dropdownRef.value.contains(e.target as Node)) closeDropdown() }
 
 function toggleMonitoring() {
@@ -89,28 +94,29 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 </script>
 
 <template>
-  <header class="bg-white/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40">
+  <header class="bg-white/90 backdrop-blur-md border-b border-slate-200/70 sticky top-0 z-40">
     <!-- Row 1: Brand + Account + Settings + Assets -->
-    <div class="px-4 md:px-6 py-2 flex items-center justify-between gap-2 flex-wrap">
-      <div class="flex items-center gap-2 md:gap-3 flex-wrap">
-        <div class="flex items-center gap-2">
-          <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-md shadow-blue-200 flex-shrink-0">
+    <div class="px-3 md:px-6 py-2.5 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 md:gap-3 min-w-0">
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-md shadow-blue-100 flex-shrink-0">
             <span class="text-white font-black text-[10px]">MQ</span>
           </div>
-          <h1 class="text-sm md:text-base font-bold text-slate-800 leading-tight hidden sm:block">miniQMT<span class="text-slate-400 font-normal text-[10px] ml-0.5">2.0</span></h1>
+          <h1 class="text-sm md:text-base font-bold text-slate-800 leading-tight">miniQMT<span class="text-slate-400 font-normal text-[10px] ml-0.5">2.0</span></h1>
         </div>
 
         <!-- Account switcher -->
         <div class="relative" ref="dropdownRef">
-          <button @click="toggleDropdown" class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 hover:bg-blue-100 transition-colors">
-            <span class="dot-green"></span> {{ system.currentAccount.label || system.currentAccount.id }}
+          <button @click="toggleDropdown" class="flex min-h-9 max-w-[150px] sm:max-w-none items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 hover:bg-blue-100 transition-colors">
+            <span class="dot-green"></span>
+            <span class="truncate">{{ system.currentAccount.label || system.currentAccount.id }}</span>
             <svg class="w-3 h-3 opacity-40 transition-transform" :class="showDropdown ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </button>
-          <div v-show="showDropdown" class="absolute top-full left-0 mt-1.5 w-64 bg-white rounded-xl shadow-lg border border-slate-200/80 z-50">
+          <div v-show="showDropdown" class="absolute top-full left-0 mt-1.5 w-72 max-w-[calc(100vw-24px)] bg-white rounded-lg shadow-lg border border-slate-200/80 z-50">
             <div class="p-1.5">
               <button v-for="acc in system.accounts" :key="acc.id" @click="onSwitchAccount(acc.id)"
                 :class="['w-full text-left px-3 py-2 rounded-lg text-sm transition-all flex items-center justify-between', acc.id === system.currentAccountId ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-600']">
-                <span>{{ acc.label }}</span>
+                <span class="min-w-0 truncate">{{ acc.label }}</span>
                 <span class="text-[10px] text-slate-400 font-mono">{{ acc.id.slice(0,4) }}***</span>
                 <span @click.stop="openEdit(acc)" class="text-slate-300 hover:text-slate-500 cursor-pointer p-0.5"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></span>
               </button>
@@ -119,7 +125,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
           </div>
         </div>
 
-        <button @click="showConnSettings = true" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors flex-shrink-0" title="连接设置">
+        <button @click="showConnSettings = true" class="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors flex-shrink-0" title="连接设置">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         </button>
       </div>
@@ -133,25 +139,25 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     </div>
 
     <!-- Mobile asset bar -->
-    <div class="sm:hidden px-4 pb-1 flex gap-3 text-[11px] text-slate-500">
-      <span>可用 <strong class="text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></span>
-      <span>市值 <strong class="text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></span>
-      <span>总资产 <strong class="text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></span>
+    <div class="sm:hidden touch-strip no-scrollbar px-3 pb-1 text-[11px] text-slate-500">
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">可用 <strong class="block truncate text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></span>
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">市值 <strong class="block truncate text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></span>
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">总资产 <strong class="block truncate text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></span>
     </div>
 
     <!-- Row 2: Controls (left) + Status badges (right) -->
-    <div class="px-4 md:px-6 pb-2 flex items-center justify-between gap-2 flex-wrap">
+    <div class="px-3 md:px-6 pb-2 flex items-center justify-between gap-2 flex-wrap">
       <!-- Control toggles -->
-      <div class="flex items-center gap-1.5 flex-wrap">
-        <button v-if="!gatewayMode" @click="toggleMonitoring" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
-        <button v-if="!gatewayMode" @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
-        <span v-if="gatewayMode" class="text-[11px] text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md" title="网关模式不支持监控开关和动态止盈控制，请使用 Flask 直连模式">🔒 网关模式 · 只读监控+下单</span>
+      <div class="touch-strip no-scrollbar flex-1 min-w-0">
+        <button v-if="!gatewayMode" @click="toggleMonitoring" :class="['min-h-9 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
+        <button v-if="!gatewayMode" @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['min-h-9 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
+        <span v-if="gatewayMode" class="inline-flex min-h-9 items-center text-[11px] text-slate-400 bg-slate-50 px-3 py-1.5 rounded-md" title="网关模式不支持监控开关和动态止盈控制，请使用 Flask 直连模式">网关模式 · 只读监控+下单</span>
         <span v-if="!gatewayMode" class="w-px h-4 bg-slate-200 mx-0.5 hidden sm:inline"></span>
         <template v-if="!gatewayMode">
-        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
-        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
-        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
-        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />总开关</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />总开关</label>
         </template>
       </div>
 
@@ -165,14 +171,14 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     </div>
 
     <!-- Row 3: Buy actions (网关模式下禁用—需Flask后端) -->
-    <div v-if="!gatewayMode" class="px-4 md:px-6 pb-2.5 flex items-center gap-2 flex-wrap text-[12px]">
-      <select v-model="buyStrategy" class="input-field !w-auto !py-1 !text-[11px]">
+    <div v-if="!gatewayMode" class="px-3 md:px-6 pb-2.5 touch-strip no-scrollbar text-[12px]">
+      <select v-model="buyStrategy" class="input-field !w-auto !min-h-9 !py-1 !text-[11px]">
         <option value="random_pool">备选池随机</option>
         <option value="custom_stock">自定义股票</option>
       </select>
-      <input v-model.number="buyQty" type="number" min="1" max="100" class="input-field !w-14 !py-1 !text-[11px] text-center" />
+      <input v-model.number="buyQty" type="number" min="1" max="100" class="input-field !w-16 !min-h-9 !py-1 !text-[11px] text-center" />
       <button @click="handleBuy" :disabled="buying" class="btn-primary btn-xs">{{ buying ? '...' : '买入' }}</button>
-      <span class="w-px h-4 bg-slate-200 mx-0.5"></span>
+      <span class="w-px h-8 bg-slate-200 mx-0.5"></span>
       <button @click="doClear" :disabled="clearing" class="btn-outline btn-xs">清空今日</button>
       <button @click="doImport" :disabled="importing" class="btn-outline btn-xs">导入配置</button>
       <button @click="doInit" :disabled="initializing" class="btn-danger btn-xs">初始化持仓</button>
@@ -182,13 +188,13 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   <!-- Buy dialog -->
   <Teleport to="body">
     <div v-if="showBuyDialog" class="modal-overlay" @click.self="showBuyDialog = false">
-      <div class="modal-content w-[520px]">
+      <div class="modal-content w-[520px] max-w-[96vw]">
         <div class="px-6 py-4 border-b border-slate-100"><h3 class="text-lg font-semibold text-slate-800">{{ buyDialogTitle }}</h3></div>
         <div class="p-6">
           <label class="label-text">{{ buyIsRandom ? '股票列表（可编辑）' : '股票代码（逗号或换行分隔）' }}</label>
           <textarea v-model="buyDialogStocks" rows="6" class="input-field font-mono text-sm" :placeholder="buyIsRandom ? '' : '000001.SZ, 600036.SH'"></textarea>
         </div>
-        <div class="px-6 py-3 bg-slate-50/80 rounded-b-2xl flex justify-end gap-2">
+        <div class="px-6 py-3 bg-slate-50/80 rounded-b-lg flex justify-end gap-2">
           <button @click="showBuyDialog = false" class="btn-ghost">取消</button>
           <button @click="doBuyConfirm" :disabled="buying" class="btn-primary">{{ buying ? '提交中...' : '确定买入' }}</button>
         </div>
@@ -199,14 +205,14 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   <!-- Account edit dialog -->
   <Teleport to="body">
     <div v-if="showAccountDialog" class="modal-overlay" @click.self="showAccountDialog = false">
-      <div class="modal-content w-[420px]">
+      <div class="modal-content w-[420px] max-w-[96vw]">
         <div class="px-6 py-4 border-b border-slate-100"><h3 class="text-lg font-semibold text-slate-800">{{ system.accounts.some(a => a.id === editForm.id) ? '编辑账户' : '添加账户' }}</h3></div>
         <div class="p-6 space-y-4">
           <div><label class="label-text">账户 ID <span class="text-red-400">*</span></label><input v-model="editForm.id" placeholder="如 25105132" class="input-field" :disabled="system.accounts.some(a => a.id === editForm.id)" /></div>
           <div><label class="label-text">显示名称 <span class="text-red-400">*</span></label><input v-model="editForm.label" placeholder="如 账户A" class="input-field" /></div>
           <div><label class="label-text">Flask 直连地址 <span class="text-slate-400 font-normal">(可选)</span></label><input v-model="editForm.flaskUrl" placeholder="http://127.0.0.1:5000" class="input-field" /><p class="text-[10px] text-slate-400 mt-1">使用 Flask 直连模式时单独指定地址</p></div>
         </div>
-        <div class="px-6 py-3 bg-slate-50/80 rounded-b-2xl flex justify-between">
+        <div class="px-6 py-3 bg-slate-50/80 rounded-b-lg flex justify-between">
           <button v-if="system.accounts.some(a => a.id === editForm.id) && system.accounts.length > 1" @click="system.removeAccount(editForm.id); showAccountDialog = false" class="btn-ghost !text-red-500 text-xs">删除</button><span v-else></span>
           <div class="flex gap-2"><button @click="showAccountDialog = false" class="btn-ghost">取消</button><button @click="saveAccount" :disabled="!editForm.id || !editForm.label" class="btn-primary">保存</button></div>
         </div>

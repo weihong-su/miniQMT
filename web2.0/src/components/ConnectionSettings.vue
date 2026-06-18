@@ -68,13 +68,13 @@ async function testConnection() {
 <template>
   <Teleport to="body">
     <div class="modal-overlay" @click.self="emit('close')">
-      <div class="modal-content w-[540px]">
+      <div class="modal-content w-[540px] max-w-[96vw]">
         <div class="px-6 py-4 border-b border-slate-100">
           <h3 class="text-lg font-semibold text-slate-800">连接设置</h3>
           <p class="text-xs text-slate-400 mt-1">配置 QMT 后端服务器地址和 API Token</p>
         </div>
         <div class="p-6 space-y-5">
-          <div v-if="securityWarning" class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 whitespace-pre-line">{{ securityWarning }}</div>
+          <div v-if="securityWarning" class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 whitespace-pre-line">{{ securityWarning }}</div>
 
           <div :class="['flex items-center gap-2 text-xs px-3 py-2 rounded-lg', isSecureContext() ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-500']">
             <span :class="['w-2 h-2 rounded-full', isSecureContext() ? 'bg-emerald-500' : 'bg-slate-300']"></span>
@@ -84,13 +84,13 @@ async function testConnection() {
 
           <div>
             <label class="label-text mb-2">后端模式</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label :class="['flex items-start gap-2.5 p-3.5 rounded-xl border-2 cursor-pointer transition-all',
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label :class="['flex items-start gap-2.5 p-3.5 rounded-lg border-2 cursor-pointer transition-all',
                 form.mode === 'xtquant' ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300']">
                 <input type="radio" v-model="form.mode" value="xtquant" class="mt-0.5 accent-blue-600" />
                 <div><div class="text-sm font-semibold text-slate-700">网关模式</div><div class="text-[11px] text-slate-400 mt-0.5">xtquant_manager 统一入口（推荐）</div></div>
               </label>
-              <label :class="['flex items-start gap-2.5 p-3.5 rounded-xl border-2 cursor-pointer transition-all',
+              <label :class="['flex items-start gap-2.5 p-3.5 rounded-lg border-2 cursor-pointer transition-all',
                 form.mode === 'flask' ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300']">
                 <input type="radio" v-model="form.mode" value="flask" class="mt-0.5 accent-blue-600" />
                 <div><div class="text-sm font-semibold text-slate-700">直连模式</div><div class="text-[11px] text-slate-400 mt-0.5">每账号独立 Flask 实例</div></div>
@@ -116,7 +116,7 @@ async function testConnection() {
             </div>
           </div>
 
-          <div class="bg-slate-50 rounded-xl p-4">
+          <div class="bg-slate-50 rounded-lg p-4">
             <div class="flex items-center justify-between mb-2"><span class="text-sm font-medium text-slate-600">连通性测试</span>
               <button @click="testConnection" :disabled="testing" class="btn-outline btn-xs">{{ testing ? '测试中...' : '测试连接' }}</button>
             </div>
@@ -124,7 +124,7 @@ async function testConnection() {
             <p v-else class="text-xs text-slate-400">点击测试按钮检查后端可达性</p>
           </div>
         </div>
-        <div class="px-6 py-3 bg-slate-50/80 rounded-b-2xl flex justify-end gap-2">
+        <div class="px-6 py-3 bg-slate-50/80 rounded-b-lg flex justify-end gap-2">
           <button @click="emit('close')" class="btn-ghost">关闭</button>
           <button @click="save(); emit('close')" class="btn-primary">保存</button>
         </div>

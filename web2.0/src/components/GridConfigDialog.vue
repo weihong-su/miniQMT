@@ -88,7 +88,7 @@ onMounted(async () => {
 <template>
   <Teleport to="body">
     <div class="modal-overlay" @click.self="emit('close')">
-      <div class="modal-content w-[620px]">
+      <div class="modal-content w-[620px] max-w-[96vw]">
         <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
             <h3 class="text-lg font-semibold text-slate-800">网格交易配置</h3>
@@ -107,10 +107,10 @@ onMounted(async () => {
             <!-- Risk Level -->
             <div>
               <label class="label-text mb-2">风险等级</label>
-              <div class="grid grid-cols-3 gap-2">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <button v-for="lv in (['aggressive','moderate','conservative'] as RiskLevel[])" :key="lv"
                   @click="applyTemplate(lv)"
-                  :class="['relative flex flex-col items-center py-3 px-2 rounded-xl border-2 transition-all duration-150',
+                  :class="['relative flex flex-col items-center py-3 px-2 rounded-lg border-2 transition-all duration-150',
                     riskLevel === lv ? 'border-blue-400 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300']">
                   <span :class="['text-sm font-bold', riskLevel === lv ? 'text-blue-700' : 'text-slate-500']">{{ riskInfo[lv].label }}</span>
                   <span class="text-[10px] text-slate-400 mt-0.5">{{ riskInfo[lv].desc }}</span>
@@ -123,7 +123,7 @@ onMounted(async () => {
             </div>
 
             <!-- Market info -->
-            <div class="bg-blue-50/60 rounded-xl p-3 flex items-center gap-6 text-sm">
+            <div class="bg-blue-50/60 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 text-sm">
               <span class="text-slate-500">参考价 <strong class="text-blue-700 font-mono ml-1">{{ marketPrice || '--' }}</strong></span>
               <span v-if="hasSession" class="text-slate-500">原中心价 <strong class="text-blue-700 font-mono ml-1">{{ existingCenter }}</strong></span>
             </div>
@@ -135,7 +135,7 @@ onMounted(async () => {
             </div>
 
             <!-- Params grid -->
-            <div class="grid grid-cols-2 gap-x-4 gap-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
               <div v-for="f in [
                 {k:'price_interval',l:'价格间隔 (%)',h:'相邻网格档位间距'},
                 {k:'position_ratio',l:'每档比例 (%)',h:'每次买卖持仓占比'},
@@ -153,7 +153,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="px-6 py-4 bg-slate-50/80 rounded-b-2xl flex justify-end gap-2">
+          <div class="px-6 py-4 bg-slate-50/80 rounded-b-lg flex justify-end gap-2">
             <button @click="emit('close')" class="btn-ghost">取消</button>
             <button v-if="!hasSession" @click="doStart" :disabled="saving" class="btn-primary">{{ saving ? '启动中...' : '启动网格交易' }}</button>
             <button v-else @click="doStop" :disabled="saving" class="btn-danger">{{ saving ? '停止中...' : '停止网格交易' }}</button>

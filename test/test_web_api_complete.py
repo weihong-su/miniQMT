@@ -929,8 +929,25 @@ def _make_grid_manager_mock(sessions=None, db_sessions=None):
     # db.get_all_grid_sessions 返回普通列表，避免 MagicMock 序列化错误
     mock_gm.db = MagicMock()
     mock_gm.db.get_all_grid_sessions.return_value = db_sessions or []
+    mock_gm.db.get_grid_session.return_value = None
     mock_gm.db.get_grid_trades.return_value = []
     mock_gm.db.get_grid_trade_count.return_value = 0
+    mock_gm.db.get_grid_ledger_summary.return_value = {
+        'has_ledger': False,
+        'lot_count': 0,
+        'match_count': 0,
+        'bought_volume': 0,
+        'open_volume': 0,
+        'matched_volume': 0,
+        'unmatched_volume': 0,
+        'open_cost': 0.0,
+        'open_market_value': 0.0,
+        'realized_pnl': 0.0,
+        'unrealized_pnl': 0.0,
+        'true_pnl': 0.0,
+    }
+    mock_gm.db.get_grid_lots.return_value = []
+    mock_gm.db.get_grid_lot_matches.return_value = []
     mock_gm.get_pnl_snapshot.return_value = {
         'profit_ratio': 0.0,
         'total_pnl_ratio': 0.0,
@@ -1390,7 +1407,110 @@ class TestGridTrading(WebAPITestBase):
         )
         mock_pm.grid_manager = None
 
-    def test_20_get_grid_session_by_id(self):
+    def test_20_get_grid_ledger_detail(self):
+        """GET /api/grid/ledger/<session_id> 获取网格真实账本详情"""
+        mock_session = _make_grid_session_mock(session_id=1, stock_code='003025.SZ')
+        mock_session.current_center_price = 17.10
+        mock_session.trade_count = 2
+        mock_session.buy_count = 1
+        mock_session.sell_count = 1
+        mock_gm = _make_grid_manager_mock(sessions={'003025': mock_session})
+        mock_gm.db.get_grid_session.return_value = None
+        mock_gm.db.get_grid_ledger_summary.return_value = {
+            'has_ledger': True,
+            'lot_count': 1,
+            'match_count': 1,
+            'bought_volume': 200,
+            'open_volume': 0,
+            'matched_volume': 200,
+            'unmatched_volume': 0,
+            'open_cost': 0.0,
+            'open_market_value': 0.0,
+            'realized_pnl': 166.0,
+            'unrealized_pnl': 0.0,
+            'true_pnl': 166.0,
+        }
+        mock_gm.db.get_grid_lots.return_value = [{
+            'id': 1,
+            'session_id': 1,
+            'stock_code': '003025.SZ',
+            'buy_trade_id': 'PROD_BUY_BACK',
+            'buy_order_id': '403701761',
+            'buy_price': 17.10,
+            'original_volume': 200,
+            'remaining_volume': 0,
+            'realized_volume': 200,
+            'buy_amount': 3420.0,
+            'opened_at': '2026-06-17T09:32:04',
+            'status': 'closed',
+        }]
+        mock_gm.db.get_grid_lot_matches.return_value = [{
+            'id': 1,
+            'session_id': 1,
+            'stock_code': '003025.SZ',
+            'buy_lot_id': 1,
+            'sell_trade_id': 'PROD_SELL_FIRST',
+            'sell_order_id': '135266305',
+            'match_type': 'matched',
+            'volume': 200,
+            'buy_price': 17.10,
+            'sell_price': 17.93,
+            'buy_amount': 3420.0,
+            'sell_amount': 3586.0,
+            'realized_pnl': 166.0,
+            'matched_at': '2026-06-16T09:34:33',
+        }]
+        mock_gm.db.get_grid_trades.return_value = [
+            {
+                'session_id': 1,
+                'stock_code': '003025.SZ',
+                'trade_type': 'SELL',
+                'grid_level': 17.7765,
+                'trigger_price': 17.93,
+                'volume': 200,
+                'amount': 3586.0,
+                'trade_id': 'PROD_SELL_FIRST',
+                'trade_time': '2026-06-16T09:34:33',
+            },
+            {
+                'session_id': 1,
+                'stock_code': '003025.SZ',
+                'trade_type': 'BUY',
+                'grid_level': 17.0335,
+                'trigger_price': 17.10,
+                'volume': 200,
+                'amount': 3420.0,
+                'trade_id': 'PROD_BUY_BACK',
+                'trade_time': '2026-06-17T09:32:04',
+            },
+        ]
+        mock_gm.db.get_grid_trade_count.return_value = 2
+        mock_pm.grid_manager = mock_gm
+
+        resp, ms = self._get('/api/grid/ledger/1', params={'limit': 50, 'offset': 0})
+        self._record(
+            '/api/grid/ledger/<session_id>?limit=50&offset=0', 'GET',
+            '获取网格真实账本详情（批次/配对/流水）',
+            resp, ms,
+            extra_checks=lambda d: (
+                self.assertTrue(d.get('success')),
+                self.assertEqual(d.get('session_id'), 1),
+                self.assertAlmostEqual(d.get('summary', {}).get('true_pnl'), 166.0),
+                self.assertEqual(d.get('summary', {}).get('open_volume'), 0),
+                self.assertEqual(d.get('summary', {}).get('matched_volume'), 200),
+                self.assertEqual(len(d.get('lots', [])), 1),
+                self.assertEqual(d['lots'][0]['status'], 'closed'),
+                self.assertEqual(len(d.get('matches', [])), 1),
+                self.assertEqual(d['matches'][0]['match_type'], 'matched'),
+                self.assertAlmostEqual(d['matches'][0]['realized_pnl'], 166.0),
+                self.assertEqual(len(d.get('trades', [])), 2),
+                self.assertEqual(d.get('total_count'), 2),
+                self.assertFalse(d.get('pagination', {}).get('has_more')),
+            ),
+        )
+        mock_pm.grid_manager = None
+
+    def test_21_get_grid_session_by_id(self):
         """GET /api/grid/session/<int:session_id> 获取会话详情（会话不存在）"""
         mock_gm = _make_grid_manager_mock()
         mock_pm.grid_manager = mock_gm

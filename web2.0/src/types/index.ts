@@ -156,6 +156,70 @@ export interface GridTrade {
   trade_time?: string
 }
 
+export interface GridLot {
+  id: number
+  session_id: number
+  stock_code: string
+  buy_trade_id: string
+  buy_order_id?: string | null
+  buy_price: number
+  original_volume: number
+  remaining_volume: number
+  realized_volume: number
+  buy_amount: number
+  opened_at: string
+  updated_at?: string
+  status: 'open' | 'closed' | string
+}
+
+export interface GridLotMatch {
+  id: number
+  session_id: number
+  stock_code: string
+  buy_lot_id?: number | null
+  sell_trade_id: string
+  sell_order_id?: string | null
+  match_type: 'matched' | 'unmatched' | string
+  volume: number
+  buy_price?: number | null
+  sell_price: number
+  buy_amount: number
+  sell_amount: number
+  realized_pnl: number
+  matched_at: string
+}
+
+export interface GridLedgerSummary {
+  has_ledger: boolean
+  lot_count: number
+  match_count: number
+  bought_volume: number
+  open_volume: number
+  matched_volume: number
+  unmatched_volume: number
+  open_cost: number
+  open_market_value: number
+  realized_pnl: number
+  unrealized_pnl: number
+  true_pnl: number
+}
+
+export interface GridLedgerDetail {
+  session_id: number
+  session?: Record<string, any>
+  current_price?: number | null
+  summary: GridLedgerSummary
+  lots: GridLot[]
+  matches: GridLotMatch[]
+  trades: GridTrade[]
+  totalCount: number
+  pagination: {
+    limit: number
+    offset: number
+    has_more: boolean
+  }
+}
+
 export interface RiskTemplate {
   template_name: string
   price_interval: number

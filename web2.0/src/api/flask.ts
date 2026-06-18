@@ -105,6 +105,32 @@ export async function getGridTrades(sessionId: number, limit = 20, offset = 0) {
   }
 }
 
+export async function getGridLedger(sessionId: number, limit = 50, offset = 0) {
+  const r = await apiGet(`/api/grid/ledger/${sessionId}?limit=${limit}&offset=${offset}`)
+  if (!r?.success) {
+    return {
+      summary: null,
+      lots: [],
+      matches: [],
+      trades: [],
+      totalCount: 0,
+      pagination: { limit, offset, has_more: false },
+      error: r?.error || '账本数据不可用',
+    }
+  }
+  return {
+    session_id: r.session_id,
+    session: r.session,
+    current_price: r.current_price,
+    summary: r.summary,
+    lots: r.lots || [],
+    matches: r.matches || [],
+    trades: r.trades || [],
+    totalCount: r.total_count || 0,
+    pagination: r.pagination || { limit, offset, has_more: false },
+  }
+}
+
 export async function startGrid(params: any) {
   const { stock_code, duration_days, risk_level, ...config } = params
   return apiPost('/api/grid/start', {

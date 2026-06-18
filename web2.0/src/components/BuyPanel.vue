@@ -83,13 +83,13 @@ async function doInit() {
     <!-- Dialog -->
     <Teleport to="body">
       <div v-if="showDialog" class="modal-overlay" @click.self="showDialog = false">
-        <div class="modal-content w-[520px]">
+        <div class="modal-content w-[520px] max-w-[96vw]">
           <div class="px-6 py-4 border-b border-slate-100"><h3 class="text-lg font-semibold text-slate-800">{{ dialogTitle }}</h3></div>
           <div class="p-6">
             <label class="label-text">{{ isRandomPool ? '股票列表（可编辑）' : '股票代码（逗号或换行分隔）' }}</label>
             <textarea v-model="dialogStockList" rows="6" class="input-field font-mono text-sm" :placeholder="isRandomPool ? '' : '000001.SZ, 600036.SH'"></textarea>
           </div>
-          <div class="px-6 py-3 bg-slate-50/80 rounded-b-2xl flex justify-end gap-2">
+          <div class="px-6 py-3 bg-slate-50/80 rounded-b-lg flex justify-end gap-2">
             <button @click="showDialog = false" class="btn-ghost">取消</button>
             <button @click="doConfirm" :disabled="executing" class="btn-primary">{{ executing ? '提交中...' : '确定买入' }}</button>
           </div>
