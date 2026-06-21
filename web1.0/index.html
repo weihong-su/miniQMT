@@ -51,6 +51,8 @@
         
         #orderLog {
             height: 100%;
+            min-height: 0;
+            max-height: 100%;
             overflow-y: auto;
             background: #ffffff;
             font-size: 12px;
@@ -681,7 +683,7 @@
                 </div>
             </div>
 
-            <div class="border rounded p-3 bg-gray-50 flex flex-col relative" style="height: 460px;">
+            <div class="border rounded p-3 bg-gray-50 flex flex-col relative overflow-hidden" style="height: 460px;">
                 <h3 class="text-lg font-semibold mb-2 text-blue-700 flex items-center">
                     3. 下单日志
                     <span id="logLoading" class="ml-2 text-xs text-gray-500 hidden">
@@ -693,7 +695,7 @@
                     </span>
                     <span id="logError" class="ml-2 text-xs text-red-500 hidden">加载失败</span>
                 </h3>
-                <div class="flex-grow relative">
+                <div class="flex-grow relative min-h-0">
                     <div id="orderLog" class="w-full h-full border rounded bg-white overflow-y-auto text-xs"></div>
                 </div>
             </div>
