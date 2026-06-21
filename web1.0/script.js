@@ -1307,7 +1307,6 @@
         window._lastLogsStr = logsStr;
 
         const container = elements.orderLog;
-        // 记住当前滚动位置（最新记录在顶部，更新后保持原位）
         const prevScrollTop = container.scrollTop;
 
         elements.logLoading.classList.add('hidden');
@@ -1321,14 +1320,25 @@
         const parts = [];
         let lastDay = null;
 
+        // 总行宽 100%, 小数宽 11px, 简写标记 width/number 设 0 即去掉列
+        parts.push(
+          `<div class="log-head">` +
+            `<span class="log-col-side"></span>` +
+            `<span class="log-col-name">股票</span>` +
+            `<span class="log-col-dir"></span>` +
+            `<span class="log-col-money">金额</span>` +
+            `<span class="log-col-price">价×量</span>` +
+            `<span class="log-col-tag">策略</span>` +
+          `</div>`
+        );
+
         logEntries.forEach(entry => {
             if (typeof entry !== 'object' || entry === null) return;
 
             const tradeTime = entry.trade_time || '';
-            const dayPart = tradeTime.slice(0, 10);   // YYYY-MM-DD
-            const timePart = tradeTime.slice(11, 19); // HH:MM:SS
+            const dayPart = tradeTime.slice(0, 10);
+            const timePart = tradeTime.slice(11, 16);   // HH:MM（mm:ss 在窄列太累赘）
 
-            // 日期分组标题
             if (dayPart && dayPart !== lastDay) {
                 lastDay = dayPart;
                 parts.push(`<div class="log-day-header">${escapeLogHtml(formatLogDayLabel(dayPart))}</div>`);
@@ -1337,39 +1347,36 @@
             const isBuy = entry.trade_type === 'BUY';
             const isSell = entry.trade_type === 'SELL';
             const sideClass = isBuy ? 'buy' : (isSell ? 'sell' : '');
-            const sideText = isBuy ? '买' : (isSell ? '卖' : escapeLogHtml(entry.trade_type || '?'));
+            const sideText = isBuy ? 'B' : (isSell ? 'S' : escapeLogHtml(entry.trade_type || '?'));
 
             const price = entry.price != null ? Number(entry.price).toFixed(2) : '--';
             const volume = entry.volume != null ? Number(entry.volume).toLocaleString('zh-CN') : '--';
 
-            // 金额：优先用 amount 字段，缺失时用 价×量 估算
             let amount = entry.amount;
             if (amount == null && entry.price != null && entry.volume != null) {
                 amount = Number(entry.price) * Number(entry.volume);
             }
             const amountText = amount != null
-                ? '¥' + Number(amount).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+                ? Number(amount).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
                 : '--';
 
             const strategyRaw = entry.strategy || '';
             const strategyLabel = LOG_STRATEGY_LABELS[strategyRaw] || strategyRaw;
 
+            const sideTitle = isBuy ? '买入' : (isSell ? '卖出' : escapeLogHtml(entry.trade_type || ''));
+            const name = escapeLogHtml(entry.stock_name || entry.stock_code || '');
+            const code = escapeLogHtml(entry.stock_code || '');
+
+            // 单行紧凑：B/S | 平安银行 | ¥31,500 | 10.50×3000 | 网格 | HH:MM
             parts.push(
-                `<div class="log-entry ${sideClass}">` +
-                    `<div class="log-side ${sideClass}">${sideText}</div>` +
-                    `<div class="log-main">` +
-                        `<div class="log-line1">` +
-                            `<span class="log-name">${escapeLogHtml(entry.stock_name || entry.stock_code || '')} ` +
-                            `<span class="log-code">${escapeLogHtml(entry.stock_code || '')}</span></span>` +
-                            `<span class="log-amount ${sideClass}">${amountText}</span>` +
-                        `</div>` +
-                        `<div class="log-line2">` +
-                            `<span class="num">${timePart}</span>` +
-                            `<span>·</span>` +
-                            `<span class="num">${price} × ${volume}</span>` +
-                            (strategyLabel ? `<span class="log-strategy">${escapeLogHtml(strategyLabel)}</span>` : '') +
-                        `</div>` +
-                    `</div>` +
+                `<div class="log-row ${sideClass}" title="${sideTitle} ${name} ${code}  ¥${amountText}  ${price}×${volume}  ${strategyLabel}">` +
+                    `<span class="log-col-side ${sideClass}">${sideText}</span>` +
+                    `<span class="log-col-name">${name}</span>` +
+                    `<span class="log-col-dir ${sideClass}">${sideText}</span>` +
+                    `<span class="log-col-money ${sideClass}">${amountText}</span>` +
+                    `<span class="log-col-price">${price}×${volume}</span>` +
+                    `<span class="log-col-tag">${escapeLogHtml(strategyLabel)}</span>` +
+                    `<span class="log-col-time">${timePart}</span>` +
                 `</div>`
             );
         });

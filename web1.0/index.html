@@ -53,6 +53,7 @@
             height: 100%;
             overflow-y: auto;
             background: #ffffff;
+            font-size: 12px;
         }
 
         #orderLog::-webkit-scrollbar {
@@ -64,7 +65,71 @@
             border-radius: 4px;
         }
 
-        /* 下单日志 - 日期分组标题 */
+        /* 下单日志 - 列头 */
+        .log-head {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: #f1f5f9;
+            color: #64748b;
+            font-weight: 600;
+            font-size: 10px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .log-head,
+        .log-row {
+            display: flex;
+            align-items: center;
+            padding: 3px 6px;
+            line-height: 1.6;
+        }
+
+        .log-row {
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .log-row:hover {
+            background: #f8fafc;
+        }
+
+        .log-row.buy {
+            background: #fff5f5;
+        }
+
+        .log-row.sell {
+            background: #f0fdf4;
+        }
+
+        .log-row.buy:hover {
+            background: #fee2e2;
+        }
+
+        .log-row.sell:hover {
+            background: #dcfce7;
+        }
+
+        /* ── 固定列宽, 总宽 100% ── */
+        .log-col-side { width: 18px;  text-align: center; flex-shrink: 0; }
+        .log-col-name { width: 0;     flex: 1 1 0;      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .log-col-dir  { width: 14px;  text-align: center; flex-shrink: 0; }
+        .log-col-money{ width: 56px;  text-align: right;  flex-shrink: 0; font-variant-numeric: tabular-nums; }
+        .log-col-price{ width: 78px;  text-align: right;  flex-shrink: 0; font-variant-numeric: tabular-nums; display: none; }   /* 窄屏隐藏 */
+        .log-col-tag  { width: 28px;  text-align: center; flex-shrink: 0; font-size: 10px; }
+        .log-col-time { width: 38px;  text-align: right;  flex-shrink: 0; font-variant-numeric: tabular-nums; color: #94a3b8; }
+
+        .log-col-side.buy  { color: #ef4444; font-weight: 700; }
+        .log-col-side.sell { color: #22c55e; font-weight: 700; }
+        .log-col-dir.buy   { color: #ef4444; font-size: 9px; background: #fee2e2; border-radius: 3px; }
+        .log-col-dir.sell  { color: #22c55e; font-size: 9px; background: #dcfce7; border-radius: 3px; }
+        .log-col-money.buy  { color: #ef4444; font-weight: 600; }
+        .log-col-money.sell { color: #22c55e; font-weight: 600; }
+        .log-col-tag       { color: #64748b; background: #f1f5f9; border-radius: 999px; padding: 0 4px; white-space: nowrap; }
+
+        .log-head .log-col-tag { background: transparent; border-radius: 0; padding: 0; }
+
+        /* 日期分组吸顶 */
         .log-day-header {
             position: sticky;
             top: 0;
@@ -73,115 +138,8 @@
             color: #475569;
             font-size: 11px;
             font-weight: 600;
-            padding: 4px 10px;
+            padding: 3px 8px;
             border-bottom: 1px solid #e2e8f0;
-        }
-
-        /* 下单日志 - 单条记录 */
-        .log-entry {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 7px 10px;
-            border-bottom: 1px solid #f1f5f9;
-            border-left: 3px solid transparent;
-        }
-
-        .log-entry:hover {
-            background: #f8fafc;
-        }
-
-        .log-entry.buy {
-            border-left-color: #ef4444;
-        }
-
-        .log-entry.sell {
-            border-left-color: #22c55e;
-        }
-
-        /* 方向徽章 */
-        .log-side {
-            flex-shrink: 0;
-            width: 22px;
-            height: 22px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 13px;
-            color: #ffffff;
-        }
-
-        .log-side.buy {
-            background: #ef4444;
-        }
-
-        .log-side.sell {
-            background: #22c55e;
-        }
-
-        .log-main {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .log-line1 {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 6px;
-        }
-
-        .log-name {
-            font-weight: 600;
-            color: #1f2937;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .log-code {
-            color: #94a3b8;
-            font-weight: 400;
-            font-size: 11px;
-        }
-
-        .log-amount {
-            flex-shrink: 0;
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .log-amount.buy {
-            color: #ef4444;
-        }
-
-        .log-amount.sell {
-            color: #22c55e;
-        }
-
-        .log-line2 {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            color: #94a3b8;
-            font-size: 11px;
-            margin-top: 2px;
-        }
-
-        .log-line2 .num {
-            font-variant-numeric: tabular-nums;
-        }
-
-        .log-strategy {
-            margin-left: auto;
-            background: #eef2ff;
-            color: #4338ca;
-            padding: 1px 6px;
-            border-radius: 999px;
-            font-size: 10px;
-            white-space: nowrap;
         }
 
         /* 下单日志 - 空状态 */
