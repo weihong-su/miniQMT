@@ -167,6 +167,21 @@ def cleanup_autobuy_db(db_path: str | None = None, now: datetime | None = None) 
     return summary
 
 
+def _summarize_maintenance_result(result: dict) -> tuple[int, bool]:
+    deleted_rows = 0
+    vacuum_ran = False
+    for summary in result.values():
+        if not isinstance(summary, dict):
+            continue
+        vacuum_ran = vacuum_ran or bool(summary.get("vacuum"))
+        for key, value in summary.items():
+            if key in ("db_path", "vacuum"):
+                continue
+            if isinstance(value, int):
+                deleted_rows += value
+    return deleted_rows, vacuum_ran
+
+
 def run_database_maintenance(now: datetime | None = None) -> dict:
     """执行一次数据库维护。"""
     now = now or datetime.now()
@@ -174,7 +189,10 @@ def run_database_maintenance(now: datetime | None = None) -> dict:
         "trading_db": cleanup_trading_db(now=now),
         "autobuy_db": cleanup_autobuy_db(now=now),
     }
-    logger.info(f"数据库维护完成: {result}")
+    deleted_rows, vacuum_ran = _summarize_maintenance_result(result)
+    vacuum_text = "已执行" if vacuum_ran else "未执行"
+    logger.info(f"数据库维护完成: 清理 {deleted_rows} 行, VACUUM={vacuum_text}")
+    logger.debug(f"数据库维护明细: {result}")
     return result
 
 
