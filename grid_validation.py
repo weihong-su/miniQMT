@@ -4,6 +4,8 @@
 使用marshmallow进行API参数校验
 """
 
+from typing import Any, Dict, Tuple, Type
+
 from marshmallow import Schema, fields, validate, ValidationError, validates_schema
 from logger import get_logger
 
@@ -174,7 +176,7 @@ class GridTemplateSchema(Schema):
     is_default = fields.Bool()
 
 
-def validate_request(schema_class, data):
+def validate_request(schema_class: Type[Schema], data: Dict[str, Any]) -> Tuple[bool, Any]:
     """
     通用请求参数校验函数
 
@@ -197,7 +199,7 @@ def validate_request(schema_class, data):
         return False, e.messages
 
 
-def validate_grid_config(data):
+def validate_grid_config(data: Dict[str, Any]) -> Tuple[bool, Any]:
     """
     校验网格交易配置参数
 
@@ -210,7 +212,7 @@ def validate_grid_config(data):
     return validate_request(GridConfigSchema, data)
 
 
-def validate_grid_template(data):
+def validate_grid_template(data: Dict[str, Any]) -> Tuple[bool, Any]:
     """
     校验网格配置模板参数
 
