@@ -62,7 +62,7 @@ pip install requests>=2.26.0
 
 ```bash
 # 仅在显式启用 ENABLE_BAOSTOCK_* 兜底接口时需要（锁定新版，收紧访问后支持 set_API_key）
-pip install baostock==0.9.1
+pip install "baostock>=0.9.1"
 
 # 新版 baostock(00.9.x) 收紧了访问：如持有 API Key，请用环境变量传入（切勿硬编码）
 #   Windows PowerShell: $env:BAOSTOCK_API_KEY = "your_key"

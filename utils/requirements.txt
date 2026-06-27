@@ -30,7 +30,7 @@ requests>=2.26.0
 colorama>=0.4.0
 
 # ============= 可选依赖 =============
-# baostock==0.9.1  # 仅在 ENABLE_BAOSTOCK_* 显式开启时需要；新版收紧访问，支持 set_API_key
+# baostock>=0.9.1  # 仅在 ENABLE_BAOSTOCK_* 显式开启时需要；新版收紧访问，支持 set_API_key
 # 如果需要更好的性能，可以安装以下包:
 # numexpr>=2.8.0  # pandas加速
 # bottleneck>=1.3.0  # pandas加速
