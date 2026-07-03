@@ -62,6 +62,12 @@ class _FakeTrade:
         self.traded_amount = traded_volume * traded_price
 
 
+class _FakeOrder:
+    def __init__(self, stock_code, order_status):
+        self.stock_code = stock_code
+        self.order_status = order_status
+
+
 class TestTraderCallback(TestBase):
     """卖出交易 Callback 兜底机制集成测试"""
 
@@ -301,6 +307,38 @@ class TestTraderCallback(TestBase):
             config.ENABLE_PENDING_ORDER_AUTO_CANCEL = old_flag
             config.ENABLE_SIMULATION_MODE = old_sim
 
+    def test_d2_stop_loss_uses_shorter_timeout_than_take_profit(self):
+        """止损委托应使用更短超时阈值，普通止盈仍使用全局阈值。"""
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_flag = config.ENABLE_PENDING_ORDER_AUTO_CANCEL
+        old_stop_loss_timeout = config.STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES
+        old_default_timeout = config.PENDING_ORDER_TIMEOUT_MINUTES
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = True
+            config.STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES = 1.0
+            config.PENDING_ORDER_TIMEOUT_MINUTES = 5
+            self.pm.last_order_check_time = 0
+
+            self.pm.track_order("301560", 1001, "stop_loss", {})
+            self.pm.track_order("301561", 1002, "take_profit_half", {})
+            with self.pm.pending_orders_lock:
+                self.pm.pending_orders["301560"]["submit_time"] = datetime.now() - timedelta(minutes=1.1)
+                self.pm.pending_orders["301561"]["submit_time"] = datetime.now() - timedelta(minutes=1.1)
+
+            with patch.object(self.pm, "_handle_timeout_order") as mock_handle:
+                self.pm.check_pending_orders_timeout()
+
+            mock_handle.assert_called_once()
+            handled_order = mock_handle.call_args.args[0]
+            self.assertEqual(handled_order["stock_code"], "301560")
+            self.assertEqual(handled_order["timeout_minutes"], 1.0)
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = old_flag
+            config.STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES = old_stop_loss_timeout
+            config.PENDING_ORDER_TIMEOUT_MINUTES = old_default_timeout
+
     def test_d3_timeout_check_no_op_after_trade_callback(self):
         """成交回报移除跟踪后，超时检查不应有任何操作"""
         stock_code = "301560"
@@ -315,6 +353,27 @@ class TestTraderCallback(TestBase):
         with patch.object(self.pm, "_handle_timeout_order") as mock_handle:
             self.pm.check_pending_orders_timeout()
             mock_handle.assert_not_called()
+
+    def test_d3_trade_callback_requests_position_refresh(self):
+        """成交回报到达后应调度一次持仓快刷。"""
+        stock_code = "301560"
+        order_id = 940572673
+        self.pm.track_order(stock_code, order_id, "stop_loss", {"volume": 200})
+
+        trade = _FakeTrade(order_id=order_id, stock_code=f"{stock_code}.SZ")
+        with patch.object(self.pm, "_request_immediate_position_refresh") as mock_refresh:
+            self.pm._on_trade_callback(trade)
+
+        mock_refresh.assert_called_once_with(stock_code, "成交回报")
+
+    def test_d3_terminal_order_callback_requests_position_refresh(self):
+        """委托状态进入终态后应调度一次持仓快刷。"""
+        order = _FakeOrder("301560.SZ", 56)
+
+        with patch.object(self.pm, "_request_immediate_position_refresh") as mock_refresh:
+            self.pm._on_order_callback(order)
+
+        mock_refresh.assert_called_once_with("301560", "委托终态(56)")
 
     def test_d4_handle_timeout_order_status_filled_removes_without_cancel(self):
         """超时委托状态=已成(56)时，只移除跟踪，不发起撤单"""

@@ -29,7 +29,10 @@ logger = get_logger("strategy")
 
 class TradingStrategy:
     """交易策略类，实现各种交易策略"""
-    
+    SIGNAL_EXECUTION_SUCCESS = "success"
+    SIGNAL_EXECUTION_BLOCKED = "blocked"
+    SIGNAL_EXECUTION_FAILED = "failed"
+
     def __init__(self):
         """初始化交易策略"""
         self.data_manager = get_data_manager()
@@ -63,24 +66,38 @@ class TradingStrategy:
     def execute_trading_signal_direct(self, stock_code, signal_type, signal_info):
         """直接执行指定的交易信号"""
         try:
-                    # 🔑 添加统一信号验证
-            if not self.position_manager.validate_trading_signal(stock_code, signal_type, signal_info):
-                logger.warning(f"[信号跳过] {stock_code} {signal_type} 信号验证未通过，本次不执行（委托中或冷却中）")
-                return False
-        
+            # 🔑 添加统一信号验证
+            is_valid, validation_status, validation_reason = self.position_manager.validate_trading_signal(
+                stock_code, signal_type, signal_info, return_reason=True
+            )
+            if not is_valid:
+                if validation_status == "blocked":
+                    logger.warning(
+                        f"[信号阻断] {stock_code} {signal_type} 暂不执行，"
+                        f"原因={validation_reason}，等待委托/持仓同步恢复后自动重试"
+                    )
+                    return self.SIGNAL_EXECUTION_BLOCKED
+                logger.warning(
+                    f"[信号拒绝] {stock_code} {signal_type} 验证失败，"
+                    f"原因={validation_reason}"
+                )
+                return self.SIGNAL_EXECUTION_FAILED
+
             if signal_type == 'stop_loss':
-                return self._execute_stop_loss_signal(stock_code, signal_info)
+                success = self._execute_stop_loss_signal(stock_code, signal_info)
             elif signal_type == 'take_profit_half':
-                return self._execute_take_profit_half_signal(stock_code, signal_info)
+                success = self._execute_take_profit_half_signal(stock_code, signal_info)
             elif signal_type == 'take_profit_full':
-                return self._execute_take_profit_full_signal(stock_code, signal_info)
+                success = self._execute_take_profit_full_signal(stock_code, signal_info)
             else:
                 logger.warning(f"未知的信号类型: {signal_type}")
-                return False
+                return self.SIGNAL_EXECUTION_FAILED
+
+            return self.SIGNAL_EXECUTION_SUCCESS if success else self.SIGNAL_EXECUTION_FAILED
 
         except Exception as e:
             logger.error(f"执行 {stock_code} 的 {signal_type} 信号时出错: {str(e)}")
-            return False
+            return self.SIGNAL_EXECUTION_FAILED
 
     def execute_add_position_strategy(self, stock_code, add_position_info):
         """
@@ -643,14 +660,17 @@ class TradingStrategy:
                                     return
 
                             if config.ENABLE_AUTO_TRADING:
-                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if success:
+                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if result == self.SIGNAL_EXECUTION_SUCCESS:
                                     self.position_manager.mark_signal_processed(stock_code)
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
                                     with self.signal_lock:
                                         self.retry_counts.pop(retry_key, None)
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
                                     return  # 止盈执行成功后直接返回
+                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    return
                                 else:
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
                                     with self.signal_lock:
@@ -687,10 +707,13 @@ class TradingStrategy:
                             logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(仓位已满)")
 
                             if config.ENABLE_AUTO_TRADING:
-                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if success:
+                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if result == self.SIGNAL_EXECUTION_SUCCESS:
                                     self.position_manager.mark_signal_processed(stock_code)
                                     logger.warning(f"✅ {stock_code} 止损信号执行成功")
+                                    return
+                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     logger.error(f"❌ {stock_code} 止损信号执行失败")
@@ -717,11 +740,14 @@ class TradingStrategy:
                             logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(最高优先级)，立即处理")
 
                             if config.ENABLE_AUTO_TRADING:
-                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if success:
+                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if result == self.SIGNAL_EXECUTION_SUCCESS:
                                     self.position_manager.mark_signal_processed(stock_code)
                                     logger.warning(f"✅ {stock_code} 止损信号执行成功，跳过其他策略")
                                     return  # 止损执行后直接返回
+                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    return
                                 else:
                                     logger.error(f"❌ {stock_code} 止损信号执行失败")
                                     return
@@ -752,13 +778,16 @@ class TradingStrategy:
                                     return
 
                             if config.ENABLE_AUTO_TRADING:
-                                success = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if success:
+                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                                if result == self.SIGNAL_EXECUTION_SUCCESS:
                                     self.position_manager.mark_signal_processed(stock_code)
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
                                     with self.signal_lock:
                                         self.retry_counts.pop(retry_key, None)
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
+                                    return
+                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)

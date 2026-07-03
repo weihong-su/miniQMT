@@ -12,7 +12,7 @@ import os
 import time
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from test.test_base import TestBase
 from position_manager import PositionManager
+from strategy import TradingStrategy
 from logger import get_logger
 
 logger = get_logger("test_stop_profit_signal_flow")
@@ -546,6 +547,16 @@ class TestStopProfitSignalFlow(TestBase):
             })
             self.assertFalse(ok)
 
+            ok, status, reason = self.pm.validate_trading_signal(
+                stock_code,
+                "take_profit_half",
+                {"current_price": 10.6, "cost_price": 10.0},
+                return_reason=True
+            )
+            self.assertFalse(ok)
+            self.assertEqual(status, "blocked")
+            self.assertEqual(reason, "pending_order")
+
     def test_validate_trading_signal_pending_orders_no_active_but_block(self):
         stock_code = self._insert_position(cost_price=10.0, current_price=10.5, profit_triggered=1,
                                            available=0, volume=1000)
@@ -555,6 +566,35 @@ class TestStopProfitSignalFlow(TestBase):
                 "cost_price": 10.0
             })
             self.assertFalse(ok)
+
+            ok, status, reason = self.pm.validate_trading_signal(
+                stock_code,
+                "take_profit_half",
+                {"current_price": 10.6, "cost_price": 10.0},
+                return_reason=True
+            )
+            self.assertFalse(ok)
+            self.assertEqual(status, "blocked")
+            self.assertEqual(reason, "available_zero_sync_delay")
+
+    def test_execute_trading_signal_direct_blocked_not_failed(self):
+        """委托阻断应返回 blocked，不进入实际卖出执行。"""
+        strategy = TradingStrategy.__new__(TradingStrategy)
+        strategy.position_manager = MagicMock()
+        strategy.position_manager.validate_trading_signal.return_value = (
+            False, "blocked", "pending_order"
+        )
+
+        with patch.object(TradingStrategy, "_execute_stop_loss_signal") as mock_execute:
+            result = TradingStrategy.execute_trading_signal_direct(
+                strategy,
+                "301161",
+                "stop_loss",
+                {"current_price": 37.82, "cost_price": 65.5, "stop_loss_price": 60.6}
+            )
+
+        self.assertEqual(result, TradingStrategy.SIGNAL_EXECUTION_BLOCKED)
+        mock_execute.assert_not_called()
 
     def test_take_profit_full_blocked_when_available_zero(self):
         """

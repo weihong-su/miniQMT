@@ -136,6 +136,9 @@ class PositionManager:
         self.pending_orders = {}  # 存储待处理的委托单: {stock_code: {'order_id', 'submit_time', 'signal_type', ...}}
         self.order_check_interval = 30  # 委托单检查间隔（秒）
         self.last_order_check_time = 0
+        self.callback_refresh_lock = threading.Lock()
+        self.last_callback_refresh_time = 0
+        self.callback_refresh_min_interval = 2.0
 
         # ========= 行情异常兜底（风险保护） =========
         self.market_data_failures = {}  # {stock_code: 连续失败次数}
@@ -346,6 +349,37 @@ class PositionManager:
             # 不应因上次重连失败留下的冷却时间而延误本轮恢复
             self._last_reconnect_time = 0.0
             logger.info('[DISCONNECT] 已重置重连冷却计时，下次监控循环可立即触发重连')
+
+    def _request_immediate_position_refresh(self, stock_code, reason):
+        """成交/委托终态后异步刷新一次持仓，缩短 QMT 同步窗口。"""
+        try:
+            if getattr(config, 'ENABLE_SIMULATION_MODE', False) or self.qmt_trader is None:
+                return
+
+            now = time.time()
+            with self.callback_refresh_lock:
+                if now - self.last_callback_refresh_time < self.callback_refresh_min_interval:
+                    logger.debug(f"[POSITION_REFRESH] {stock_code} {reason} 距上次刷新过近，跳过")
+                    return
+                self.last_callback_refresh_time = now
+
+            def _refresh():
+                try:
+                    self.last_position_update_time = 0
+                    positions = self.get_all_positions()
+                    self._increment_data_version()
+                    count = 0 if positions is None else len(positions)
+                    logger.info(f"[POSITION_REFRESH] {stock_code} {reason} 后已触发持仓快刷，当前缓存 {count} 条")
+                except Exception as refresh_err:
+                    logger.warning(f"[POSITION_REFRESH] {stock_code} {reason} 持仓快刷失败: {refresh_err}")
+
+            threading.Thread(
+                target=_refresh,
+                name=f"PositionRefresh-{stock_code}",
+                daemon=True
+            ).start()
+        except Exception as e:
+            logger.warning(f"[POSITION_REFRESH] {stock_code} {reason} 调度失败: {e}")
 
     def _increment_data_version(self):
         """递增数据版本号（内部方法）"""
@@ -2302,7 +2336,7 @@ class PositionManager:
             return None, None
 
 
-    def validate_trading_signal(self, stock_code, signal_type, signal_info):
+    def validate_trading_signal(self, stock_code, signal_type, signal_info, return_reason=False):
         """
         交易信号最后验证 - 防止异常信号执行
 
@@ -2313,7 +2347,13 @@ class PositionManager:
 
         返回:
         bool: 是否通过验证
+        return_reason=True 时返回 (是否通过, 状态, 原因)，状态为 passed/blocked/failed
         """
+        def _result(ok, status="passed", reason=""):
+            if return_reason:
+                return ok, status, reason
+            return ok
+
         try:
             # 全仓止盈信号是否允许跳过活跃委托单检查（默认不允许）
             allow_skip_pending_check = (
@@ -2336,7 +2376,7 @@ class PositionManager:
                         if self._has_pending_orders(stock_code):
                             logger.warning(f"[待委托拦截] {stock_code} 存在未成交委托单，跳过本次信号执行（委托处理中，非错误）")
                             logger.warning(f"   等待委托单成交或撤销后，信号将自动重试")
-                            return False
+                            return _result(False, "blocked", "pending_order")
                         else:
                             logger.warning(f"警告 {stock_code} 未检测到活跃委托单，但available=0")
                             logger.warning(f"   可能原因: 1)委托单刚成交 2)系统数据未同步 3)其他原因")
@@ -2345,7 +2385,7 @@ class PositionManager:
                             logger.error(f"   原因：可能存在未成交委托单或数据同步延迟")
                             logger.error(f"   建议：等待委托单处理完毕或手动确认持仓状态")
                             logger.error(f"   修复说明：此为保守策略，避免在不确定情况下执行交易")
-                            return False
+                            return _result(False, "blocked", "available_zero_sync_delay")
             else:
                 # 全仓止盈信号: 允许跳过活跃委托单检查（受配置控制）
                 logger.warning(
@@ -2362,25 +2402,25 @@ class PositionManager:
                 if current_price <= 0 or cost_price <= 0 or stop_loss_price <= 0:
                     logger.error(f"🚨 {stock_code} 止损信号数据包含无效值，拒绝执行")
                     logger.error(f"   current_price={current_price:.2f}, cost_price={cost_price:.2f}, stop_loss_price={stop_loss_price:.2f}")
-                    return False
+                    return _result(False, "failed", "invalid_stop_loss_data")
 
                 # 🔑 价格比例检查 - 防止字段错乱导致的异常
                 stop_ratio = stop_loss_price / cost_price
                 if stop_ratio > 1.5 or stop_ratio < 0.5:
                     logger.error(f"🚨 {stock_code} 止损价比例异常 {stop_ratio:.3f}，疑似字段错乱，拒绝执行")
-                    return False
+                    return _result(False, "failed", "invalid_stop_loss_ratio")
 
                 # 🔑 亏损比例检查
                 loss_ratio = (cost_price - current_price) / cost_price
                 if loss_ratio < 0.02:  # 亏损小于2%
                     logger.error(f"🚨 {stock_code} 亏损比例过小 {loss_ratio:.2%}，可能是误触发，拒绝执行")
-                    return False
+                    return _result(False, "failed", "loss_ratio_too_small")
 
                 # 🔑 异常值检查
                 if current_price > cost_price * 10 or stop_loss_price > cost_price * 10:
                     logger.error(f"🚨 {stock_code} 价格数据异常，疑似单位错误，拒绝执行")
                     logger.error(f"   current_price={current_price:.2f}, stop_loss_price={stop_loss_price:.2f}, cost_price={cost_price:.2f}")
-                    return False
+                    return _result(False, "failed", "abnormal_price_data")
 
                 logger.info(f"✅ {stock_code} 止损信号验证通过: 亏损{loss_ratio:.2%}, 止损比例{stop_ratio:.3f}")
 
@@ -2390,7 +2430,7 @@ class PositionManager:
 
                 if current_price <= 0 or signal_cost_price <= 0:
                     logger.error(f"🚨 {stock_code} 止盈信号数据无效，拒绝执行")
-                    return False
+                    return _result(False, "failed", "invalid_take_profit_data")
 
                 # ⭐ 修复: 验证时重新获取实时成本价,避免使用历史base_cost
                 position = self.get_position(stock_code)
@@ -2413,7 +2453,7 @@ class PositionManager:
                 if current_price <= cost_price:
                     logger.error(f"🚨 {stock_code} 止盈信号但当前亏损 {profit_ratio:.2%}，拒绝执行")
                     logger.error(f"   成本价: {cost_price:.2f}, 当前价: {current_price:.2f}")
-                    return False
+                    return _result(False, "failed", "take_profit_not_profitable")
 
                 if signal_type == 'take_profit_half':
                     min_take_profit_price = self._get_initial_take_profit_min_valid_price(cost_price)
@@ -2423,15 +2463,15 @@ class PositionManager:
                             f"< 最低有效止盈价 {min_take_profit_price:.2f}，拒绝执行"
                         )
                         self._reset_profit_breakout(stock_code, "validate_below_initial_take_profit_floor")
-                        return False
+                        return _result(False, "failed", "take_profit_signal_expired")
 
                 logger.info(f"✅ {stock_code} 止盈信号验证通过，盈利 {profit_ratio:.2%}")
 
-            return True
+            return _result(True)
 
         except Exception as e:
             logger.error(f"🚨 {stock_code} 信号验证失败: {e}")
-            return False
+            return _result(False, "failed", "validation_exception")
 
     def _get_real_order_id(self, returned_id):
         """
@@ -3857,6 +3897,8 @@ class PositionManager:
                             daemon=True
                         ).start()
 
+            self._request_immediate_position_refresh(stock_code_short, "成交回报")
+
             # 网格实盘委托只在成交回报到达后确认落账
             grid_manager = getattr(self, 'grid_manager', None)
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
@@ -3870,6 +3912,11 @@ class PositionManager:
     def _on_order_callback(self, order):
         """QMT委托状态回调：将撤单、废单等终态转发给网格管理器。"""
         try:
+            order_status = getattr(order, 'order_status', None)
+            stock_code = str(getattr(order, 'stock_code', '') or '')[:6]
+            if stock_code and order_status not in [48, 49, 50, 51, 52, 55]:
+                self._request_immediate_position_refresh(stock_code, f"委托终态({order_status})")
+
             grid_manager = getattr(self, 'grid_manager', None)
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
                 grid_manager.handle_order_callback(order)
@@ -3916,6 +3963,16 @@ class PositionManager:
         except Exception as e:
             logger.error(f"跟踪委托单失败: {str(e)}")
 
+    def _get_pending_order_timeout_minutes(self, signal_type):
+        """按信号类型获取委托超时阈值，止损单使用更短等待时间。"""
+        if signal_type == 'stop_loss':
+            return float(getattr(
+                config,
+                'STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES',
+                config.PENDING_ORDER_TIMEOUT_MINUTES
+            ))
+        return float(config.PENDING_ORDER_TIMEOUT_MINUTES)
+
     def check_pending_orders_timeout(self):
         """
         检查所有待处理委托单是否超时
@@ -3943,11 +4000,15 @@ class PositionManager:
             with self.pending_orders_lock:
                 for stock_code, order_info in list(self.pending_orders.items()):
                     submit_time = order_info['submit_time']
+                    signal_type = order_info.get('signal_type')
+                    timeout_minutes = self._get_pending_order_timeout_minutes(signal_type)
                     elapsed_minutes = (datetime.now() - submit_time).total_seconds() / 60
 
                     # 检查是否超时
-                    if elapsed_minutes >= config.PENDING_ORDER_TIMEOUT_MINUTES:
-                        timeout_orders.append(order_info)
+                    if elapsed_minutes >= timeout_minutes:
+                        timeout_info = dict(order_info)
+                        timeout_info['timeout_minutes'] = timeout_minutes
+                        timeout_orders.append(timeout_info)
 
             # 处理超时委托单
             for order_info in timeout_orders:
@@ -3969,10 +4030,14 @@ class PositionManager:
             signal_type = order_info['signal_type']
             signal_info = order_info['signal_info']
             submit_time = order_info['submit_time']
+            timeout_minutes = order_info.get(
+                'timeout_minutes',
+                self._get_pending_order_timeout_minutes(signal_type)
+            )
             elapsed = (datetime.now() - submit_time).total_seconds() / 60
 
             logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
-                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={config.PENDING_ORDER_TIMEOUT_MINUTES}分钟)，"
+                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={timeout_minutes}分钟)，"
                          f"将查询当前状态并决定是否自动撤单")
 
             # 查询委托单当前状态
