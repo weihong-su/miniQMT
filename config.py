@@ -613,6 +613,10 @@ def log_priority_scenario():
 # QMT持仓查询间隔(秒) - 从3秒延长到10秒
 QMT_POSITION_QUERY_INTERVAL = 10.0  # ↓70% API调用
 
+# 实盘空持仓确认次数。只有在交易时段、QMT已连接、连续N次返回空持仓、
+# 且无活跃委托时，才允许清空本地持仓，避免非交易时段QMT空返回误删。
+REAL_POSITION_EMPTY_CONFIRM_COUNT = 3
+
 # SQLite同步间隔(秒) - 从5秒延长到15秒
 POSITION_SYNC_INTERVAL = 15.0       # ↓87% I/O操作
 

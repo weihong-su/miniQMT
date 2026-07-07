@@ -100,7 +100,8 @@ class PositionManager:
         # 添加缓存机制
         self.last_position_update_time = 0
         self.position_update_interval = config.QMT_POSITION_QUERY_INTERVAL  # ⭐ 优化: 使用配置10秒
-        self.positions_cache = None        
+        self.positions_cache = None
+        self.empty_real_position_count = 0
 
         # 新增，持仓数据版本控制
         self.data_version = 0
@@ -607,6 +608,157 @@ class PositionManager:
                 with self.memory_conn_lock:
                     self.memory_conn.rollback()
 
+    def _has_any_active_orders(self, stock_codes):
+        """检查给定股票集合是否存在活跃委托；查询异常时保守认为存在。"""
+        try:
+            normalized_codes = {
+                str(code).split('.')[0]
+                for code in stock_codes
+                if code is not None and str(code).strip()
+            }
+            if not normalized_codes:
+                return False
+
+            pending_orders = getattr(self, 'pending_orders', {}) or {}
+            pending_lock = getattr(self, 'pending_orders_lock', None)
+            if pending_lock:
+                with pending_lock:
+                    pending_items = list(pending_orders.items())
+            else:
+                pending_items = list(pending_orders.items())
+
+            for key, info in pending_items:
+                code = info.get('stock_code') if isinstance(info, dict) else key
+                if str(code).split('.')[0] in normalized_codes:
+                    logger.warning(f"本地仍跟踪活跃委托: {code}，跳过空持仓清理")
+                    return True
+
+            for stock_code in sorted(normalized_codes):
+                if self._has_pending_orders(stock_code):
+                    return True
+
+            return False
+        except Exception as e:
+            logger.error(f"检查活跃委托失败，保守跳过空持仓清理: {str(e)}")
+            return True
+
+    def _delete_local_positions_direct(self, stock_codes, reason):
+        """直接删除本地持仓快照，避免 remove_position() 再次触发 QMT 查询。"""
+        stocks_to_delete = {
+            str(code)
+            for code in stock_codes
+            if code is not None and str(code).strip()
+        }
+        if not stocks_to_delete:
+            return False
+
+        if not hasattr(self, '_deleting_stocks'):
+            self._deleting_stocks = set()
+
+        stocks_to_delete -= self._deleting_stocks
+        if not stocks_to_delete:
+            return False
+
+        self._deleting_stocks.update(stocks_to_delete)
+        deleted = []
+        try:
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+                for stock_code in sorted(stocks_to_delete):
+                    cursor.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
+                    if cursor.rowcount > 0:
+                        deleted.append(stock_code)
+                self.memory_conn.commit()
+
+            if not deleted:
+                return False
+
+            self._increment_data_version()
+
+            if not getattr(config, 'ENABLE_SIMULATION_MODE', True):
+                db_conn = None
+                try:
+                    db_conn = sqlite3.connect(config.DB_PATH, timeout=5.0)
+                    for stock_code in deleted:
+                        db_conn.execute(
+                            "DELETE FROM positions WHERE rowid IN "
+                            "(SELECT rowid FROM positions WHERE stock_code=?)",
+                            (stock_code,)
+                        )
+                    db_conn.commit()
+                except Exception as e:
+                    logger.warning(f"SQLite即时删除清仓持仓失败，将由同步线程兜底: {str(e)}")
+                finally:
+                    if db_conn is not None:
+                        db_conn.close()
+
+            try:
+                self._update_stock_positions_file(set())
+            except Exception as e:
+                logger.warning(f"更新持仓股票池失败: {str(e)}")
+
+            logger.warning(f"{reason}，已清理本地持仓: {deleted}")
+            return True
+        except Exception as e:
+            logger.error(f"直接清理本地持仓失败: {str(e)}")
+            with self.memory_conn_lock:
+                self.memory_conn.rollback()
+            return False
+        finally:
+            self._deleting_stocks -= stocks_to_delete
+
+    def _handle_empty_real_positions(self):
+        """
+        处理 QMT 返回空实盘持仓的场景。
+
+        只有交易时段、QMT已连接、连续N次空返回、且无活跃委托时，
+        才认为这是“最后一只持仓已清空”，允许删除本地快照。
+        """
+        try:
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+                cursor.execute("SELECT stock_code FROM positions")
+                memory_stock_codes = {row[0] for row in cursor.fetchall() if row[0] is not None}
+
+            if not memory_stock_codes:
+                self.empty_real_position_count = 0
+                return False
+
+            if not config.is_trade_time():
+                self.empty_real_position_count = 0
+                logger.warning("非交易时段 QMT 返回空持仓，按接口异常保护处理，不清理本地持仓")
+                return False
+
+            if not getattr(self, 'qmt_connected', False) or self.qmt_trader is None:
+                self.empty_real_position_count = 0
+                logger.warning("QMT未确认连接，空持仓返回不用于清理本地持仓")
+                return False
+
+            if self._has_any_active_orders(memory_stock_codes):
+                self.empty_real_position_count = 0
+                logger.warning("QMT返回空持仓但仍有活跃委托，暂不清理本地持仓")
+                return False
+
+            confirm_count = max(1, int(getattr(config, 'REAL_POSITION_EMPTY_CONFIRM_COUNT', 3)))
+            self.empty_real_position_count += 1
+
+            if self.empty_real_position_count < confirm_count:
+                logger.warning(
+                    f"QMT连续空持仓确认 {self.empty_real_position_count}/{confirm_count}，"
+                    f"暂不清理本地持仓: {sorted(memory_stock_codes)}"
+                )
+                return False
+
+            self.empty_real_position_count = 0
+            return self._delete_local_positions_direct(
+                memory_stock_codes,
+                f"交易时段QMT连续{confirm_count}次返回空持仓且无活跃委托"
+            )
+        except Exception as e:
+            self.empty_real_position_count = 0
+            logger.error(f"处理空实盘持仓失败: {str(e)}")
+            return False
+
     def _sync_db_to_memory(self):
         """将数据库数据同步到内存数据库"""
         try:
@@ -700,13 +852,19 @@ class PositionManager:
                         breakout_highest_price = row['breakout_highest_price']
 
                         # 查询数据库中的对应记录
-                        cursor.execute("SELECT stock_name, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price FROM positions WHERE stock_code=?", (stock_code,))
+                        cursor.execute(
+                            "SELECT stock_name, volume, available, cost_price, base_cost_price, "
+                            "open_date, profit_triggered, highest_price, stop_loss_price, "
+                            "profit_breakout_triggered, breakout_highest_price "
+                            "FROM positions WHERE stock_code=?",
+                            (stock_code,)
+                        )
                         db_row = cursor.fetchone()
 
                         if db_row:
-                            db_stock_name, db_open_date, db_profit_triggered, db_highest_price, db_stop_loss_price, db_profit_breakout_triggered, db_breakout_highest_price = db_row
+                            db_stock_name, db_volume, db_available, db_cost_price, db_base_cost_price, db_open_date, db_profit_triggered, db_highest_price, db_stop_loss_price, db_profit_breakout_triggered, db_breakout_highest_price = db_row
                             # 比较字段是否不同
-                            if (db_stock_name != stock_name) or (db_open_date != open_date) or (db_profit_triggered != profit_triggered) or (db_highest_price != highest_price) or (db_stop_loss_price != stop_loss_price) or (db_profit_breakout_triggered != profit_breakout_triggered) or (db_breakout_highest_price != breakout_highest_price):
+                            if (db_stock_name != stock_name) or (db_volume != volume) or (db_available != 0) or (db_cost_price != cost_price) or (db_base_cost_price != base_cost_price) or (db_open_date != open_date) or (db_profit_triggered != profit_triggered) or (db_highest_price != highest_price) or (db_stop_loss_price != stop_loss_price) or (db_profit_breakout_triggered != profit_breakout_triggered) or (db_breakout_highest_price != breakout_highest_price):
                                 # 如果内存数据库中的 open_date 与 SQLite 数据库中的不一致，则使用 SQLite 数据库中的值
                                 if db_open_date != open_date:
                                     open_date = db_open_date
@@ -721,9 +879,13 @@ class PositionManager:
                                 # 更新数据库，确保所有字段都得到更新
                                 cursor.execute("""
                                     UPDATE positions
-                                    SET stock_name=?, open_date=?, profit_triggered=?, highest_price=?, stop_loss_price=?, profit_breakout_triggered=?, breakout_highest_price=?, last_update=?
+                                    SET stock_name=?, volume=?, available=0, cost_price=?, base_cost_price=?,
+                                        open_date=?, profit_triggered=?, highest_price=?, stop_loss_price=?,
+                                        profit_breakout_triggered=?, breakout_highest_price=?, last_update=?
                                     WHERE stock_code=?
-                                """, (stock_name, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now, stock_code))
+                                """, (stock_name, volume, cost_price, base_cost_price, open_date, profit_triggered,
+                                      highest_price, stop_loss_price, profit_breakout_triggered,
+                                      breakout_highest_price, now, stock_code))
                                 update_count += 1
                                 logger.debug(f"更新SQLite记录: {stock_code}, 最高价:{highest_price:.2f}, 止损价:{stop_loss_price:.2f}")
                         else:
@@ -881,11 +1043,13 @@ class PositionManager:
             if (current_time - self.last_position_update_time) >= self.position_update_interval:
                 # 获取实盘持仓数据
                 try:
+                    position_query_valid = True
                     real_positions_df = self.qmt_trader.position()
 
                     # 检查实盘数据
                     if real_positions_df is None:
                         logger.warning("实盘持仓数据获取失败，返回None")
+                        position_query_valid = False
                         real_positions_df = pd.DataFrame()  # 使用空DataFrame而不是None
                     elif not isinstance(real_positions_df, pd.DataFrame):
                         logger.warning(f"实盘持仓数据类型错误: {type(real_positions_df)}，将转换为DataFrame")
@@ -893,11 +1057,17 @@ class PositionManager:
                             # 尝试转换为DataFrame
                             real_positions_df = pd.DataFrame(real_positions_df)
                         except:
+                            position_query_valid = False
                             real_positions_df = pd.DataFrame()  # 转换失败则使用空DataFrame
 
                     # 同步实盘持仓数据到内存数据库
                     if not real_positions_df.empty:
+                        self.empty_real_position_count = 0
                         self._sync_real_positions_to_memory(real_positions_df)
+                    elif position_query_valid:
+                        self._handle_empty_real_positions()
+                    else:
+                        self.empty_real_position_count = 0
 
                     # 读取数据到局部变量，避免就地修改 self.positions_cache 时与其他
                     # 线程的 .copy() 调用产生竞态（Gaps in blk ref_locs）

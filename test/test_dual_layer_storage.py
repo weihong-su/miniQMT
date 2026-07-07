@@ -23,6 +23,15 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+try:
+    import mootdx.quotes  # noqa: F401
+except ModuleNotFoundError:
+    mock_mootdx = MagicMock()
+    mock_mootdx_quotes = MagicMock()
+    mock_mootdx_quotes.Quotes.factory.return_value = MagicMock()
+    sys.modules.setdefault('mootdx', mock_mootdx)
+    sys.modules.setdefault('mootdx.quotes', mock_mootdx_quotes)
+
 import config
 from logger import get_logger
 
@@ -210,13 +219,12 @@ class TestSyncMemoryToDbPaths(unittest.TestCase):
         return pm
 
     # ------------------------------------------------------------------
-    # A2: UPDATE 路径 - available 不出现在 SET 子句
+    # A2: UPDATE 路径 - 同步关键持仓字段，available 固定归零
     # ------------------------------------------------------------------
-    def test_A2_update_path_available_not_changed_in_sqlite(self):
+    def test_A2_update_path_syncs_volume_and_zeroes_available(self):
         """
-        UPDATE 路径：SQLite 中已有持仓（available=500），内存中 available=300，
-        同步后 SQLite 的 available 应保持 500（不被覆盖），
-        因为 UPDATE SET 语句中不包含 available。
+        UPDATE 路径：SQLite 中已有持仓，内存中的 volume/cost_price 应写回，
+        但 available 仍固定写 0，避免重启窗口误读旧可用股数。
         """
         # 先在 SQLite 中插入初始记录（available=500，模拟历史快照）
         initial_sqlite_conn = sqlite3.connect(self.TEST_DB)
@@ -233,9 +241,9 @@ class TestSyncMemoryToDbPaths(unittest.TestCase):
         initial_sqlite_conn.commit()
         initial_sqlite_conn.close()
 
-        # 内存中 available=300（已变化），profit_triggered=True（应被同步）
-        _insert_memory_position(self.memory_conn, "000002.SZ", volume=1000, available=300,
-                                cost_price=10.0, profit_triggered=True,
+        # 内存中 volume/cost_price 已变化，available 不应作为真实快照持久化
+        _insert_memory_position(self.memory_conn, "000002.SZ", volume=800, available=300,
+                                cost_price=10.2, profit_triggered=True,
                                 highest_price=11.0, stop_loss_price=9.3)
 
         with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
@@ -243,19 +251,22 @@ class TestSyncMemoryToDbPaths(unittest.TestCase):
             pm = self._build_real_pm_stub()
             pm._sync_memory_to_db()
 
-        # 验证：available 保持 500（未被 UPDATE 覆盖）
+        # 验证：关键股数字段更新，available 作为快照保护值归零
         conn = sqlite3.connect(self.TEST_DB)
         row = conn.execute(
-            "SELECT available, profit_triggered FROM positions WHERE stock_code=?",
+            "SELECT available, volume, cost_price, profit_triggered FROM positions WHERE stock_code=?",
             ("000002.SZ",)
         ).fetchone()
         conn.close()
 
         self.assertIsNotNone(row)
-        self.assertEqual(int(row[0]), 500,
-                         f"UPDATE 路径不应修改 SQLite.available（应保持500），实际为 {row[0]}")
-        # profit_triggered 应该被同步过来（=1）
-        self.assertTrue(bool(row[1]),
+        self.assertEqual(int(row[0]), 0,
+                         f"UPDATE 路径应将 SQLite.available 归零，实际为 {row[0]}")
+        self.assertEqual(int(row[1]), 800,
+                         f"UPDATE 路径应同步 volume=800，实际为 {row[1]}")
+        self.assertAlmostEqual(float(row[2]), 10.2, places=4,
+                               msg=f"UPDATE 路径应同步 cost_price=10.2，实际为 {row[2]}")
+        self.assertTrue(bool(row[3]),
                         "UPDATE 路径应同步 profit_triggered 到 SQLite")
 
     # ------------------------------------------------------------------
@@ -553,6 +564,150 @@ class TestRestartAvailableRecovery(unittest.TestCase):
 
         self.assertEqual(int(row_after_realtime[0]), 750,
                          f"步骤2: 实盘同步后内存 available 应为 750，实际为 {row_after_realtime[0]}")
+
+
+# --------------------------------------------------------------------------
+# 测试组 B4：实盘空持仓确认清理
+# --------------------------------------------------------------------------
+class TestEmptyRealPositionCleanup(unittest.TestCase):
+    """
+    验证最后一只实盘持仓清空后的本地残留清理：
+    只有交易时段、QMT已连接、连续N次空持仓、且无活跃委托时才清理。
+    """
+
+    TEST_DB = "data/test_empty_real_position_cleanup.db"
+
+    def setUp(self):
+        import threading
+        os.makedirs("data", exist_ok=True)
+        if os.path.exists(self.TEST_DB):
+            os.remove(self.TEST_DB)
+        self.memory_conn = _make_memory_conn()
+        self.empty_df = pd.DataFrame(columns=['证券代码', '股票余额', '可用余额', '成本价', '市值'])
+        self.threading = threading
+
+    def tearDown(self):
+        self.memory_conn.close()
+        if os.path.exists(self.TEST_DB):
+            os.remove(self.TEST_DB)
+
+    def _seed_position(self, stock_code="301161"):
+        _insert_memory_position(self.memory_conn, stock_code, volume=1900, available=0,
+                                cost_price=40.73, highest_price=42.9, stop_loss_price=37.88)
+        sqlite_conn = _make_sqlite_conn(self.TEST_DB)
+        _insert_memory_position(sqlite_conn, stock_code, volume=1900, available=0,
+                                cost_price=40.73, highest_price=42.9, stop_loss_price=37.88)
+        sqlite_conn.close()
+
+    def _build_pm_stub(self, qmt_connected=True):
+        from position_manager import PositionManager
+
+        pm = object.__new__(PositionManager)
+        pm.memory_conn = self.memory_conn
+        pm.memory_conn_lock = self.threading.Lock()
+        pm.sync_lock = self.threading.RLock()
+        pm._deleting_stocks = set()
+        pm.version_lock = self.threading.Lock()
+        pm.data_version = 0
+        pm.data_changed = False
+        pm.positions_cache = None
+        pm.last_position_update_time = 0
+        pm.position_update_interval = 0
+        pm.empty_real_position_count = 0
+        pm.qmt_connected = qmt_connected
+        pm.pending_orders_lock = self.threading.Lock()
+        pm.pending_orders = {}
+        pm._update_stock_positions_file = MagicMock()
+        pm.qmt_trader = MagicMock()
+        pm.qmt_trader.position.return_value = self.empty_df
+        pm.qmt_trader.get_active_orders_by_stock.return_value = []
+        return pm
+
+    def _sqlite_position_count(self):
+        conn = sqlite3.connect(self.TEST_DB)
+        count = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
+        conn.close()
+        return count
+
+    def test_B4_empty_real_positions_clear_after_confirmed_trade_time(self):
+        """交易时段连续N次空持仓且无活跃委托时，清理内存和SQLite残留。"""
+        from position_manager import PositionManager
+
+        self._seed_position()
+        pm = self._build_pm_stub(qmt_connected=True)
+
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
+             patch.object(config, 'DB_PATH', self.TEST_DB), \
+             patch.object(config, 'REAL_POSITION_EMPTY_CONFIRM_COUNT', 2), \
+             patch('config.is_trade_time', return_value=True):
+            first = PositionManager.get_all_positions(pm)
+            self.assertEqual(len(first), 1, "第一次空持仓确认不应立即清理")
+            self.assertEqual(self._sqlite_position_count(), 1)
+
+            second = PositionManager.get_all_positions(pm)
+            self.assertTrue(second.empty, "第二次确认后应返回空持仓")
+
+        self.assertEqual(self._sqlite_position_count(), 0, "SQLite残留持仓应被删除")
+        pm._update_stock_positions_file.assert_called_with(set())
+
+    def test_B5_empty_real_positions_do_not_clear_outside_trade_time(self):
+        """非交易时段空持仓不计入确认次数，防止QMT盘后空返回误删。"""
+        from position_manager import PositionManager
+
+        self._seed_position()
+        pm = self._build_pm_stub(qmt_connected=True)
+
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
+             patch.object(config, 'DB_PATH', self.TEST_DB), \
+             patch.object(config, 'REAL_POSITION_EMPTY_CONFIRM_COUNT', 1), \
+             patch('config.is_trade_time', return_value=False):
+            positions = PositionManager.get_all_positions(pm)
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(self._sqlite_position_count(), 1)
+        self.assertEqual(pm.empty_real_position_count, 0)
+        pm.qmt_trader.get_active_orders_by_stock.assert_not_called()
+
+    def test_B6_empty_real_positions_do_not_clear_with_active_order(self):
+        """存在活跃委托时，即使交易时段返回空持仓也不清理。"""
+        from position_manager import PositionManager
+
+        self._seed_position()
+        pm = self._build_pm_stub(qmt_connected=True)
+        order = MagicMock()
+        order.order_id = 940572673
+        order.order_status = 55
+        order.order_volume = 1900
+        order.traded_volume = 1700
+        pm.qmt_trader.get_active_orders_by_stock.return_value = [order]
+
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
+             patch.object(config, 'DB_PATH', self.TEST_DB), \
+             patch.object(config, 'REAL_POSITION_EMPTY_CONFIRM_COUNT', 1), \
+             patch('config.is_trade_time', return_value=True):
+            positions = PositionManager.get_all_positions(pm)
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(self._sqlite_position_count(), 1)
+        self.assertEqual(pm.empty_real_position_count, 0)
+
+    def test_B7_empty_real_positions_require_qmt_connected(self):
+        """QMT未确认连接时，空持仓返回不能触发清理。"""
+        from position_manager import PositionManager
+
+        self._seed_position()
+        pm = self._build_pm_stub(qmt_connected=False)
+
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
+             patch.object(config, 'DB_PATH', self.TEST_DB), \
+             patch.object(config, 'REAL_POSITION_EMPTY_CONFIRM_COUNT', 1), \
+             patch('config.is_trade_time', return_value=True):
+            positions = PositionManager.get_all_positions(pm)
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(self._sqlite_position_count(), 1)
+        self.assertEqual(pm.empty_real_position_count, 0)
+        pm.qmt_trader.get_active_orders_by_stock.assert_not_called()
 
 
 # --------------------------------------------------------------------------
