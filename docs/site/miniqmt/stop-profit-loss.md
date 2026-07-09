@@ -53,6 +53,23 @@ miniQMT 采用**动态止盈止损**策略，包含两个阶段：
 
 ---
 
+## 信号检测与执行的开关门控
+
+止盈止损遵循"检测与执行分离"设计，但**信号入队本身也受开关门控**，避免关闭自动交易时仍反复检测刷屏：
+
+| 开关 | 作用 |
+|------|------|
+| `ENABLE_AUTO_OPERATION` | 全局自动操作总开关，关闭时所有自动策略不产生新交易动作 |
+| `ENABLE_DYNAMIC_STOP_PROFIT` | 动态止盈止损**检测**开关 |
+| `ENABLE_AUTO_TRADING` | 动态止盈止损**执行**开关 |
+
+持仓监控线程仅在 **`ENABLE_DYNAMIC_STOP_PROFIT` 且 `ENABLE_AUTO_TRADING` 同时开启**时，才检测动态止盈止损信号并写入 `latest_signals` 队列（`_detect_and_enqueue_dynamic_signal`）。
+
+!!! warning "为何检测也要门控"
+    若仅按总开关检测、按执行开关执行，则当"允许自动止盈"(`ENABLE_AUTO_TRADING`)关闭而持仓持续满足止盈条件时，会形成"监控检测 → 策略因自动交易关闭而清除 → 监控再检测"的每 3 秒死循环，日志刷屏（曾出现单账户 `take_profit_full` 一天刷屏近 2 万行）。因此关闭执行开关时直接跳过检测，并清理残留动态信号（保留 `grid_` 网格信号）。网格交易走独立分支（`ENABLE_GRID_TRADING`），不受此门控影响。
+
+---
+
 ## 止损
 
 **触发条件**：盈利比例 <= `STOP_LOSS_RATIO`（-7.5%）

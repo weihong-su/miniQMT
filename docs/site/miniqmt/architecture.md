@@ -15,6 +15,7 @@
 - 持仓监控线程和网格线程可以持续运行，但自动下单受开关体系控制
 - `ENABLE_AUTO_OPERATION` 是全局自动操作总开关，关闭时所有自动策略不产生新交易动作
 - `ENABLE_AUTO_TRADING` 只控制动态止盈止损等非网格自动策略
+- **动态止盈止损信号入队门控**：持仓监控仅在 `ENABLE_DYNAMIC_STOP_PROFIT` 且 `ENABLE_AUTO_TRADING` 同时开启时才检测并写入 `latest_signals`（`_detect_and_enqueue_dynamic_signal`）。任一关闭时不检测、不入队，避免"检测 → 策略因自动交易关闭而清除 → 再检测"的每 3 秒日志刷屏；关闭时会清理残留动态信号（保留 `grid_` 网格信号）。网格检测走独立分支（`ENABLE_GRID_TRADING`），不受此门控影响
 - `ENABLE_GRID_TRADING` 控制网格模块，`grid_trading_sessions.enabled` 控制单只股票网格会话“自动/暂停”
 - 每个信号经过 `validate_trading_signal()` 验证，防止重复执行
 
