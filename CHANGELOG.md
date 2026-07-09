@@ -4,19 +4,17 @@
 
 > 本文件是 **唯一的变更记录源**。文档站 `/changelog/` 页面通过 `include-markdown` 引用本文件，请在此处直接编辑。
 
-## [Unreleased]
+## [3.5.0] - 2026-07-09
+
+> 本版本聚焦**网格交易实盘落账准确性**：部分成交聚合落账避免QMT拆单导致重复记录，买卖量基数统一确保网格对称运行。同时新增 Tushare 数据源适配。
 
 ### Added
-- **Tushare 数据源适配**：新增 `tushare_adapter.py` 适配 tushare 股票行情数据接口，作为 xtdata/Mootdx/baostock 之外的数据来源扩展。
+- **Tushare 数据源适配**：新增 tushare 股票行情数据接口适配，作为 xtdata/Mootdx/baostock 之外的数据来源扩展（`test/test_tushare_adapter.py` + `test/smoke_tushare.py`）。
 
 ### Changed
-- **网格部分成交聚合落账**：`handle_deal_callback` 改为部分成交阶段只累积填充量不落账（不写 `grid_trades`/`trade_records`，不重建网格），全部成交后一次性聚合写入（1条 `grid_trades` 加权均价 + 1条 `trade_records` + 1次 `_rebuild_grid`），避免 QMT 拆单（如 1300 股拆成 12 笔）导致重复落账和统计失真。
-- **网格买卖量基数统一**：买入量改为基于当前持仓数量 `current_volume × position_ratio`（有持仓时），与卖出量使用同一基数确保每档买卖操作量对称；无持仓时回退为基于金额计算；买入量始终受 `max_investment` 硬上限约束。
-
-### Fixed
-- 聚合落账 DB 失败时回滚 pending 累积量，保留 pending 等待补偿确认重试。
+- **网格部分成交聚合落账**：`handle_deal_callback` 改为部分成交阶段只累积填充量不落账（不写 `grid_trades`/`trade_records`，不重建网格），全部成交后一次性聚合写入（1条 `grid_trades` 加权均价 + 1条 `trade_records` + 1次 `_rebuild_grid`），避免 QMT 拆单（如 1300 股拆成 12 笔）导致重复落账和统计失真。DB失败时回滚 pending 累积量，保留 pending 等待补偿确认重试。
+- **网格买卖量基数统一**：有持仓时买入量与卖出量使用同一基数 `current_volume × position_ratio`，确保每档买卖操作量对称；无持仓时回退为基于金额计算；买入量始终受 `max_investment` 硬上限约束。`execute_grid_trade` 中 BUY 信号也预取持仓快照（原仅 SELL）。
 - 聚合落账用 `order_id` 作为 `trade_id`，避免多笔部分成交使用无意义的券商 `trade_id`。
-- `execute_grid_trade` 中 BUY 信号也预取持仓快照（原仅 SELL），供 `_build_grid_order_plan` 计算基于持仓的买入量。
 
 ### Tests
 - `test_grid_live_order_confirmation` — 部分成交聚合语义已同步更新
@@ -24,10 +22,13 @@
 - `test_grid_mece_regression` — 部分成交统计预期更新
 - `test_grid_trade_buy` / `test_grid_trade_sell` — 聚合 trade_id 更新
 - `test_max_investment_strict` — 买入量基于持仓的预期值更新
-- 新增 `test_tushare_adapter` / `smoke_tushare` — tushare 适配器测试与冒烟
+- 新增 `test_tushare_adapter` / `smoke_tushare` — tushare 适配器单元测试与冒烟
+- 集成回归测试新增 tushare 适配器模块到 fast 组
 
 ### Docs
 - 更新 `docs/site/miniqmt/grid-trading.md` 部分成交聚合与买卖量统一文档
+
+## [Unreleased]
 
 ## [3.4.0] - 2026-07-04
 

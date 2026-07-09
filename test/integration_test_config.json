@@ -299,7 +299,8 @@
         "test.test_grid_full_range_coverage",
         "test.test_grid_true_pnl",
         "test.test_multi_account_isolation",
-        "test.test_launcher_deployment"
+        "test.test_launcher_deployment",
+        "test.test_tushare_adapter"
       ],
       "priority": "critical"
     }
