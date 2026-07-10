@@ -63,7 +63,7 @@ class TestEnsureSubscribed(TestBase):
         """未订阅的股票应触发 subscribe_quote 并加入 subscribed_stocks"""
         self.dm.ensure_subscribed('000920.SZ')
         self.mock_xt.subscribe_quote.assert_called_once_with(
-            '000920.SZ', period='tick', start_time='', end_time='', count=0, callback=None
+            '000920.SZ', period='tick', start_time='', end_time='', count=0, callback=self.dm._on_xtdata_tick
         )
         self.assertIn('000920.SZ', self.dm.subscribed_stocks)
 
@@ -591,6 +591,60 @@ class TestMarketDataHealthTracker(unittest.TestCase):
              patch('config.MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING', False):
             self.assertFalse(dm.is_quote_tradable('000920', mootdx_quote))
             self.assertTrue(dm.is_quote_tradable('000920', xtdata_quote))
+
+
+# ══════════════════════════════════════════════════════════════
+# 测试组4: tick 推送缓存 + MARKET_HEALTH_OBSERVE_ONLY 门禁
+# ══════════════════════════════════════════════════════════════
+class TestTickCacheAndGate(TestBase):
+    """_on_xtdata_tick + _get_tick_from_cache + 门禁拦截"""
+
+    def setUp(self):
+        super().setUp()
+        dm = object.__new__(data_manager_module.DataManager)
+        dm._tick_cache = {}
+        dm.market_health = data_manager_module.MarketDataHealthTracker()
+        dm._xtdata_reconnect_errors = 0
+        dm.subscribed_stocks = []
+        self.dm = dm
+
+    def test_tick_cache_written_and_read_back(self):
+        data = {"000001.SZ": {"lastPrice": 10.5, "lastClose": 10.3}}
+        self.dm._on_xtdata_tick(data)
+        tick = self.dm._get_tick_from_cache("000001.SZ")
+        self.assertEqual(tick["lastPrice"], 10.5)
+        self.assertEqual(tick["_source"], "xtdata")
+        self.assertEqual(tick["_purpose"], "realtime")
+
+    def test_tick_cache_zero_price_rejected(self):
+        self.dm._tick_cache["000001.SZ"] = {"lastPrice": 0, "lastClose": 10.3}
+        tick = self.dm._get_tick_from_cache("000001.SZ")
+        self.assertIsNone(tick)
+        self.assertNotIn("000001.SZ", self.dm._tick_cache)
+
+    def test_tick_cache_miss_returns_none(self):
+        self.assertIsNone(self.dm._get_tick_from_cache("999999.SZ"))
+
+    def test_tick_cache_health_resets_xtdata_failures(self):
+        self.dm._xtdata_reconnect_errors = 5
+        self.dm._on_xtdata_tick({"000001.SZ": {"lastPrice": 10.5}})
+        self.dm._get_tick_from_cache("000001.SZ")
+        self.assertEqual(self.dm._xtdata_reconnect_errors, 0)
+
+    def test_mootdx_blocked_when_observe_off(self):
+        dm = self.dm
+        mq = {"lastPrice": 10.0, "_source": "Mootdx", "_purpose": "realtime", "_health_score": 95}
+        xq = {"lastPrice": 10.0, "_source": "xtdata", "_purpose": "realtime", "_health_score": 80}
+        with patch("config.MARKET_HEALTH_OBSERVE_ONLY", False), \
+             patch("config.MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING", False):
+            self.assertFalse(dm.is_quote_tradable("000920", mq))
+            self.assertTrue(dm.is_quote_tradable("000920", xq))
+
+    def test_mootdx_allowed_when_observe_on(self):
+        dm = self.dm
+        mq = {"lastPrice": 10.0, "_source": "Mootdx", "_purpose": "realtime", "_health_score": 95}
+        with patch("config.MARKET_HEALTH_OBSERVE_ONLY", True):
+            self.assertTrue(dm.is_quote_tradable("000920", mq))
 
 
 if __name__ == '__main__':

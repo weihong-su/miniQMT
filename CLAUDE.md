@@ -15,6 +15,19 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🌐 Web前端实时监控界面（Flask web1.0 + Vue3 web2.0 双版本）
 - 🚪 XtQuantManager HTTP 网关（多账号统一管理、远程 API、PWA 支持）
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
+- 📡 **大QMT文件IPC Fallback**（xttrader 降级替代方案，含 QmtIpcTrader 适配客户端 + executor 脚本 + 多账号隔离 + 部署手册）
+- 📊 **Tushare Pro 数据源**（历史K线优先 + 股票名称补充查询，标准模式 Tushare → Mootdx 降级链）
+
+**新增配置开关**:
+- `ENABLE_TUSHARE_DATA_SOURCE` — Tushare 数据源总开关（.env 可覆写）
+- `TUSHARE_TOKEN` — Tushare Pro Token（仅环境变量，切勿硬编码）
+- `ENABLE_QMT_IPC_FALLBACK` — 大QMT文件IPC交易通道开关（.env 可覆写，与 `ENABLE_XTQUANT_MANAGER` 互斥）
+- `QMT_IPC_ROOT` — IPC 文件目录（默认 `C:\QuantIPC`）
+- 控制台 `miniqmt.bat` 菜单 `[n]` Tushare 配置 / `[o]` 大QMT IPC 配置 可直接开关
+- 详细配置参考 [docs/site/miniqmt/configuration.md](docs/site/miniqmt/configuration.md) 配置全景图
+- 📡 **大QMT文件IPC Fallback**（xttrader 降级替代：大QMT自带 xttrader 授权，文件系统 IPC，多账号自动隔离）
+- 📊 **Tushare Pro 数据源**（历史K线优先 + 股票名称补充查询，免费/付费版按需切换）
+- 🎛️ **总控制台配置菜单**（`miniqmt.bat`  [n] Tushare 配置 / [o] 大QMT IPC 配置，无需手动编辑 .env）
 
 **隐私安全提醒**:
 - ⚠️ **绝不硬编码任何 Token/密码/账号ID** — 一律使用环境变量或配置文件

@@ -345,6 +345,9 @@ class DataManager:
     def _subscribe_stocks_to_xtdata(self, stock_list):
         """订阅股票池到 xtdata，保证交易时段 get_full_tick 返回实时推送价格。
         subscribe_quote(count=0) 表示只订阅实时推送，不拉取历史数据。
+
+        注册 _on_xtdata_tick 回调，xtdata 推送的实时 tick 直接写入 _tick_cache，
+        供 get_latest_data 在盘中优先读取（避免每轮轮询 get_full_tick 的线程池开销）。
         """
         if not self.xt or not stock_list:
             return
@@ -358,7 +361,7 @@ class DataManager:
                     start_time='',
                     end_time='',
                     count=0,
-                    callback=None,
+                    callback=self._on_xtdata_tick,
                 )
                 if code not in self.subscribed_stocks:
                     self.subscribed_stocks.append(code)
@@ -367,6 +370,38 @@ class DataManager:
                 logger.warning(f"xtdata subscribe_quote 失败: {code} - {e}")
                 fail += 1
         logger.info(f"xtdata 订阅股票池完成: 成功 {ok} 只，失败 {fail} 只，共 {ok+fail} 只")
+
+    def _on_xtdata_tick(self, data):
+        """xtdata tick 订阅回调：把 xtdata 推送的实时行情写入内存缓存。
+
+        xtdata 在交易时段持续推送，盘中 get_latest_data 优先从此缓存读取，
+        避免每轮轮询 get_full_tick 的线程池开销；缓存不可用时自动降级到原有轮询路径。
+        """
+        if not data or not isinstance(data, dict):
+            return
+        if not getattr(self, '_tick_cache', None):
+            self._tick_cache = {}
+        for stock_code, tick in data.items():
+            if tick and isinstance(tick, dict):
+                self._tick_cache[stock_code] = tick
+
+    def _get_tick_from_cache(self, stock_code):
+        """从 xtdata 推送缓存获取 tick 数据。
+
+        缓存命中且 lastPrice > 0（有效价格）时直接返回，记录健康评分并重置 xtdata 失败计数。
+        缓存命中但 lastPrice = 0 时清掉脏缓存让上层降级。
+        缓存未命中返回 None。
+        """
+        cache = getattr(self, '_tick_cache', {}) or {}
+        tick = cache.get(stock_code)
+        if not tick or not isinstance(tick, dict):
+            return None
+        if tick.get('lastPrice', 0) <= 0:
+            cache.pop(stock_code, None)
+            return None
+        self._record_market_health("xtdata", "realtime", stock_code, True, 0, reason="tick_cache")
+        self._reset_xtdata_failure()
+        return self._decorate_quote(tick, "xtdata", "realtime", stock_code, 0)
 
     def ensure_subscribed(self, stock_code):
         """确保股票已订阅到 xtdata 实时推送。
@@ -385,7 +420,7 @@ class DataManager:
                 start_time='',
                 end_time='',
                 count=0,
-                callback=None,
+                callback=self._on_xtdata_tick,
             )
             self.subscribed_stocks.append(code)
             logger.info(f"xtdata 动态订阅新股票: {code}")
@@ -1822,30 +1857,31 @@ class DataManager:
 
     def get_latest_data(self, stock_code):
         """
-        获取最新行情数据 (使用Mootdx)
-        
+        获取最新行情数据
+
+        盘中优先走 xtdata tick 推送缓存（_on_xtdata_tick 写入，零延迟零线程池开销）；
+        缓存未命中时回退到 xtdata get_full_tick 轮询 → Mootdx 兜底。
+        非交易时段走 xtdata 快照 → Mootdx 兜底。
+
         参数:
         stock_code (str): 股票代码
-        
+
         返回:
         dict: 最新行情数据
         """
         try:
+            adjusted_code = self._adjust_stock(stock_code)
+
             # 在交易时间内，优先使用实时数据管理器
             if config.is_trade_time():
-                # # 添加频率控制，避免过于频繁调用
-                # if not hasattr(self, '_last_realtime_call_time'):
-                #     self._last_realtime_call_time = {}
-                
-                # current_time = time.time()
-                # last_call_time = self._last_realtime_call_time.get(stock_code, 0)
-                
-                # # 限制调用频率：每只股票最多每秒调用一次
-                # if current_time - last_call_time >= 1.0:
-                #     self._last_realtime_call_time[stock_code] = current_time
-                    
+                # ── 路径 1（新）：xtdata tick 推送缓存（订阅 callback 写入）──
+                tick = self._get_tick_from_cache(adjusted_code)
+                if tick:
+                    logger.debug(f"tick缓存: {stock_code} lastPrice={tick.get('lastPrice')}")
+                    return tick
+
+                # ── 路径 2（原有）：xtdata get_full_tick 轮询 ──
                 try:
-                    # realtime_data = self.realtime_manager.get_realtime_data(stock_code)
                     realtime_data = self.get_latest_xtdata(stock_code)
                     if realtime_data and realtime_data.get('lastPrice', 0) > 0:
                         logger.debug(f"XT获取 {stock_code} 实时数据 {realtime_data.get('lastPrice')}")
