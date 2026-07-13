@@ -6,6 +6,47 @@ import os
 import json
 from datetime import datetime
 
+
+# ======================= .env fallback 加载 =======================
+def _load_dotenv_fallback(path=None):
+    """把项目根 .env 的 KEY=value 载入进程环境，作为环境变量的 fallback。
+
+    优先级：Windows 用户级/系统环境变量 > .env。即已存在的环境变量**不覆盖**，
+    .env 仅补充尚未设置的键。这样 setx 设置的变量始终生效，未 setx 的用 .env 兜底。
+
+    解析规则与 scripts/_launcher.py 的 .env 读写保持一致（KEY=value，# 注释行跳过），
+    额外剥离值两侧成对引号（PowerShell / 手写 .env 常带引号）。
+
+    测试隔离：无参（默认路径）调用时，若设了 MINIQMT_DISABLE_DOTENV 则跳过，避免
+    测试基线随开发者本地 .env 漂移。显式传 path（测试直接调用）不受此开关影响。
+    """
+    explicit = path is not None
+    if not explicit and os.environ.get("MINIQMT_DISABLE_DOTENV"):
+        return
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                    v = v[1:-1]
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        # .env 解析失败不应阻断启动；缺失的键退回各自的默认值
+        pass
+
+
+_load_dotenv_fallback()
+
 # ======================= 系统配置 =======================
 # 调试开关
 DEBUG = False

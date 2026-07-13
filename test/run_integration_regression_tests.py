@@ -55,6 +55,11 @@ from typing import Dict, List, Tuple, Optional
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+# 测试隔离：禁用 config.py 的默认 .env 加载，避免测试基线随开发者本地
+# .env（可能含真实 QMT_API_TOKEN / TUSHARE_TOKEN 等）漂移。必须在任何
+# import config 之前设置。
+os.environ.setdefault("MINIQMT_DISABLE_DOTENV", "1")
+
 # 修复 Windows 控制台编码问题（GBK 不支持 emoji/Unicode 字符）
 if sys.platform == 'win32' and hasattr(sys.stderr, 'buffer'):
     import io

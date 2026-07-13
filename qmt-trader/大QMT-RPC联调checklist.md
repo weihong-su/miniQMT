@@ -128,15 +128,22 @@ print('asset:', t.query_stock_asset())   # 期望返回真实资产
 
 ## 三、下单闭环验证（模拟盘/1 手）
 
-- [ ] 启动 miniQMT：`python main.py`
-- [ ] 日志出现 `QmtRpcTrader 连接成功（大QMT RPC 在线）` 和 `[OK] QMT已连接`
-- [ ] 通过 Web 模拟买入接口或直接调用下 **1 手**限价单
-- [ ] 观察闭环：
-  - [ ] miniQMT 日志：`RPC下单已提交: buy ... order_id=<纯整数>, 返回=bq:...`
-  - [ ] 大QMT输出面板出现 passorder 记录，大QMT委托列表出现该笔委托
-  - [ ] 成交后 miniQMT 日志出现成交回调（pending_orders 移除该 order_id）
-  - [ ] `position()` 刷新出现新持仓
-- [ ] 测试撤单：下一笔挂单后撤单，确认 `RPC撤单指令已提交` 且大QMT委托变"已撤"
+- [X] 启动 miniQMT：`python main.py`
+- [X] 日志出现 `QmtRpcTrader 连接成功（大QMT RPC 在线）` 和 `[OK] QMT已连接`
+- [X] 通过 Web 模拟买入接口或直接调用下 **1 手**限价单
+- [X] 观察闭环：
+  - [X] miniQMT 日志：`RPC下单已提交: buy ... order_id=<纯整数>, 返回=bq:...`
+  - [X] 大QMT输出面板出现 passorder 记录，大QMT委托列表出现该笔委托
+  - [ ] 成交后 miniQMT 日志出现成交回调（pending_orders 移除该 order_id）—— 交易时段验证
+  - [ ] `position()` 刷新出现新持仓 —— 交易时段验证
+- [X] 测试撤单：下一笔挂单后撤单，确认 `RPC撤单指令已提交` 且大QMT委托变"已撤"
+- [X] **关键发现：strategy_name 必须匹配**。下单时需传 `strategy_name="bigqmt_signal_trader"`（等于大QMT 端 RPC 运行时设的 strategy_name），否则委托查询按 strategy_name 过滤时查不到该笔单。不带 strategy_name 下单后 query_orders 返回空（已排障确认）。
+
+> 🔔 **price_type 透传**（2026-07-13）：`_send()` 现已支持调用方显式指定 `price_type`。
+> 不指定时自动推断（price=0→市价，否则→限价 FIX_PRICE）。如需其他价型（对手价、转债专用等），
+> 传 `price_type=<整数值>` 即可，经 vendored → passorder 透传到国金柜台。
+> 常用值：`FIX_PRICE=11`、`LATEST_PRICE=5`、`MARKET_PEER_PRICE_FIRST=44`、
+> `MARKET_SH_CONVERT_5_LIMIT=43`、`MARKET_SZ_CONVERT_5_CANCEL=47`。
 
 ---
 
@@ -153,6 +160,7 @@ print('asset:', t.query_stock_asset())   # 期望返回真实资产
 | `import xtquant` 行为异常 | vendored `src/xtquant` shim 遮蔽真实包 | 适配器已 append 到 sys.path 末尾规避；勿手动把 vendored src 插到 path 前面 |
 | order_id 无法撤单 (`未找到 order_sys_id`) | 委托回报尚未到达，sysid 未回填 | 稍等 1–2s（轮询回填）后再撤；已终态委托本就无法撤 |
 | 撤单/下单卡顿 | Redis 跨机网络抖动 | 优先同机 Redis；`QMT_RPC_TIMEOUT_SECONDS` 可适当调大 |
+| 下单后委托查不到 | strategy_name 不匹配 | miniQMT 端下单时传 `strategy_name="bigqmt_signal_trader"`（与大QMT RPC 运行时的 strategy_name 一致）；不带此参数则 query_orders 过滤不到该笔单 |
 
 ---
 

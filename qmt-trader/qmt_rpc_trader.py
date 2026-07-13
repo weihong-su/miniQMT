@@ -381,7 +381,8 @@ class QmtRpcTrader:
     # 下单
     # ------------------------------------------------------------------
 
-    def _send(self, action, stock_code, volume, price, strategy_name='', order_remark=''):
+    def _send(self, action, stock_code, volume, price, strategy_name='', order_remark='',
+              price_type=None):
         if volume is None or volume <= 0:
             logger.error(f'RPC下单参数错误: volume={volume}')
             return None
@@ -394,8 +395,12 @@ class QmtRpcTrader:
         try:
             code = base.adjust_stock(stock_code)
             price = base.select_slippage(code, price or 0, action, self.slippage)
-            is_market = (price is None or price == 0)
-            price_type = LATEST_PRICE if is_market else FIX_PRICE
+            if price_type is not None:
+                pass  # 调用方显式指定
+            elif price is None or price == 0:
+                price_type = LATEST_PRICE
+            else:
+                price_type = FIX_PRICE
             order_type = base.STOCK_BUY if action == 'buy' else base.STOCK_SELL
             int_id = base.next_order_id()
             ret = self._bq.order_stock(
@@ -424,16 +429,19 @@ class QmtRpcTrader:
 
     def buy(self, security='600031.SH', order_type=base.STOCK_BUY, amount=100,
             price_type=None, price=20, strategy_name='', order_remark=''):
-        return self._send('buy', security, amount, price, strategy_name, order_remark)
+        return self._send('buy', security, amount, price, strategy_name, order_remark,
+                          price_type=price_type)
 
     def sell(self, security='600031.SH', order_type=base.STOCK_SELL, amount=100,
              price_type=None, price=20, strategy_name='', order_remark=''):
-        return self._send('sell', security, amount, price, strategy_name, order_remark)
+        return self._send('sell', security, amount, price, strategy_name, order_remark,
+                          price_type=price_type)
 
     def order_stock(self, stock_code='600031.SH', order_type=base.STOCK_BUY, order_volume=100,
                     price_type=None, price=20, strategy_name='', order_remark=''):
         action = 'buy' if order_type == base.STOCK_BUY else 'sell'
-        return self._send(action, stock_code, order_volume, price, strategy_name, order_remark)
+        return self._send(action, stock_code, order_volume, price, strategy_name, order_remark,
+                          price_type=price_type)
 
     def order_stock_async(self, stock_code='600031.SH', order_type=base.STOCK_BUY, order_volume=100,
                           price_type=None, price=20, strategy_name='', order_remark=''):
