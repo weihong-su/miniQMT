@@ -27,8 +27,22 @@ def _create_qmt_trader():
     Returns:
         XtQuantClient: ENABLE_XTQUANT_MANAGER=True 时，返回 HTTP 客户端
         QmtIpcTrader: ENABLE_QMT_IPC_FALLBACK=True 时，返回文件IPC客户端
+        QmtRpcTrader: ENABLE_QMT_RPC_FALLBACK=True 时，返回大QMT RPC客户端
         easy_qmt_trader: 默认返回 xttrader 直连接口
+
+    ⚠️ ENABLE_XTQUANT_MANAGER / ENABLE_QMT_IPC_FALLBACK / ENABLE_QMT_RPC_FALLBACK
+       三者互斥，同时开启多个属于误配，直接抛异常提示。
     """
+    _exclusive = [
+        name for name in ("ENABLE_XTQUANT_MANAGER", "ENABLE_QMT_IPC_FALLBACK", "ENABLE_QMT_RPC_FALLBACK")
+        if getattr(config, name, False)
+    ]
+    if len(_exclusive) > 1:
+        raise ValueError(
+            f"交易接口开关互斥，同时开启了 {_exclusive}，请只保留一个："
+            "ENABLE_XTQUANT_MANAGER / ENABLE_QMT_IPC_FALLBACK / ENABLE_QMT_RPC_FALLBACK"
+        )
+
     if getattr(config, "ENABLE_XTQUANT_MANAGER", False):
         from xtquant_manager.client import XtQuantClient, ClientConfig
         account_config = config.get_account_config()
@@ -49,6 +63,20 @@ def _create_qmt_trader():
         from qmt_ipc_trader import QmtIpcTrader
         account_config = config.get_account_config()
         return QmtIpcTrader(
+            path=config.QMT_PATH,
+            account=account_config.get("account_id"),
+            account_type=account_config.get("account_type", "STOCK"),
+        )
+    elif getattr(config, "ENABLE_QMT_RPC_FALLBACK", False):
+        # xttrader 降级替代：通过 Redis/ZMQ/MySQL RPC 把订单交给大QMT执行
+        import os as _os
+        import sys as _sys
+        _rpc_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "qmt-trader")
+        if _rpc_dir not in _sys.path:
+            _sys.path.insert(0, _rpc_dir)
+        from qmt_rpc_trader import QmtRpcTrader
+        account_config = config.get_account_config()
+        return QmtRpcTrader(
             path=config.QMT_PATH,
             account=account_config.get("account_id"),
             account_type=account_config.get("account_type", "STOCK"),

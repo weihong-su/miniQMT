@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xtquant-big-convert"
+version = "0.1.0"
+description = "Big QMT Redis RPC bridge and MiniQMT-compatible adapter layer"
+requires-python = ">=3.8"
+dependencies = [
+    "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+    "bigqmt_signal_trader_strategy",
+    "bigqmt_signal_trader_redis_rpc_runtime",
+    "bigqmt_signal_trader_redis_dryrun",
+    "bigqmt_signal_trader_dryrun",
+    "bigqmt_signal_trader_diagnostic",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

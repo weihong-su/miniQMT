@@ -15,6 +15,10 @@ Flask-CORS>=3.0.10
 # 迅投QMT量化交易接口
 xtquant>=1.0.0
 
+# ============= 数据传输/消息队列 =============
+# 大QMT RPC 通道（xtquant_big_convert，ENABLE_QMT_RPC_FALLBACK=True 时必需）
+redis>=4.0.0,<7.0.0
+
 # ============= 数据源依赖 =============
 # 行情数据接口
 mootdx>=0.4.0

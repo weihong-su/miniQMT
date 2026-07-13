@@ -298,6 +298,32 @@ QMT_IPC_DEAL_POLL_INTERVAL = 1.0
 # done/ 目录回执聚合查询的回溯窗口（秒），默认24小时
 QMT_IPC_DONE_LOOKBACK_SECONDS = 86400
 
+# ======================= 大QMT RPC Fallback（xtquant_big_convert）=======================
+# xttrader 降级替代方案：通过 Redis/ZMQ/MySQL RPC 远程驱动大QMT内置Python执行交易。
+# 与文件IPC解决同一问题，但通道从文件轮询升级为 RPC（毫秒级、可跨机、含行情能力）。
+# 详见 qmt-trader/大QMT-RPC方案.md
+# False（默认）: 不启用（现有行为不变）
+# True: 所有交易操作通过 RPC 路由到大QMT执行
+# ⚠️ 与 ENABLE_XTQUANT_MANAGER、ENABLE_QMT_IPC_FALLBACK 三者互斥
+ENABLE_QMT_RPC_FALLBACK = _env_bool("ENABLE_QMT_RPC_FALLBACK", False)
+# 传输方式：redis（默认，生产推荐）/ zmq（同机低延迟）/ mysql（兜底）
+QMT_RPC_TRANSPORT = os.environ.get("QMT_RPC_TRANSPORT", "redis")
+# Redis 连接配置（密码走环境变量，切勿硬编码）
+QMT_RPC_REDIS = {
+    "host": os.environ.get("QMT_RPC_REDIS_HOST", "127.0.0.1"),
+    "port": int(os.environ.get("QMT_RPC_REDIS_PORT", "6379")),
+    "db": int(os.environ.get("QMT_RPC_REDIS_DB", "5")),
+    "password": os.environ.get("QMT_RPC_REDIS_PASSWORD", ""),
+}
+# RPC 请求超时（秒）
+QMT_RPC_TIMEOUT_SECONDS = 6.0
+# 下单后等待成交/委托回执的最大秒数
+QMT_RPC_ORDER_TIMEOUT = 30
+# 成交/委托回报轮询兜底间隔（秒），推送通道之外的补偿轮询
+QMT_RPC_DEAL_POLL_INTERVAL = 1.0
+# 下单二次确认开关：False 时即使 ENABLE_QMT_RPC_FALLBACK=True 也拒绝真实下单（只读安全）
+QMT_RPC_ALLOW_ORDER = _env_bool("QMT_RPC_ALLOW_ORDER", False)
+
 # ======================= 策略配置 =======================
 # 仓位管理
 POSITION_UNIT = 35000  # 每次买入金额

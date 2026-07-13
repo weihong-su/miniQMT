@@ -277,6 +277,14 @@
       ],
       "priority": "high"
     },
+    "qmt_rpc": {
+      "name": "大QMT RPC降级通道测试",
+      "description": "验证基于 xtquant_big_convert 的 RPC 交易后端 QmtRpcTrader：契约方法/属性兼容、下单 allow_order 门禁与离线快速失败、passorder 无同步 sysid 的合成整数 order_id 映射与 reconcile 配对、撤单 sysid 解析、持仓/资产 DataFrame 列契约、委托成交查询、order/trade 回调去重触发",
+      "modules": [
+        "test.test_qmt_rpc_trader"
+      ],
+      "priority": "high"
+    },
     "fast": {
       "name": "快速验证测试",
       "description": "关键功能快速验证（5分钟内完成）",
