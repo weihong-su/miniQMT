@@ -35,6 +35,7 @@ import time
 import sqlite3
 import threading
 import unittest
+import pandas as pd
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch, call
 
@@ -43,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from test.test_base import TestBase
 from position_manager import PositionManager
+from trading_executor import TradingExecutor
 from easy_qmt_trader import MyXtQuantTraderCallback
 from logger import get_logger
 
@@ -53,13 +55,16 @@ logger = get_logger("test_trader_callback")
 # 辅助：最小化 XtTrade mock
 # ---------------------------------------------------------------------------
 class _FakeTrade:
-    def __init__(self, order_id, stock_code, traded_volume=600, traded_price=44.09):
+    def __init__(self, order_id, stock_code, traded_volume=600, traded_price=44.09,
+                 traded_id=None, order_type=24):
         self.order_id = order_id
         self.stock_code = stock_code
         self.account_id = "TEST_ACCOUNT"
         self.traded_volume = traded_volume
         self.traded_price = traded_price
         self.traded_amount = traded_volume * traded_price
+        self.traded_id = traded_id or f"TRADE_{order_id}"
+        self.order_type = order_type
 
 
 class _FakeOrder:
@@ -125,6 +130,48 @@ class TestTraderCallback(TestBase):
               profit_breakout_triggered, breakout_highest_price))
         self.pm.memory_conn.commit()
         return stock_code
+
+    def _make_live_executor(self):
+        executor = TradingExecutor.__new__(TradingExecutor)
+        executor.data_manager = MagicMock()
+        executor.data_manager.get_stock_name.return_value = "测试股"
+        executor.position_manager = MagicMock()
+        executor.conn = sqlite3.connect(":memory:")
+        executor.conn.execute("""
+            CREATE TABLE trade_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT,
+                stock_name TEXT,
+                trade_time TIMESTAMP,
+                trade_type TEXT,
+                price REAL,
+                volume INTEGER,
+                amount REAL,
+                trade_id TEXT,
+                commission REAL,
+                strategy TEXT
+            )
+        """)
+        executor.conn.commit()
+        executor.order_cache = {}
+        executor.callbacks = {}
+        executor.trade_lock = threading.Lock()
+        return executor
+
+    def _make_orderable_executor(self):
+        executor = self._make_live_executor()
+        qmt_trader = MagicMock()
+        qmt_trader.adjust_stock.side_effect = (
+            lambda stock: stock if "." in stock else f"{stock}.SZ"
+        )
+        qmt_trader.check_stock_is_av_sell.return_value = True
+        qmt_trader.check_stock_is_av_buy.return_value = True
+        qmt_trader.sell.return_value = 1
+        qmt_trader.buy.return_value = 1
+        executor.position_manager.qmt_trader = qmt_trader
+        executor.position_manager._get_real_order_id.return_value = 940572800
+        executor.position_manager.track_order = MagicMock()
+        return executor
 
     # ===================================================================
     # Group A: Callback 链路完整性
@@ -395,8 +442,45 @@ class TestTraderCallback(TestBase):
 
         mock_refresh.assert_called_once_with("301560", "委托终态(56)")
 
-    def test_d4_handle_timeout_order_status_filled_removes_without_cancel(self):
-        """超时委托状态=已成(56)时，只移除跟踪，不发起撤单"""
+    def test_d4_handle_timeout_order_status_filled_confirms_without_cancel(self):
+        """超时委托状态=已成(56)时，应走成交兜底确认，不发起撤单"""
+        stock_code = "301560"
+        order_id = 940572673
+        self._insert_position(
+            stock_code=stock_code,
+            volume=1100,
+            available=500,
+            cost_price=42.12,
+            current_price=44.09,
+            profit_triggered=0,
+        )
+        self.pm.track_order(stock_code, order_id, "take_profit_half", {"volume": 600})
+
+        order_info = {
+            "stock_code": stock_code,
+            "order_id": order_id,
+            "signal_type": "take_profit_half",
+            "signal_info": {"volume": 600},
+            "submit_time": datetime.now() - timedelta(minutes=10),
+        }
+
+        with patch.object(self.pm, "_query_order_status", return_value=56), \
+             patch.object(self.pm, "_cancel_order") as mock_cancel, \
+             patch.object(self.pm, "_record_trade_after_confirmation") as mock_record, \
+             patch.object(self.pm, "_request_immediate_position_refresh") as mock_refresh:
+            self.pm._handle_timeout_order(order_info)
+            mock_cancel.assert_not_called()
+            mock_record.assert_called_once()
+            mock_refresh.assert_called_once_with(stock_code, "成交兜底确认")
+
+        self.assertNotIn(stock_code, self.pm.pending_orders,
+                         "已成委托应从 pending_orders 移除")
+        position = self.pm.get_position(stock_code)
+        self.assertTrue(position.get("profit_triggered"),
+                        "兜底确认 take_profit_half 后应标记 profit_triggered")
+
+    def test_d4b_handle_timeout_order_unknown_status_keeps_pending(self):
+        """无法查询委托状态时应保留 pending，避免不确定状态下重复下单"""
         stock_code = "301560"
         order_id = 940572673
         self.pm.track_order(stock_code, order_id, "take_profit_half", {"volume": 600})
@@ -409,13 +493,13 @@ class TestTraderCallback(TestBase):
             "submit_time": datetime.now() - timedelta(minutes=10),
         }
 
-        with patch.object(self.pm, "_query_order_status", return_value=56), \
+        with patch.object(self.pm, "_query_order_status", return_value=None), \
              patch.object(self.pm, "_cancel_order") as mock_cancel:
             self.pm._handle_timeout_order(order_info)
-            mock_cancel.assert_not_called()
 
-        self.assertNotIn(stock_code, self.pm.pending_orders,
-                         "已成委托应从 pending_orders 移除")
+        mock_cancel.assert_not_called()
+        self.assertIn(stock_code, self.pm.pending_orders,
+                      "状态未知时 pending 应继续保留")
 
     def test_d5_handle_timeout_order_unfilled_triggers_cancel_and_reorder(self):
         """超时委托未成交(状态=55)时，应撤单并自动重新挂单"""
@@ -791,6 +875,165 @@ class TestTraderCallback(TestBase):
             self.assertFalse(ok, "存在活跃委托时应拒绝全仓止盈信号")
         finally:
             config.ALLOW_TAKE_PROFIT_FULL_WITH_PENDING = old_flag
+
+    # ===================================================================
+    # Group H: 成交确认后写 trade_records
+    # ===================================================================
+
+    def test_h1_live_dynamic_sell_defers_trade_record_until_deal(self):
+        """动态止盈卖出实盘委托提交后，不应立即写 trade_records"""
+        executor = self._make_orderable_executor()
+        executor._save_trade_record = MagicMock(return_value=True)
+
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_allow_sell = getattr(config, "ENABLE_ALLOW_SELL", True)
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_ALLOW_SELL = True
+            with patch("config.is_trade_time", return_value=True):
+                order_id = executor.sell_stock(
+                    "301560",
+                    volume=600,
+                    price=44.09,
+                    strategy="auto_partial",
+                    signal_type="take_profit_half",
+                    signal_info={"volume": 600, "current_price": 44.09},
+                )
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_ALLOW_SELL = old_allow_sell
+
+        self.assertEqual(order_id, 940572800)
+        executor._save_trade_record.assert_not_called()
+        executor.position_manager.track_order.assert_called_once()
+        self.assertEqual(executor.order_cache[str(order_id)]["strategy"], "auto_partial")
+
+    def test_h2_live_add_position_buy_defers_and_tracks_pending(self):
+        """补仓买入实盘委托提交后，应等待成交确认写流水并登记 pending"""
+        executor = self._make_orderable_executor()
+        executor._save_trade_record = MagicMock(return_value=True)
+
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_allow_buy = getattr(config, "ENABLE_ALLOW_BUY", True)
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_ALLOW_BUY = True
+            with patch("config.is_trade_time", return_value=True):
+                order_id = executor.buy_stock(
+                    "301560",
+                    amount=4409,
+                    price=44.09,
+                    strategy="add_position",
+                    signal_type="add_position",
+                    signal_info={"current_price": 44.09, "add_amount": 4409},
+                )
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_ALLOW_BUY = old_allow_buy
+
+        self.assertEqual(order_id, 940572800)
+        executor._save_trade_record.assert_not_called()
+        executor.position_manager.track_order.assert_called_once()
+        track_kwargs = executor.position_manager.track_order.call_args.kwargs
+        self.assertEqual(track_kwargs["signal_type"], "add_position")
+        self.assertEqual(track_kwargs["signal_info"]["order_side"], "BUY")
+        self.assertEqual(track_kwargs["signal_info"]["volume"], 100)
+
+    def test_h3_confirmed_dynamic_deal_writes_trade_record_once(self):
+        """真实成交确认后才写 trade_records，同一成交号重复确认应幂等"""
+        executor = self._make_live_executor()
+        order_id = 940572801
+        executor.order_cache[str(order_id)] = {
+            "stock_code": "301560",
+            "strategy": "auto_partial",
+            "trade_type": "SELL",
+            "price": 44.09,
+            "volume": 600,
+        }
+
+        trade = _FakeTrade(
+            order_id=order_id,
+            stock_code="301560.SZ",
+            traded_volume=600,
+            traded_price=44.09,
+            traded_id="DEAL_940572801",
+            order_type=24,
+        )
+
+        self.assertTrue(executor.confirm_live_order_filled(order_id, deal_info=trade))
+        self.assertTrue(executor.confirm_live_order_filled(order_id, deal_info=trade))
+
+        rows = executor.conn.execute(
+            "SELECT stock_code, trade_type, price, volume, trade_id, strategy FROM trade_records"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "301560")
+        self.assertEqual(rows[0][1], "SELL")
+        self.assertAlmostEqual(rows[0][2], 44.09)
+        self.assertEqual(rows[0][3], 600)
+        self.assertEqual(rows[0][4], "DEAL_940572801")
+        self.assertEqual(rows[0][5], "auto_partial")
+
+    def test_h4_confirm_filled_from_query_accepts_dataframe_dict_and_object(self):
+        """成交兜底查询应兼容 easy/IPC/RPC DataFrame、list[dict] 和对象记录"""
+        cases = [
+            pd.DataFrame([{
+                "订单编号": 940572802,
+                "证券代码": "301560",
+                "成交编号": "DF_DEAL",
+                "成交均价": 44.10,
+                "成交数量": 600,
+                "委托类型": 24,
+            }]),
+            [{
+                "订单编号": 940572803,
+                "证券代码": "301560",
+                "成交编号": "DICT_DEAL",
+                "成交均价": 44.11,
+                "成交数量": 600,
+                "委托类型": 24,
+            }],
+            [type("TradeObj", (), {
+                "order_id": 940572804,
+                "stock_code": "301560.SZ",
+                "traded_id": "OBJ_DEAL",
+                "traded_price": 44.12,
+                "traded_volume": 600,
+                "order_type": 24,
+            })()],
+        ]
+
+        for records in cases:
+            executor = self._make_live_executor()
+            order_id = executor._field_any(records[0] if not hasattr(records, "iloc") else records.iloc[0],
+                                           ["订单编号", "order_id"])
+            executor.query_stock_trades = MagicMock(return_value=records)
+            executor.order_cache[str(order_id)] = {
+                "stock_code": "301560",
+                "strategy": "auto_full",
+                "trade_type": "SELL",
+                "price": 44.0,
+                "volume": 600,
+            }
+
+            self.assertTrue(executor.confirm_live_order_filled(order_id))
+            count = executor.conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0]
+            self.assertEqual(count, 1)
+
+    def test_h5_query_order_status_supports_dataframe_orders_without_xt_trader(self):
+        """XtQuantManager/HTTP 客户端无 xt_trader 时，应能从 DataFrame 委托列表查状态"""
+        qmt_trader = MagicMock()
+        qmt_trader.xt_trader = None
+        qmt_trader.query_stock_orders.return_value = pd.DataFrame([{
+            "订单编号": 940572805,
+            "证券代码": "301560",
+            "委托状态": 56,
+        }])
+        self.pm.qmt_trader = qmt_trader
+        self.pm.qmt_connected = True
+
+        status = self.pm._query_order_status("301560", "940572805")
+        self.assertEqual(status, 56)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿"""
+"""
 网格交易管理器模块
 
 提供网格交易的核心功能:
@@ -429,6 +429,8 @@ class GridTradingManager:
         self.pending_grid_orders: Dict[str, dict] = {}  # 实盘委托待成交确认: {order_id: pending_info}
         self.submitting_grid_orders: Dict[str, dict] = {}  # 锁外下单保护: {submit_id: order_plan}
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
+        self.reconcile_lock = threading.Lock()  # 防止运行期 pending 对账并发进入
+        self.last_order_reconcile_time = 0.0
 
         # 初始化:从数据库加载活跃会话
         logger.info(f"[GRID] GridTradingManager.__init__: 初始化网格交易管理器")
@@ -843,7 +845,7 @@ class GridTradingManager:
 
         return recovered
 
-    def _query_broker_orders_for_reconcile(self) -> list:
+    def _query_broker_orders_for_reconcile(self, reason: str = "启动对账") -> list:
         """查询券商当日委托，接口不可用时返回空列表。"""
         candidates = [
             (self.executor, ('query_stock_orders', 'get_orders', 'query_orders')),
@@ -858,17 +860,17 @@ class GridTradingManager:
                     continue
                 try:
                     records = self._coerce_records(method())
-                    logger.info(f"[GRID] 启动对账: 通过 {type(target).__name__}.{method_name} 查询委托 {len(records)} 条")
+                    logger.info(f"[GRID] {reason}: 通过 {type(target).__name__}.{method_name} 查询委托 {len(records)} 条")
                     return records
                 except TypeError:
                     continue
                 except Exception as e:
-                    logger.warning(f"[GRID] 启动对账: 查询券商委托失败 {method_name}: {e}")
+                    logger.warning(f"[GRID] {reason}: 查询券商委托失败 {method_name}: {e}")
                     return []
-        logger.debug("[GRID] 启动对账: 未找到券商委托查询接口")
+        logger.debug(f"[GRID] {reason}: 未找到券商委托查询接口")
         return []
 
-    def _query_broker_trades_for_reconcile(self) -> list:
+    def _query_broker_trades_for_reconcile(self, reason: str = "启动对账") -> list:
         """查询券商当日成交，接口不可用时返回空列表。"""
         candidates = [
             (self.executor, ('query_stock_trades', 'get_trades', 'query_trades')),
@@ -883,29 +885,77 @@ class GridTradingManager:
                     continue
                 try:
                     records = self._coerce_records(method())
-                    logger.info(f"[GRID] 启动对账: 通过 {type(target).__name__}.{method_name} 查询成交 {len(records)} 条")
+                    logger.info(f"[GRID] {reason}: 通过 {type(target).__name__}.{method_name} 查询成交 {len(records)} 条")
                     return records
                 except TypeError:
                     continue
                 except Exception as e:
-                    logger.warning(f"[GRID] 启动对账: 查询券商成交失败 {method_name}: {e}")
+                    logger.warning(f"[GRID] {reason}: 查询券商成交失败 {method_name}: {e}")
                     return []
-        logger.debug("[GRID] 启动对账: 未找到券商成交查询接口")
+        logger.debug(f"[GRID] {reason}: 未找到券商成交查询接口")
         return []
 
-    def _reconcile_open_grid_orders(self) -> None:
-        """启动时用券商当日委托/成交补偿本地未完成网格委托。"""
-        if getattr(config, 'ENABLE_SIMULATION_MODE', True):
-            return
-        if not self.pending_grid_orders:
-            return
+    def _pending_age_seconds(self, pending: dict, now: datetime) -> float:
+        created_at = pending.get('created_at')
+        if isinstance(created_at, datetime):
+            return (now - created_at).total_seconds()
+        try:
+            return (now - datetime.fromisoformat(str(created_at))).total_seconds()
+        except Exception:
+            return float('inf')
 
-        logger.info(f"[GRID] 启动对账: 开始处理 {len(self.pending_grid_orders)} 个未完成网格委托")
-        broker_trades = self._query_broker_trades_for_reconcile()
-        broker_orders = self._query_broker_orders_for_reconcile()
+    def _pending_order_ids_for_reconcile(self, min_age_seconds: float = 0) -> list:
+        now = datetime.now()
+        with self.lock:
+            order_ids = []
+            for order_id, pending in self.pending_grid_orders.items():
+                if min_age_seconds > 0 and self._pending_age_seconds(pending, now) < min_age_seconds:
+                    continue
+                order_ids.append(str(order_id))
+            return order_ids
+
+    def reconcile_pending_grid_orders_if_due(self, force: bool = False, reason: str = "运行期对账"):
+        """运行期 pending 委托对账；QMT 成交/委托推送漏掉时兜底落账。"""
+        if getattr(config, 'ENABLE_SIMULATION_MODE', True):
+            return None
+        if not getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True):
+            return None
+        with self.lock:
+            if not self.pending_grid_orders:
+                return None
+
+        interval = float(getattr(config, 'GRID_ORDER_RECONCILE_INTERVAL', 15))
+        if not force and interval <= 0:
+            return None
+        now = time.time()
+        if not force and now - self.last_order_reconcile_time < interval:
+            return None
+        if not self.reconcile_lock.acquire(blocking=False):
+            logger.debug(f"[GRID] {reason}: 上一次对账仍在进行，跳过本轮")
+            return None
+
+        try:
+            self.last_order_reconcile_time = now
+            min_age = 0 if force else float(getattr(config, 'GRID_ORDER_RECONCILE_STALE_SECONDS', 5))
+            return self._reconcile_open_grid_orders(reason=reason, min_age_seconds=min_age)
+        finally:
+            self.reconcile_lock.release()
+
+    def _reconcile_open_grid_orders(self, reason: str = "启动对账", min_age_seconds: float = 0) -> dict:
+        """用券商当日委托/成交补偿本地未完成网格委托。"""
+        result = {'checked': 0, 'replayed': 0, 'closed': 0, 'remaining': 0}
+        if getattr(config, 'ENABLE_SIMULATION_MODE', True):
+            return result
+        order_ids = self._pending_order_ids_for_reconcile(min_age_seconds=min_age_seconds)
+        if not order_ids:
+            return result
+
+        logger.info(f"[GRID] {reason}: 开始处理 {len(order_ids)} 个未完成网格委托")
+        broker_trades = self._query_broker_trades_for_reconcile(reason=reason)
+        broker_orders = self._query_broker_orders_for_reconcile(reason=reason)
 
         replayed = 0
-        for order_id in list(self.pending_grid_orders.keys()):
+        for order_id in order_ids:
             for trade in broker_trades:
                 if self._record_order_id(trade) != str(order_id):
                     continue
@@ -919,7 +969,7 @@ class GridTradingManager:
             57: 'rejected',
         }
         closed = 0
-        for order_id in list(self.pending_grid_orders.keys()):
+        for order_id in order_ids:
             matched_order = None
             for order in broker_orders:
                 if self._record_order_id(order) == str(order_id):
@@ -933,7 +983,8 @@ class GridTradingManager:
                 continue
 
             if status == 56:
-                pending = self.pending_grid_orders.get(str(order_id))
+                with self.lock:
+                    pending = self.pending_grid_orders.get(str(order_id))
                 traded_volume = self._record_traded_volume(matched_order)
                 traded_price = self._record_traded_price(matched_order)
                 if pending and traded_volume > pending.get('filled_volume', 0) and traded_price > 0:
@@ -952,10 +1003,14 @@ class GridTradingManager:
             if self.handle_order_callback(matched_order):
                 closed += 1
 
+        with self.lock:
+            remaining = len(self.pending_grid_orders)
         logger.info(
-            f"[GRID] 启动对账完成: 成交补记={replayed}, 终态关闭={closed}, "
-            f"剩余pending={len(self.pending_grid_orders)}"
+            f"[GRID] {reason}完成: 成交补记={replayed}, 终态关闭={closed}, "
+            f"剩余pending={remaining}"
         )
+        result.update({'checked': len(order_ids), 'replayed': replayed, 'closed': closed, 'remaining': remaining})
+        return result
 
     def start_grid_session(self, stock_code: str, user_config: dict) -> GridSession:
         """启动网格交易会话（三阶段设计，避免AB-BA死锁）
@@ -1555,6 +1610,8 @@ class GridTradingManager:
         logger.debug(f"[GRID] check_grid_signals: stock_code={stock_code}, current_price={current_price:.2f}, "
                     f"active_sessions_count={len(self.sessions)}")
 
+        self.reconcile_pending_grid_orders_if_due(reason="运行期对账")
+
         # A-3修复: 锁外预取持仓，避免在持有 self.lock 时调用 position_manager.get_position()
         # 风险: _check_exit_conditions 内部（条件4）调用 get_position()，若 position_manager
         # 内部某方法先持 signal_lock 再请求 grid_manager.lock，将形成 AB-BA 死锁。
@@ -1606,6 +1663,12 @@ class GridTradingManager:
             # 4. 检查回调触发
             signal_type = tracker.check_callback(session.callback_ratio)
             if signal_type:
+                if self._has_open_same_side_order_unlocked(session.id, signal_type):
+                    logger.debug(
+                        f"[GRID] check_grid_signals: {stock_code} 已有未完成{signal_type}网格委托，跳过新信号"
+                    )
+                    return None
+
                 # ⭐ P1-1修复：信号去重机制 - 检查是否已有相同类型的信号
                 with self.position_manager.signal_lock:
                     existing = self.position_manager.latest_signals.get(stock_code)
@@ -2365,6 +2428,17 @@ class GridTradingManager:
                 reserved += int(plan.get('volume') or 0)
         return reserved
 
+    def _has_open_same_side_order_unlocked(self, session_id: int, side: str) -> bool:
+        """同一会话同方向已有未完成委托时，不再继续生成/执行同向网格单。"""
+        normalized_side = str(side or '').upper()
+        for pending in self.pending_grid_orders.values():
+            if pending.get('session_id') == session_id and str(pending.get('side') or '').upper() == normalized_side:
+                return True
+        for plan in self.submitting_grid_orders.values():
+            if plan.get('session_id') == session_id and str(plan.get('side') or '').upper() == normalized_side:
+                return True
+        return False
+
     def _create_submit_id(self, session_id: int, side: str) -> str:
         return f"{session_id}:{side}:{int(time.time() * 1000000)}"
 
@@ -2376,6 +2450,12 @@ class GridTradingManager:
 
         if session.status != 'active':
             logger.warning(f"[GRID] _build_grid_order_plan: 会话非active, status={session.status}")
+            return None
+
+        if self._has_open_same_side_order_unlocked(session.id, signal_type):
+            logger.warning(
+                f"[GRID] _build_grid_order_plan: {stock_code} 已有未完成{signal_type}网格委托，拒绝重复下单"
+            )
             return None
 
         if signal_type == 'BUY':

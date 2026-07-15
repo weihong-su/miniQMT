@@ -4116,42 +4116,16 @@ class PositionManager:
         同时立即同步 profit_triggered 到 SQLite（P1修复）。
         """
         try:
-            order_id = trade.order_id
-            stock_code_full = str(trade.stock_code)
-            stock_code_short = stock_code_full[:6]
+            order_id = self._field_any(trade, ['order_id', 'm_strOrderID', '订单编号'])
+            stock_code = self._field_any(trade, ['stock_code', 'm_strInstrumentID', '证券代码'])
+            stock_code_short = self._base_stock_code(stock_code)
 
-            with self.pending_orders_lock:
-                # 按股票代码查找匹配的跟踪记录
-                matched_key = None
-                for key, info in self.pending_orders.items():
-                    tracked_id = info.get('order_id')
-                    if tracked_id == order_id or str(tracked_id) == str(order_id):
-                        matched_key = key
-                        break
-                    # 也按股票代码短码匹配（防止格式差异）
-                    if key == stock_code_short or key == stock_code_full:
-                        if str(tracked_id) == str(order_id):
-                            matched_key = key
-                            break
-
-                if matched_key:
-                    signal_type = self.pending_orders[matched_key].get('signal_type', '')
-                    logger.info(f"✅ [成交回调] {matched_key} 委托已成交(order_id={order_id})，"
-                                f"立即移除跟踪(信号={signal_type})")
-                    del self.pending_orders[matched_key]
-
-                    # take_profit_half 只有成交后才确认首次止盈状态，避免委托未成交时误进入动态止盈阶段。
-                    if signal_type == 'take_profit_half':
-                        if self.mark_profit_triggered(stock_code_short):
-                            threading.Thread(
-                                target=self._sync_profit_triggered_to_sqlite,
-                                args=(stock_code_short,),
-                                daemon=True
-                            ).start()
-                        else:
-                            logger.error(f"{stock_code_short} 成交后标记profit_triggered失败")
-
-            self._request_immediate_position_refresh(stock_code_short, "成交回报")
+            self._confirm_filled_order(
+                stock_code_short,
+                order_id,
+                "成交回报",
+                trade=trade
+            )
 
             # 网格实盘委托只在成交回报到达后确认落账
             grid_manager = getattr(self, 'grid_manager', None)
@@ -4232,6 +4206,101 @@ class PositionManager:
         except Exception as e:
             logger.warning(f"检查本地跟踪委托失败，保守视为存在委托: {e}")
             return True
+
+    def _base_stock_code(self, stock_code):
+        return str(stock_code or '').split('.')[0][:6]
+
+    def _iter_query_records(self, records):
+        if records is None:
+            return []
+        if hasattr(records, 'empty') and hasattr(records, 'to_dict'):
+            if records.empty:
+                return []
+            return records.to_dict('records')
+        if isinstance(records, dict):
+            return [records]
+        return list(records)
+
+    def _field_any(self, record, names, default=None):
+        if record is None:
+            return default
+        for name in names:
+            if isinstance(record, dict) and name in record:
+                return record.get(name)
+            if hasattr(record, name):
+                return getattr(record, name)
+            try:
+                return record[name]
+            except Exception:
+                pass
+        return default
+
+    def _same_order_id(self, left, right):
+        if left is None or right is None:
+            return False
+        return str(left).strip() == str(right).strip()
+
+    def _find_pending_order_key_locked(self, stock_code, order_id):
+        stock_code_base = self._base_stock_code(stock_code)
+        for key, info in self.pending_orders.items():
+            if not isinstance(info, dict):
+                continue
+            tracked_id = info.get('order_id')
+            tracked_code = self._base_stock_code(info.get('stock_code') or key)
+            if self._same_order_id(tracked_id, order_id) and tracked_code == stock_code_base:
+                return key
+            if self._same_order_id(tracked_id, order_id):
+                return key
+        return None
+
+    def _record_trade_after_confirmation(self, order_id, order_info, trade=None):
+        """成交确认后补写 trade_records；模拟模式跳过，避免测试/模拟盘误触发实盘流水。"""
+        if getattr(config, 'ENABLE_SIMULATION_MODE', False):
+            return
+        try:
+            from trading_executor import get_trading_executor
+            trading_executor = get_trading_executor()
+            trading_executor.confirm_live_order_filled(
+                order_id,
+                fallback_order_info=order_info,
+                deal_info=trade
+            )
+        except Exception as e:
+            logger.warning(f"成交确认后写交易流水失败（不影响pending清理）: order_id={order_id}, error={e}")
+
+    def _confirm_filled_order(self, stock_code, order_id, source, trade=None, order_info=None):
+        """统一处理真实成交确认：清 pending、落状态、补流水、请求持仓快刷。"""
+        stock_code_base = self._base_stock_code(stock_code)
+        pending_snapshot = dict(order_info or {})
+        matched_key = None
+
+        with self.pending_orders_lock:
+            matched_key = self._find_pending_order_key_locked(stock_code_base, order_id)
+            if matched_key:
+                pending_snapshot = dict(self.pending_orders.get(matched_key) or {})
+                del self.pending_orders[matched_key]
+
+        if matched_key or order_info:
+            signal_type = pending_snapshot.get('signal_type', '')
+            logger.info(
+                f"✅ [{source}] {stock_code_base} 委托已成交(order_id={order_id})，"
+                f"移除跟踪并执行成交确认(信号={signal_type})"
+            )
+
+            if signal_type == 'take_profit_half':
+                if self.mark_profit_triggered(stock_code_base):
+                    threading.Thread(
+                        target=self._sync_profit_triggered_to_sqlite,
+                        args=(stock_code_base,),
+                        daemon=True
+                    ).start()
+                else:
+                    logger.error(f"{stock_code_base} 成交确认后标记profit_triggered失败")
+
+            pending_snapshot.setdefault('stock_code', stock_code_base)
+            self._record_trade_after_confirmation(order_id, pending_snapshot, trade=trade)
+
+        self._request_immediate_position_refresh(stock_code_base, source)
 
     def _get_pending_order_timeout_minutes(self, signal_type):
         """按信号类型获取委托超时阈值，止损单使用更短等待时间。"""
@@ -4316,16 +4385,18 @@ class PositionManager:
             if order_status is None:
                 logger.error(f"❌ [E_ORDER_TIMEOUT_004] 无法查询委托单状态: {stock_code} order_id={order_id}，"
                              f"QMT连接可能异常，请人工登录QMT客户端确认委托状态并手动处理")
-                # 从跟踪列表移除
-                with self.pending_orders_lock:
-                    self.pending_orders.pop(stock_code, None)
+                logger.warning(f"{stock_code} 委托状态未知，保留 pending 跟踪以阻断重复下单")
                 return
 
-            # 如果已成交，移除跟踪
+            # 如果已成交，执行与成交回报一致的确认逻辑
             if order_status in [56]:  # 56=已成
                 logger.info(f"✅ {stock_code} 委托单已成交: {order_id}")
-                with self.pending_orders_lock:
-                    self.pending_orders.pop(stock_code, None)
+                self._confirm_filled_order(
+                    stock_code,
+                    order_id,
+                    "成交兜底确认",
+                    order_info=order_info
+                )
                 return
 
             # 如果是未成交状态，执行撤单
@@ -4380,26 +4451,47 @@ class PositionManager:
             if not self.qmt_trader or not self.qmt_connected:
                 return None
 
-            # 修复: 确保order_id是int类型
+            original_order_id = order_id
+            # 修复: 尽量转换为int类型；HTTP/DF 查询路径仍保留原始字符串匹配
             if isinstance(order_id, str):
                 try:
                     order_id_int = int(order_id)
                     logger.debug(f"{stock_code} 委托单ID从str转换为int: '{order_id}' -> {order_id_int}")
                     order_id = order_id_int
                 except ValueError:
-                    logger.error(f"{stock_code} 委托单ID无法转换为int: '{order_id}'")
-                    return None
+                    logger.warning(f"{stock_code} 委托单ID无法转换为int: '{order_id}'，将使用通用委托列表查询")
             elif not isinstance(order_id, int):
-                logger.error(f"{stock_code} 委托单ID类型不支持: {type(order_id)}")
-                return None
+                logger.warning(f"{stock_code} 委托单ID类型非int: {type(order_id)}，将使用通用委托列表查询")
 
-            # 查询单个委托单 (order_id已确保是int类型)
-            order = self.qmt_trader.xt_trader.query_stock_order(
-                self.qmt_trader.acc, order_id
-            )
+            xt_trader = getattr(self.qmt_trader, 'xt_trader', None)
+            if xt_trader and hasattr(xt_trader, 'query_stock_order') and isinstance(order_id, int):
+                order = xt_trader.query_stock_order(
+                    getattr(self.qmt_trader, 'acc', None), order_id
+                )
 
-            if order:
-                return order.order_status
+                if order:
+                    status = self._field_any(order, ['order_status', 'm_nOrderStatus', '委托状态'])
+                    if status is not None:
+                        return status
+
+            orders = None
+            if hasattr(self.qmt_trader, 'query_stock_orders'):
+                orders = self.qmt_trader.query_stock_orders()
+            elif xt_trader and hasattr(xt_trader, 'query_stock_orders'):
+                orders = xt_trader.query_stock_orders(
+                    getattr(self.qmt_trader, 'acc', None),
+                    cancelable_only=False
+                )
+
+            stock_code_base = self._base_stock_code(stock_code)
+            for order in self._iter_query_records(orders):
+                order_id_value = self._field_any(order, ['order_id', 'm_strOrderSysID', '订单编号'])
+                order_stock = self._field_any(order, ['stock_code', 'm_strInstrumentID', '证券代码'])
+                if not self._same_order_id(order_id_value, original_order_id):
+                    continue
+                if order_stock and self._base_stock_code(order_stock) != stock_code_base:
+                    continue
+                return self._field_any(order, ['order_status', 'm_nOrderStatus', '委托状态'])
 
             return None
 
@@ -4441,9 +4533,17 @@ class PositionManager:
             max_retries = getattr(config, 'MAX_CANCEL_RETRIES', 3)
             retry_interval = getattr(config, 'CANCEL_RETRY_INTERVAL_SECONDS', 1)
             for attempt in range(1, max_retries + 1):
-                result = self.qmt_trader.xt_trader.cancel_order_stock(
-                    self.qmt_trader.acc, order_id
-                )
+                xt_trader = getattr(self.qmt_trader, 'xt_trader', None)
+                if xt_trader and hasattr(xt_trader, 'cancel_order_stock'):
+                    result = xt_trader.cancel_order_stock(
+                        getattr(self.qmt_trader, 'acc', None), order_id
+                    )
+                elif hasattr(self.qmt_trader, 'cancel_order_stock'):
+                    result = self.qmt_trader.cancel_order_stock(order_id)
+                else:
+                    logger.error("当前交易接口不支持撤单")
+                    return False
+
                 if result == 0:
                     return True
 

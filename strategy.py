@@ -111,6 +111,15 @@ class TradingStrategy:
         bool: 是否执行成功
         """
         try:
+            if self.position_manager._has_tracked_pending_order(stock_code):
+                logger.warning(f"[待委托拦截] {stock_code} 已有跟踪中的委托，跳过本次补仓")
+                return False
+
+            if (not getattr(config, 'ENABLE_SIMULATION_MODE', True)
+                    and self.position_manager._has_pending_orders(stock_code)):
+                logger.warning(f"[待委托拦截] {stock_code} QMT存在活跃委托，跳过本次补仓")
+                return False
+
             # 最终持仓限制检查（防止时差导致的超限）
             position = self.position_manager.get_position(stock_code)
             if position:
@@ -158,7 +167,16 @@ class TradingStrategy:
                 
                 # 使用金额买入方式
                 order_id = self.trading_executor.buy_stock(
-                    stock_code, amount=add_amount, price_type=5, strategy='add_position'
+                    stock_code,
+                    amount=add_amount,
+                    price_type=5,
+                    strategy='add_position',
+                    signal_type='add_position',
+                    signal_info={
+                        'current_price': current_price,
+                        'add_amount': add_amount,
+                        'order_side': 'BUY',
+                    }
                 )
 
                 if not hasattr(self, 'last_trade_time'):

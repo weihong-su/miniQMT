@@ -86,12 +86,16 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.orig_confirm = getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
         self.orig_max_age = getattr(config, 'GRID_SIGNAL_MAX_AGE_SECONDS', 60)
         self.orig_drift = getattr(config, 'GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO', 0.01)
+        self.orig_reconcile_interval = getattr(config, 'GRID_ORDER_RECONCILE_INTERVAL', 15)
+        self.orig_reconcile_stale = getattr(config, 'GRID_ORDER_RECONCILE_STALE_SECONDS', 5)
 
     def tearDown(self):
         config.ENABLE_SIMULATION_MODE = self.orig_sim
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = self.orig_confirm
         config.GRID_SIGNAL_MAX_AGE_SECONDS = self.orig_max_age
         config.GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO = self.orig_drift
+        config.GRID_ORDER_RECONCILE_INTERVAL = self.orig_reconcile_interval
+        config.GRID_ORDER_RECONCILE_STALE_SECONDS = self.orig_reconcile_stale
         self.db.close()
 
     def _make_session(self, stock_code='000001.SZ', current_investment=0.0):
@@ -274,6 +278,83 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.assertEqual(self.db.get_grid_order('ORDER_RECON_FILLED')['status'], 'filled')
         self.assertEqual(self.db.get_grid_order('ORDER_RECON_CANCELED')['status'], 'canceled')
         self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 1)
+
+    def test_runtime_reconcile_replays_filled_pending_order_without_restart(self):
+        """成交推送漏掉时，运行期对账应补记已成委托，不等重启"""
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        signal = self._buy_signal(session)
+        self.executor.buy_stock.return_value = {'order_id': 'ORDER_RUNTIME_RECON'}
+
+        self.assertTrue(self.manager.execute_grid_trade(signal))
+        self.assertIn('ORDER_RUNTIME_RECON', self.manager.pending_grid_orders)
+        self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 0)
+
+        self.executor.query_stock_trades.return_value = []
+        self.executor.query_stock_orders.return_value = [
+            FakeBrokerOrder('ORDER_RUNTIME_RECON', status=56, traded_volume=200, traded_price=10.1)
+        ]
+
+        result = self.manager.reconcile_pending_grid_orders_if_due(
+            force=True,
+            reason='运行期对账测试'
+        )
+
+        self.assertEqual(result['checked'], 1)
+        self.assertEqual(result['replayed'], 1)
+        self.assertNotIn('ORDER_RUNTIME_RECON', self.manager.pending_grid_orders)
+        self.assertEqual(self.db.get_grid_order('ORDER_RUNTIME_RECON')['status'], 'filled')
+        trades = self.db.get_grid_trades(session.id, limit=10)
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]['trade_id'], 'ORDER_RUNTIME_RECON')
+        self.assertAlmostEqual(trades[0]['trigger_price'], 10.1, places=4)
+        self.assertEqual(session.buy_count, 1)
+        self.executor._save_trade_record.assert_called_once()
+
+    def test_buy_signal_suppressed_while_same_side_pending_exists(self):
+        """同一会话已有 BUY pending 时，不再生成或执行新的 BUY 网格单"""
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        self.position_manager.get_position.return_value = {
+            'stock_code': session.stock_code,
+            'volume': 1000,
+            'available': 1000,
+            'cost_price': 10.0,
+            'current_price': 9.46,
+            'market_value': 9460.0,
+        }
+        signal = self._buy_signal(session)
+        self.manager.pending_grid_orders['ORDER_PENDING_BUY'] = {
+            'order_id': 'ORDER_PENDING_BUY',
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'side': 'BUY',
+            'signal': signal,
+            'requested_volume': 200,
+            'expected_price': 10.0,
+            'reserved_price': 10.2,
+            'filled_volume': 0,
+            'filled_amount': 0.0,
+            'confirmed_trade_ids': set(),
+            'created_at': datetime.now().isoformat(),
+        }
+        tracker = self.manager.trackers[session.id]
+        tracker.waiting_callback = True
+        tracker.direction = 'falling'
+        tracker.crossed_level = 9.5
+        tracker.valley_price = 9.4
+
+        generated = self.manager.check_grid_signals(session.stock_code, 9.46)
+
+        self.assertIsNone(generated)
+        self.assertEqual(session.status, 'active')
+        self.assertIn('ORDER_PENDING_BUY', self.manager.pending_grid_orders)
+
+        direct_result = self.manager.execute_grid_trade(signal)
+        self.assertFalse(direct_result)
+        self.executor.buy_stock.assert_not_called()
 
     def test_duplicate_deal_ignored_by_db_idempotency(self):
         """重复成交回报（同一 trade_id）在部分成交阶段被忽略"""

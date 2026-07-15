@@ -278,11 +278,14 @@ class TradingExecutor:
                     logger.warning(f"网格成交确认处理失败: {grid_err}")
 
             if defer_grid_record:
-                if not grid_handled:
-                    logger.warning(
-                        f"实盘网格成交回报未匹配待确认委托，跳过通用交易流水写入: "
-                        f"order_id={order_id}, trade_id={trade_id}"
-                    )
+                if str(strategy) == getattr(config, 'GRID_STRATEGY_NAME', 'grid'):
+                    if not grid_handled:
+                        logger.warning(
+                            f"实盘网格成交回报未匹配待确认委托，跳过通用交易流水写入: "
+                            f"order_id={order_id}, trade_id={trade_id}"
+                        )
+                else:
+                    self.record_live_deal_after_confirmation(deal_info)
             else:
                 self._save_trade_record(
                     stock_code, trade_time, trade_type, price, volume, amount,
@@ -296,14 +299,14 @@ class TradingExecutor:
             if trade_id in self.callbacks:
                 callback_fn = self.callbacks.pop(trade_id)
                 callback_fn(deal_info)
-                
+
         except Exception as e:
             logger.error(f"处理成交回调时出错: {str(e)}")
-    
+
     def _on_order_callback(self, order_info):
         """
         委托回调函数
-        
+
         参数:
         order_info: 委托信息对象
         """
@@ -321,7 +324,7 @@ class TradingExecutor:
             else:
                 cached_order_info = order_info
             self.order_cache[str(order_id)] = cached_order_info
-            
+
             status_desc = {
                 48: "未报",
                 49: "待报",
@@ -334,9 +337,9 @@ class TradingExecutor:
                 56: "已成",
                 57: "废单"
             }
-            
+
             logger.info(f"收到委托回调: {stock_code}, 委托号: {order_id}, 状态: {status_desc.get(status, '未知')}")
-            
+
             # 如果委托已完成（已成、已撤、废单），移除回调
             grid_manager = getattr(self.position_manager, 'grid_manager', None)
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
@@ -349,10 +352,10 @@ class TradingExecutor:
                 if order_id in self.callbacks:
                     logger.debug(f"委托 {order_id} 已完成，移除回调")
                     # 不要在这里执行回调，因为成交回调会处理
-                
+
         except Exception as e:
             logger.error(f"处理委托回调时出错: {str(e)}")
-    
+
     def query_stock_orders(self):
         """查询当日委托，供网格启动对账使用。"""
         qmt_trader = getattr(self.position_manager, 'qmt_trader', None)
@@ -370,16 +373,16 @@ class TradingExecutor:
     def _on_account_callback(self, account_info):
         """
         账户资金回调函数
-        
+
         参数:
         account_info: 账户资金信息对象
         """
         try:
             logger.debug(f"收到账户回调: 可用资金: {account_info.m_dAvailable:.2f}, 总资产: {account_info.m_dBalance:.2f}")
-            
+
         except Exception as e:
             logger.error(f"处理账户回调时出错: {str(e)}")
-    
+
     def _on_position_callback(self, position_info):
         """
         持仓回调函数
@@ -442,21 +445,248 @@ class TradingExecutor:
         return default
 
     def _should_defer_trade_record_until_deal(self, strategy, is_simulation=None):
-        """实盘网格确认模式下，普通成交流水等真实成交回报后再写入。"""
+        """需要等真实成交确认后再写入交易流水的实盘策略。"""
         if is_simulation is None:
             is_simulation = getattr(config, 'ENABLE_SIMULATION_MODE', True)
+        if is_simulation:
+            return False
+
+        strategy_name = str(strategy or '')
+        if (getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
+                and strategy_name == getattr(config, 'GRID_STRATEGY_NAME', 'grid')):
+            return True
+
         return (
-            not is_simulation
-            and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
-            and str(strategy) == getattr(config, 'GRID_STRATEGY_NAME', 'grid')
+            strategy_name in {'stop_loss', 'auto_partial', 'auto_full', 'add_position'}
+            or strategy_name.startswith('reorder_')
         )
-    
+
+    def _iter_query_records(self, records):
+        """把 DataFrame/list/dict 查询结果统一迭代为记录。"""
+        if records is None:
+            return []
+        if hasattr(records, 'empty') and hasattr(records, 'to_dict'):
+            if records.empty:
+                return []
+            return records.to_dict('records')
+        if isinstance(records, dict):
+            return [records]
+        return list(records)
+
+    def _field_any(self, record, names, default=None):
+        """兼容 dict、DataFrame 行、对象属性读取字段。"""
+        if record is None:
+            return default
+        for name in names:
+            if isinstance(record, dict) and name in record:
+                return record.get(name)
+            if hasattr(record, name):
+                return getattr(record, name)
+            try:
+                return record[name]
+            except Exception:
+                pass
+        return default
+
+    def _same_order_id(self, left, right):
+        if left is None or right is None:
+            return False
+        return str(left).strip() == str(right).strip()
+
+    def _to_float(self, value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _to_int(self, value, default=0):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    def _fallback_strategy_from_signal(self, signal_type):
+        return {
+            'stop_loss': 'stop_loss',
+            'take_profit_half': 'auto_partial',
+            'take_profit_full': 'auto_full',
+            'add_position': 'add_position',
+        }.get(signal_type, 'default')
+
+    def _infer_trade_type(self, deal_info, order_id, fallback_order_info=None):
+        order_cache = self._get_order_cache_entry(order_id)
+        if isinstance(order_cache, dict) and order_cache.get('trade_type'):
+            return order_cache.get('trade_type')
+
+        order_side = None
+        if isinstance(fallback_order_info, dict):
+            signal_info = fallback_order_info.get('signal_info') or {}
+            order_side = signal_info.get('order_side') or fallback_order_info.get('order_side')
+        if order_side:
+            return str(order_side).upper()
+
+        direction = self._field_any(deal_info, ['m_nDirection', 'direction'])
+        order_type = self._field_any(deal_info, ['order_type', '委托类型'])
+        action = self._field_any(deal_info, ['action', '买卖方向'])
+        for value in (direction, order_type, action):
+            text = str(value).upper()
+            if text in ('BUY', 'B', '买入'):
+                return 'BUY'
+            if text in ('SELL', 'S', '卖出'):
+                return 'SELL'
+            numeric = self._to_int(value, default=None)
+            if numeric in (DIRECTION_BUY, 23):
+                return 'BUY'
+            if numeric in (DIRECTION_SELL, 24):
+                return 'SELL'
+        return 'SELL'
+
+    def _build_trade_record_from_deal(self, deal_info, fallback_order_info=None):
+        """从成交回报/成交查询记录构造 trade_records 入库字段。"""
+        order_id = self._field_any(deal_info, ['order_id', 'm_strOrderID', '订单编号'])
+        order_cache = self._get_order_cache_entry(order_id)
+        order_cache = order_cache if isinstance(order_cache, dict) else {}
+        fallback_order_info = fallback_order_info or {}
+        signal_info = fallback_order_info.get('signal_info') or {}
+
+        stock_code = (
+            self._field_any(deal_info, ['stock_code', 'm_strInstrumentID', '证券代码'])
+            or order_cache.get('stock_code')
+            or fallback_order_info.get('stock_code')
+        )
+        if stock_code:
+            stock_code = str(stock_code).split('.')[0]
+
+        price = self._to_float(
+            self._field_any(deal_info, ['traded_price', 'm_dPrice', '成交均价', 'price']),
+            default=0.0
+        )
+        if price <= 0:
+            price = self._to_float(order_cache.get('price'), default=0.0)
+        if price <= 0:
+            price = self._to_float(signal_info.get('current_price'), default=0.0)
+
+        volume = self._to_int(
+            self._field_any(deal_info, ['traded_volume', 'm_nVolume', '成交数量', 'volume']),
+            default=0
+        )
+        if volume <= 0:
+            volume = self._to_int(order_cache.get('volume'), default=0)
+        if volume <= 0:
+            volume = self._to_int(signal_info.get('volume'), default=0)
+
+        amount = self._to_float(
+            self._field_any(deal_info, ['traded_amount', '成交金额', 'amount']),
+            default=0.0
+        )
+        if amount <= 0 and price > 0 and volume > 0:
+            amount = price * volume
+
+        trade_id = (
+            self._field_any(deal_info, ['traded_id', 'trade_id', 'm_strTradeID', '成交编号'])
+            or f"ORDER_{order_id}"
+        )
+        trade_type = self._infer_trade_type(deal_info, order_id, fallback_order_info)
+
+        signal_type = fallback_order_info.get('signal_type')
+        strategy = (
+            order_cache.get('strategy')
+            or self._field_any(deal_info, ['strategy_name', '策略名称'])
+            or self._fallback_strategy_from_signal(signal_type)
+        )
+
+        commission = self._to_float(
+            self._field_any(deal_info, ['commission', 'm_dComssion', '手续费']),
+            default=0.0
+        )
+
+        return {
+            'order_id': order_id,
+            'stock_code': stock_code,
+            'trade_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'trade_type': trade_type,
+            'price': price,
+            'volume': volume,
+            'amount': amount,
+            'trade_id': str(trade_id),
+            'commission': commission,
+            'strategy': strategy,
+        }
+
+    def record_live_deal_after_confirmation(self, deal_info, fallback_order_info=None):
+        """成交回报确认后写 trade_records；网格流水由 GridTradingManager 负责。"""
+        try:
+            record = self._build_trade_record_from_deal(deal_info, fallback_order_info)
+            strategy = str(record.get('strategy') or '')
+            if strategy == getattr(config, 'GRID_STRATEGY_NAME', 'grid'):
+                return False
+
+            if not record.get('stock_code') or record.get('price', 0) <= 0 or record.get('volume', 0) <= 0:
+                logger.warning(
+                    f"成交确认流水字段不足，跳过写入: order_id={record.get('order_id')}, "
+                    f"stock={record.get('stock_code')}, price={record.get('price')}, volume={record.get('volume')}"
+                )
+                return False
+
+            return self._save_trade_record(
+                stock_code=record['stock_code'],
+                trade_time=record['trade_time'],
+                trade_type=record['trade_type'],
+                price=record['price'],
+                volume=record['volume'],
+                amount=record['amount'],
+                trade_id=record['trade_id'],
+                commission=record['commission'],
+                strategy=record['strategy']
+            )
+        except Exception as e:
+            logger.error(f"成交确认后写交易流水失败: {e}")
+            return False
+
+    def confirm_live_order_filled(self, order_id, fallback_order_info=None, deal_info=None):
+        """根据成交回报或成交查询结果补写实盘交易流水。"""
+        if deal_info is not None:
+            return self.record_live_deal_after_confirmation(deal_info, fallback_order_info)
+
+        try:
+            trades = self.query_stock_trades()
+            for trade in self._iter_query_records(trades):
+                trade_order_id = self._field_any(trade, ['order_id', 'm_strOrderID', '订单编号'])
+                if self._same_order_id(trade_order_id, order_id):
+                    return self.record_live_deal_after_confirmation(trade, fallback_order_info)
+
+            logger.warning(f"未查询到订单 {order_id} 的成交明细，将使用委托缓存/信号信息补写交易流水")
+            fallback_deal = {
+                '订单编号': order_id,
+                '证券代码': (fallback_order_info or {}).get('stock_code'),
+                '成交编号': f"ORDER_{order_id}",
+            }
+            return self.record_live_deal_after_confirmation(fallback_deal, fallback_order_info)
+        except Exception as e:
+            logger.error(f"订单成交兜底确认写流水失败: order_id={order_id}, error={e}")
+            return False
+
+    def _trade_record_exists(self, trade_id):
+        if trade_id is None:
+            return False
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT 1 FROM trade_records WHERE trade_id=? LIMIT 1", (str(trade_id),))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logger.warning(f"检查交易流水是否已存在失败: trade_id={trade_id}, error={e}")
+            return False
+
     def _save_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy='default'):
         """保存交易记录到数据库"""
         try:
+            if self._trade_record_exists(trade_id):
+                logger.info(f"交易记录已存在，跳过重复写入: trade_id={trade_id}")
+                return True
+
             # 获取股票名称
             stock_name = self.data_manager.get_stock_name(stock_code)
-            
+
             logger.info(f"保存交易记录: {stock_code}({stock_name}) {trade_type} 价:{price:.2f} 量:{volume} 金额:{amount:.2f} 策略:{strategy}")
             
             cursor = self.conn.cursor()
@@ -856,7 +1086,8 @@ class TradingExecutor:
         self.sim_order_counter += 1
         return f"SIM{datetime.now().strftime('%Y%m%d%H%M%S')}{self.sim_order_counter:04d}"
     
-    def buy_stock(self, stock_code, volume=None, price=None, amount=None, price_type=5, callback=None, strategy='default'):
+    def buy_stock(self, stock_code, volume=None, price=None, amount=None, price_type=5,
+                  callback=None, strategy='default', signal_type=None, signal_info=None):
         """
         买入股票
         
@@ -868,6 +1099,8 @@ class TradingExecutor:
         price_type (int): 价格类型，默认为5（特定的限价类型）
         callback (function): 成交回调函数
         strategy (str): 策略标识
+        signal_type (str): 信号类型（可选，用于委托单跟踪）
+        signal_info (dict): 信号详情（可选，用于委托单跟踪）
         
         返回:
         str: 委托编号，失败返回None
@@ -1052,7 +1285,7 @@ class TradingExecutor:
                             trade_saved = True
                             if should_defer_record:
                                 logger.info(
-                                    f"实盘网格买入委托已提交，等待成交回报后写入交易流水: "
+                                    f"实盘买入委托已提交，等待成交确认后写入交易流水: "
                                     f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
                                 )
                             else:
@@ -1081,7 +1314,22 @@ class TradingExecutor:
                                 }
                                 
                                 logger.info(f"实盘买入订单已下达并记录: {stock_code}, 订单号: {order_id}, 策略: {strategy}")
-                                
+
+                                if signal_type and signal_info and not is_simulation:
+                                    try:
+                                        tracking_info = dict(signal_info)
+                                        tracking_info.setdefault('order_side', 'BUY')
+                                        tracking_info.setdefault('volume', volume)
+                                        tracking_info.setdefault('current_price', price)
+                                        self.position_manager.track_order(
+                                            stock_code=stock_code,
+                                            order_id=str(order_id),
+                                            signal_type=signal_type,
+                                            signal_info=tracking_info
+                                        )
+                                    except Exception as track_error:
+                                        logger.warning(f"跟踪买入委托单失败（不影响交易）: {str(track_error)}")
+
                                 # 注册回调
                                 if callback:
                                     self.callbacks[order_id] = callback
@@ -1337,7 +1585,7 @@ class TradingExecutor:
                             trade_saved = True
                             if should_defer_record:
                                 logger.info(
-                                    f"实盘网格卖出委托已提交，等待成交回报后写入交易流水: "
+                                    f"实盘卖出委托已提交，等待成交确认后写入交易流水: "
                                     f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
                                 )
                             else:
@@ -1373,6 +1621,8 @@ class TradingExecutor:
                                     try:
                                         tracking_info = dict(signal_info)
                                         tracking_info.setdefault('order_side', 'SELL')
+                                        tracking_info.setdefault('volume', volume)
+                                        tracking_info.setdefault('current_price', price)
                                         self.position_manager.track_order(
                                             stock_code=stock_code,
                                             order_id=str(order_id),
