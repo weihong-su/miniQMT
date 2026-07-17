@@ -148,13 +148,13 @@ def _get_active_grid_session_count(position_manager=None):
         return "获取失败"
 
 
-def _format_heartbeat_status_line(active_grid_session_count):
+def _format_heartbeat_status_lines(active_grid_session_count):
     return (
         f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
         f"自动操作:{_switch_text(config.ENABLE_AUTO_OPERATION)} | "
         f"自动交易:{_switch_text(config.ENABLE_AUTO_TRADING)} | "
-        f"网格交易:{_switch_text(config.ENABLE_GRID_TRADING)} | "
-        f"活跃网格会话数:{active_grid_session_count}"
+        f"网格交易:{_switch_text(config.ENABLE_GRID_TRADING)}",
+        f"   活跃网格会话数:{active_grid_session_count}",
     )
 
 def _spinner_worker():
@@ -342,7 +342,8 @@ def heartbeat_logger():
 
             logger.info("=" * 50)
             logger.info(f"💓 系统心跳 - 运行时长:{uptime_str}")
-            logger.info(_format_heartbeat_status_line(active_grid_session_count))
+            for status_line in _format_heartbeat_status_lines(active_grid_session_count):
+                logger.info(status_line)
             logger.info(f"   持仓数量:{position_count} | {asset_str}")
             logger.info(f"   {market_health_str}")
             logger.info("=" * 50)

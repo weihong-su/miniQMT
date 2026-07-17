@@ -37,19 +37,20 @@ class TestRuntimeLogging(unittest.TestCase):
         for name, value in self._original_values.items():
             setattr(config, name, value)
 
-    def test_heartbeat_status_line_includes_global_switch_and_active_grid_count(self):
+    def test_heartbeat_status_lines_include_global_switch_and_active_grid_count(self):
         config.ENABLE_SIMULATION_MODE = False
         config.ENABLE_AUTO_OPERATION = True
         config.ENABLE_AUTO_TRADING = False
         config.ENABLE_GRID_TRADING = True
 
-        line = main._format_heartbeat_status_line(2)
+        status_line, grid_line = main._format_heartbeat_status_lines(2)
 
-        self.assertIn("模式:实盘", line)
-        self.assertIn("自动操作:开启", line)
-        self.assertIn("自动交易:关闭", line)
-        self.assertIn("网格交易:开启", line)
-        self.assertIn("活跃网格会话数:2", line)
+        self.assertIn("模式:实盘", status_line)
+        self.assertIn("自动操作:开启", status_line)
+        self.assertIn("自动交易:关闭", status_line)
+        self.assertIn("网格交易:开启", status_line)
+        self.assertNotIn("活跃网格会话数", status_line)
+        self.assertEqual("   活跃网格会话数:2", grid_line)
 
     def test_active_grid_session_count_only_counts_enabled_active_sessions(self):
         grid_manager = types.SimpleNamespace(
