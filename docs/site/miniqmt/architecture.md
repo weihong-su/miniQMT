@@ -61,7 +61,7 @@ config.py              # 集中配置管理
 logger.py              # 统一日志管理
 main.py                # 系统启动入口和线程管理
 thread_monitor.py      # 线程健康监控与自愈
-data_manager.py        # 历史/实时行情获取（xtdata 优先、Mootdx 兜底、行情健康评分）
+data_manager.py        # 行情获取（实时 xtdata→Mootdx；历史标准模式 Tushare→Mootdx，网关模式 xtdata→Tushare→Mootdx；行情健康评分）
 indicator_calculator.py # 技术指标计算
 position_manager.py    # 持仓管理核心（内存 + SQLite 双层）
 trading_executor.py    # 交易执行器（xttrader 接口）
@@ -83,6 +83,8 @@ grid_validation.py     # 网格交易参数校验
 autobuy/               # 自动买入独立进程：候选池筛选、防重、HTTP 下单
 xtquant_manager/       # XtQuantManager HTTP 网关（可选）
 ```
+
+交易接口由 `position_manager._create_qmt_trader()` 四选一：默认 `easy_qmt_trader` 直连；`ENABLE_XTQUANT_MANAGER`、`ENABLE_QMT_IPC_FALLBACK`、`ENABLE_QMT_RPC_FALLBACK` 分别切换到 HTTP 网关、文件 IPC、RPC 后端，三个可选后端互斥。行情侧的 RPC xtdata 数据源当前未接入 `data_manager._create_xtdata()`，RPC 只作为交易后端使用。
 
 ---
 

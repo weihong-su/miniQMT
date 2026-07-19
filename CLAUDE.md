@@ -15,7 +15,7 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🌐 Web前端实时监控界面（Flask web1.0 + Vue3 web2.0 双版本）
 - 🚪 XtQuantManager HTTP 网关（多账号统一管理、远程 API、PWA 支持）
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
-- 🔀 **三种 xttrader 降级通道**：大QMT 文件 IPC / 大QMT RPC(Redis/ZMQ) / miniQMT 直连，控制台菜单一键切换
+- 🔀 **交易通道四选一**：默认 miniQMT xttrader 直连，可选 XtQuantManager / 大QMT 文件 IPC / 大QMT RPC(Redis/ZMQ)，控制台可一键切换直连/IPC/RPC
 - 📊 **Tushare Pro 数据源**（历史K线优先 + 股票名称补充查询，标准模式 Tushare → Mootdx 降级链）
 - 🔧 **.env fallback 配置**（Windows 用户级环境变量 > `.env`，零依赖自解析，测试隔离保护）
 
@@ -28,7 +28,7 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - `QMT_IPC_ROOT` — IPC 文件目录（已有，默认 `C:\QuantIPC`）
 - `.env` 文件现由 `config.py` 自动加载（`_load_dotenv_fallback`），优先级：Windows 环境变量 > .env
 - 控制台 `miniqmt.bat` 菜单 `[n]` Tushare / `[o]` IPC / `[p]` XtTrader 通道总控 可直接切换
-- **三通道互斥**：`ENABLE_XTQUANT_MANAGER` / `ENABLE_QMT_IPC_FALLBACK` / `ENABLE_QMT_RPC_FALLBACK` 同时最多开一个
+- **三个可选后端互斥**：`ENABLE_XTQUANT_MANAGER` / `ENABLE_QMT_IPC_FALLBACK` / `ENABLE_QMT_RPC_FALLBACK` 同时最多开一个；都不开时使用默认 xttrader 直连
 - 详细配置参考 [docs/site/miniqmt/configuration.md](docs/site/miniqmt/configuration.md) 配置全景图
 
 **隐私安全提醒**:
@@ -256,7 +256,7 @@ thread_monitor.py      # 线程健康监控与自愈（无人值守核心）⭐
 data_manager.py        # 历史数据获取(xtdata接口)
 indicator_calculator.py # 技术指标计算
 position_manager.py    # 持仓管理核心(内存+SQLite双层)⭐
-trading_executor.py    # 交易执行器(xttrader接口)
+trading_executor.py    # 交易执行器(模拟/实盘下单入口，实盘通道由 position_manager 工厂选择)
 strategy.py            # 交易策略逻辑⭐
 web_server.py          # RESTful API服务(Flask)
 easy_qmt_trader.py     # QMT交易API封装 (xttrader 直连)
@@ -711,7 +711,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 29 个测试组（含 `fast` 快速子集）。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 31 个测试组（含 `fast` 快速子集）。
 
 ### 测试基础设施
 
@@ -751,9 +751,11 @@ thread_monitor.get_status()
 | `grid_full_range_coverage` | critical | 全网格区间覆盖（114个用例，A-K 11个套件） |
 | `grid_true_pnl` | critical | 网格 True P&L / FIFO 真实盈亏验证 |
 | `grid_simulation` | high | 价格模拟测试（30个用例） |
-| `fast` | critical | 快速验证子集（当前配置 23 个模块） |
+| `qmt_ipc_fallback` | high | 大QMT文件IPC降级通道（客户端/执行器/集成） |
+| `qmt_rpc` | high | 大QMT RPC 交易后端（契约兼容、只读门禁、回调/委托映射） |
+| `fast` | critical | 快速验证子集（当前配置 33 个模块、717 个用例） |
 
-**测试统计（当前配置）**: 29组（含 `fast`）。最近一次使用 Anaconda `python39` 执行 `--all` 实测为 28个非 fast 组、70个模块、1039个用例，100% 通过；具体以本地运行报告为准。
+**测试统计（当前配置）**: 31组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；最近一次使用 Anaconda `python39` 执行 `--all-with-fast` 实测为 31组、107个模块、1933个用例，100% 通过；具体以本地运行报告为准。
 
 ### 编写新测试的规范
 

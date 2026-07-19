@@ -24,6 +24,8 @@
 
 XtQuantManager 是 miniQMT 的 **xtquant 接口统一管理层**，通过 HTTP 服务将迅投 QMT 的交易接口（xttrader）和行情接口（xtdata）封装为 RESTful API。
 
+当前实现同时提供两类接口：标准 `/api/v1/*` 多账号 API，以及供 web2.0 网关模式复用的 Flask 兼容端点（`/api/status`、`/api/positions`、`/api/positions-all`、`/api/accounts`、`/api/connection/status`、`/api/config`、`/api/trade-records`、`/api/grid/sessions`）。兼容端点以只读监控为主，通过 `X-Account-Id` 选择账号，并合并 QMT 实时字段与账号 SQLite 元数据；配置保存、初始化持仓、网格启停等写操作仍需 Flask 直连模式。
+
 | 痛点 | 解决方案 |
 |------|---------|
 | 无法管理多账号 | 多账号注册表，支持同时管理任意数量 QMT 账号 |

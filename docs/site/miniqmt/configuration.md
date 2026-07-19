@@ -202,7 +202,7 @@ DYNAMIC_TAKE_PROFIT = [
 |------|--------|------|
 | `ENABLE_PENDING_ORDER_AUTO_CANCEL` | `True` | 启用后，止盈止损卖出委托超时未成交时自动撤单 |
 | `PENDING_ORDER_TIMEOUT_MINUTES` | `5` | 普通止盈委托超时阈值（分钟） |
-| `STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES` | `1.0` | 止损委托超时阈值（分钟），默认更快撤单重挂 |
+| `STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES` | `0.5` | 止损委托超时阈值（分钟），默认 30 秒后更快撤单重挂 |
 | `PENDING_ORDER_AUTO_REORDER` | `True` | 撤单成功后是否自动重新挂单 |
 | `PENDING_ORDER_REORDER_PRICE_MODE` | `"best"` | 重挂价格模式：`market`=最新价，`limit`=原信号价，`best`=对手价 |
 | `ALLOW_TAKE_PROFIT_FULL_WITH_PENDING` | `False` | 全仓止盈是否允许跳过活跃委托检查；生产建议保持 `False` |
@@ -297,11 +297,11 @@ DYNAMIC_TAKE_PROFIT = [
 | `BAOSTOCK_RETRY_COOLDOWN` | `300` | baostock 连续失败后冷却时间（秒） |
 | `BAOSTOCK_MAX_CONSECUTIVE_FAILURES` | `3` | 连续失败达到阈值后进入冷却期 |
 
-历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
+历史数据源策略分模式处理：标准模式（`ENABLE_XTQUANT_MANAGER=False`）为 `Tushare（日/周/月）→ Mootdx`，分钟线直接走 Mootdx；网关模式会先尝试 `xtdata`，失败或为空后再进入 `Tushare → Mootdx`。baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
 
 ### Tushare Pro 数据源参数
 
-启用后，标准模式下历史 K 线优先走 Tushare（比 Mootdx 复权更准），股票名称查询在 xtdata 之后、baostock 之前插入 Tushare。Token 为空或未安装 `tushare` 包时自动跳过，行为与关闭一致。降级链见[图 2](#2)。
+启用后，标准模式下日/周/月历史 K 线优先走 Tushare（分钟线仍走 Mootdx），股票名称查询在 xtdata 之后、baostock 之前插入 Tushare。Token 为空或未安装 `tushare` 包时自动跳过，行为与关闭一致。降级链见[图 2](#2)。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|

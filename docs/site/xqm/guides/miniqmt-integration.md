@@ -20,6 +20,11 @@ XTQUANT_MANAGER_TOKEN = ""
 | `register_trade_callback` | 实时触发 | no-op |
 | `pending_orders` 同步 | 实时 | 约 3 秒后持仓轮询更新 |
 
+`ENABLE_XTQUANT_MANAGER=True` 时，miniQMT 主程序会在模块初始化前尝试启动本机 `:8888` HTTP 网关，并让 `position_manager` 使用 `XtQuantClient`、`data_manager` 使用 `XtDataAdapter`。如果通过启动器选择 web2.0 模式，主进程会设置 `QMT_NO_FLASK=1` 跳过 Flask Web 服务，由 xtquant_manager 托管 web2.0 静态文件和兼容 API。
+
+!!! note "网关模式不是完整 Flask 替代"
+    xtquant_manager 提供 `/api/status`、`/api/positions`、`/api/trade-records`、`/api/grid/sessions` 等 Flask 兼容读端点，便于 web2.0 多账号监控；配置保存、自动操作总开关、模拟买入、初始化持仓、网格启停等仍需 Flask 直连模式。
+
 ## 适用场景
 
 | 场景 | 推荐设置 |

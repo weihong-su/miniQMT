@@ -238,7 +238,7 @@ thread_monitor.py      # 线程健康监控与自愈（无人值守核心）⭐
 data_manager.py        # 历史数据获取(xtdata接口)
 indicator_calculator.py # 技术指标计算
 position_manager.py    # 持仓管理核心(内存+SQLite双层)⭐
-trading_executor.py    # 交易执行器(xttrader接口)
+trading_executor.py    # 交易执行器(模拟/实盘下单入口，实盘通道由 position_manager 工厂选择)
 strategy.py            # 交易策略逻辑⭐
 web_server.py          # RESTful API服务(Flask)
 easy_qmt_trader.py     # QMT交易API封装
@@ -687,7 +687,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 29 个测试组（含 `fast` 快速子集）。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 31 个测试组（含 `fast` 快速子集）。
 
 ### 测试基础设施
 
@@ -727,9 +727,11 @@ thread_monitor.get_status()
 | `grid_full_range_coverage` | critical | 全网格区间覆盖（114个用例，A-K 11个套件） |
 | `grid_true_pnl` | critical | 网格 True P&L / FIFO 真实盈亏验证 |
 | `grid_simulation` | high | 价格模拟测试（30个用例） |
-| `fast` | critical | 快速验证子集（当前配置 23 个模块） |
+| `qmt_ipc_fallback` | high | 大QMT文件IPC降级通道（客户端/执行器/集成） |
+| `qmt_rpc` | high | 大QMT RPC 交易后端（契约兼容、只读门禁、回调/委托映射） |
+| `fast` | critical | 快速验证子集（当前配置 33 个模块、717 个用例） |
 
-**测试统计（当前配置）**: 29组（含 `fast`）。最近一次使用 Anaconda `python39` 执行 `--all` 实测为 28个非 fast 组、70个模块、1039个用例，100% 通过；具体以本地运行报告为准。
+**测试统计（当前配置）**: 31组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；最近一次使用 Anaconda `python39` 执行 `--all-with-fast` 实测为 31组、107个模块、1933个用例，100% 通过；具体以本地运行报告为准。
 
 ### 编写新测试的规范
 

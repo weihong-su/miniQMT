@@ -1386,7 +1386,7 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | 配置项 | 默认值 | 说明 |
 |-------|--------|------|
 | `MONITOR_LOOP_INTERVAL` | `3` | 持仓监控循环间隔(秒) |
-| `MONITOR_CALL_TIMEOUT` | `3.0` | API调用超时(秒) |
+| `MONITOR_CALL_TIMEOUT` | `8.0` | API调用超时(秒) |
 | `QMT_POSITION_QUERY_INTERVAL` | `10.0` | QMT持仓查询间隔(秒) |
 | `POSITION_SYNC_INTERVAL` | `15.0` | SQLite同步间隔(秒) |
 | `THREAD_CHECK_INTERVAL` | `60` | 线程监控检查间隔(秒) |
@@ -1430,7 +1430,7 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | 配置项 | 默认值 | 说明 |
 |-------|--------|------|
 | `MARKET_HEALTH_ENABLED` | `True` | 启用行情源健康评分 |
-| `MARKET_HEALTH_OBSERVE_ONLY` | `True` | 观察模式：只记录评分，不拦截交易信号 |
+| `MARKET_HEALTH_OBSERVE_ONLY` | `False` | 默认严格门禁：按评分和数据源策略拦截不可信行情；设为 `True` 时仅观察不拦截 |
 | `MARKET_HEALTH_WINDOW_SECONDS` | `300` | 统计窗口(秒) |
 | `MARKET_HEALTH_MAX_EVENTS` | `100` | 单组合最大事件数 |
 | `MARKET_HEALTH_MIN_EVENTS` | `3` | 最少样本数，低于该值显示 unknown |

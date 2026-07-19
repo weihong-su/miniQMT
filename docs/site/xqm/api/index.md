@@ -56,3 +56,9 @@ X-API-Token: your-secret-token
 | [行情接口](market.md) | `/api/v1/market` | 实时 Tick、历史行情、下载数据 |
 | [可观测性](observability.md) | `/api/v1/health` `/api/v1/metrics` | 健康检查、调用指标 |
 | **止盈止损** | `/api/v1/stop-profit` | **状态查询、配置更新、启停切换** |
+
+## Flask 兼容端点
+
+为支持 web2.0 网关模式，`server.py` 还暴露少量不带 `/api/v1` 前缀的兼容端点：`/api/status`、`/api/positions`、`/api/positions-all`、`/api/accounts`、`/api/connection/status`、`/api/config`、`/api/trade-records`、`/api/grid/sessions`。这些端点通过 `X-Account-Id` 请求头选择账号；未指定时回退到第一个已注册账号。
+
+兼容端点不是完整 Flask API 替代：配置保存、自动操作总开关、模拟买入、初始化持仓、网格启停和模板保存仍由 `web_server.py` 的 Flask 直连模式提供。网关侧 `/api/grid/sessions` 只从账号 SQLite 读取会话快照，盈亏使用兼容降级口径。

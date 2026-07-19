@@ -50,6 +50,9 @@
 
 服务启动后，访问 [http://127.0.0.1:8888/docs](http://127.0.0.1:8888/docs) 查看 Swagger 接口文档。
 
+!!! info "web2.0 网关兼容能力"
+    除 `/api/v1/*` 多账号 API 外，`server.py` 还提供一组 Flask 兼容只读端点供 web2.0 网关模式使用：`/api/status`、`/api/positions`、`/api/positions-all`、`/api/accounts`、`/api/connection/status`、`/api/config`、`/api/trade-records`、`/api/grid/sessions`。这些端点会通过 `X-Account-Id` 选择账号，并合并 QMT 实时字段与账号 SQLite 元数据；配置保存、初始化持仓、网格启停等写操作仍需 Flask 直连模式。
+
 ---
 
 ## 最简配置文件

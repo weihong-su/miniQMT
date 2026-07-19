@@ -4,13 +4,13 @@
 
 项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 31 个测试组（含 `fast` 快速子集）。
 
-最近一次（v3.8.1）使用 `--all-with-fast` 实测：**31 组、107 模块、1931 用例、1931 通过、0 失败、0 错误、0 跳过，成功率 100%**。
+最近一次（2026-07-17）使用 `--all-with-fast` 实测：**31 组、107 模块、1933 用例、1933 通过、0 失败、0 错误、0 跳过，成功率 100%**。
 
 ## 测试统计速查
 
 | 版本 | 日期 | 非fast组 | 含fast | 通过率 |
 |------|------|----------|--------|--------|
-| v3.8.1 | 2026-07-15 | 31 组, 107 模块, 1931 用例 | 1931 | 100% |
+| v3.8.1 | 2026-07-17 | 31 组, 107 模块, 1933 用例 | 1933 | 100% |
 | v3.8.0 | 2026-07-13 | 31 组, 1912 用例 | 1912 | 100% |
 | v3.6.0 | 2026-07-10 | 28 组, 70 模块, 1039 用例 | - | 100% |
 
@@ -52,6 +52,8 @@ python test/run_integration_regression_tests.py --group grid_validation
 python test/run_integration_regression_tests.py --group grid_comprehensive
 python test/run_integration_regression_tests.py --group grid_bug_regression
 python test/run_integration_regression_tests.py --group grid_true_pnl
+python test/run_integration_regression_tests.py --group qmt_ipc_fallback
+python test/run_integration_regression_tests.py --group qmt_rpc
 python test/run_integration_regression_tests.py --group multi_account_isolation
 python test/run_integration_regression_tests.py --group launcher_deployment
 ```
@@ -120,7 +122,9 @@ python test/run_all_grid_tests.py
 | `grid_full_range_coverage` | critical | 全网格价格区间覆盖（114 个用例，A-K 11 个套件） |
 | `grid_true_pnl` | critical | True P&L / FIFO 真实盈亏验证 |
 | `grid_simulation` | high | 价格模拟测试 |
-| `fast` | critical | 5 分钟快速验证子集 |
+| `qmt_ipc_fallback` | high | 大QMT 文件 IPC 客户端、执行器、PositionManager 集成 |
+| `qmt_rpc` | high | 大QMT RPC 交易后端契约、只读门禁、回调和委托映射 |
+| `fast` | critical | 5 分钟快速验证子集（当前 33 个模块、717 个用例） |
 
 ---
 

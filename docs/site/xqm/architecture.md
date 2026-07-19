@@ -74,3 +74,5 @@ Level 2         reconnect()       指数退避重连（60s → 120s → ... → 
 | `watchdog.py` | HTTP 服务看门狗（崩溃自动重启） |
 | `metrics.py` | 调用指标收集器 |
 | `timeout.py` | 统一超时保护 |
+
+`server.py` 同时包含两类路由：标准 `/api/v1/*` 多账号 API，以及供 web2.0 网关模式复用的 Flask 兼容端点（`/api/status`、`/api/positions`、`/api/positions-all`、`/api/accounts`、`/api/connection/status`、`/api/config`、`/api/trade-records`、`/api/grid/sessions`）。兼容端点以只读监控为主，持仓会合并 QMT 实时数据和 `data_<account_id>/trading.db` 中的持久化元数据；网格会话从 SQLite 降级读取，不持有 Flask 进程里的策略写状态。

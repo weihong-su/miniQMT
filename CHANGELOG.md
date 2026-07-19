@@ -22,7 +22,7 @@
 ### Tests
 - 新增/扩展 `test/test_web_api_complete.py`，覆盖 `/api/grid/session/<stock_code>` tooltip 字段的小数比例、真实盈亏快照和偏离度字段。
 - 新增 `test/test_web1_grid_dialog_static.py`，静态验证 web1.0 悬停卡片不再重复缩放后端比例，且中心价偏离按后端中心漂移字段展示。
-- 完整集成回归：`C:\Users\PC\Anaconda3\envs\python39\python.exe test/run_integration_regression_tests.py --all-with-fast`，31 组、107 模块、1931 用例，1931 通过、0 失败、0 错误、0 跳过，成功率 100%，耗时 633.03 秒。
+- 完整集成回归：`C:\Users\PC\Anaconda3\envs\python39\python.exe test/run_integration_regression_tests.py --all-with-fast`，31 组、107 模块、1933 用例，1933 通过、0 失败、0 错误、0 跳过，成功率 100%，耗时 633.95 秒。
 
 ### Docs
 - 更新 README、Web 前端文档和 Web API 文档，说明网格悬停卡片的数据来源、比例格式、中心价偏离和成交确认后写流水语义。

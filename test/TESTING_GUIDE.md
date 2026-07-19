@@ -16,8 +16,10 @@ python test/run_integration_regression_tests.py --all
 **自动执行**:
 - ✅ 备份生产数据库 (trading.db)
 - ✅ 清理所有测试数据库
-- ✅ 运行270个测试用例
+- ✅ 运行除 `fast` 重复子集外的所有测试组
 - ✅ 生成测试报告
+
+当前配置共 31 个测试组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；需要生成包含 fast 的完整报告时使用 `--all-with-fast`。最近一次 `--all-with-fast` 报告为 31 组、107 模块、1933 用例，100% 通过。
 
 ### 2. 快速验证（5分钟内完成）
 
@@ -25,7 +27,7 @@ python test/run_integration_regression_tests.py --all
 python test/run_integration_regression_tests.py --fast
 ```
 
-运行52个关键测试，快速验证核心功能。
+当前 fast 组包含 33 个模块、717 个用例，用于快速覆盖关键功能。
 
 ### 3. 运行特定测试组
 
@@ -38,6 +40,10 @@ python test/run_integration_regression_tests.py --group stop_profit
 
 # 运行网格交易测试
 python test/run_integration_regression_tests.py --group grid_signal
+
+# 运行大QMT降级交易通道测试
+python test/run_integration_regression_tests.py --group qmt_ipc_fallback
+python test/run_integration_regression_tests.py --group qmt_rpc
 ```
 
 ## 环境准备选项

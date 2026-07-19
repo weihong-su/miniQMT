@@ -41,6 +41,9 @@
 }
 ```
 
+!!! warning "止盈止损启动配置的当前实现边界"
+    `standalone_config.py` 会解析 `enable_stop_profit`、`stop_loss_ratio`、`initial_take_profit_*`、`stop_profit_interval` 等字段，但当前 `StandaloneApplication._build_server_config()` 尚未把这些字段透传给 `XtQuantServerConfig`。因此独立服务启动时使用 `server_runner.py` / `StopProfitConfig` 的默认值：止盈止损监控默认启用、固定止损默认 `-0.075`，首次止盈/回撤/卖出比例/检测间隔/去重窗口使用 `StopProfitConfig` 默认。服务启动后，可通过 `/api/v1/stop-profit/config` 运行时更新 `stop_loss_ratio`、`initial_take_profit_ratio`、`initial_take_profit_pullback_ratio`、`initial_take_profit_sell_ratio` 和 `monitor_interval`。
+
 ## 服务级参数
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -59,13 +62,13 @@
 | `watchdog_interval` | float | `10.0` | 服务线程存活检查间隔（秒） |
 | `watchdog_restart_cooldown` | float | `30.0` | 看门狗重启冷却（秒） |
 | `heartbeat_interval` | float | `1800.0` | 心跳日志间隔（秒） |
-| `enable_stop_profit` | bool | `true` | **启用止盈止损后台监控** |
-| `stop_loss_ratio` | float | `-0.075` | 固定止损比例（成本价下跌 7.5% 触发） |
-| `initial_take_profit_ratio` | float | `0.06` | 首次止盈触发阈值（盈利 6%） |
-| `initial_take_profit_pullback_ratio` | float | `0.005` | 首次止盈回撤触发比例（0.5%） |
-| `initial_take_profit_sell_ratio` | float | `0.6` | 首次止盈卖出比例（60%） |
-| `stop_profit_interval` | float | `3.0` | 止盈止损检测间隔（秒） |
-| `stop_profit_dedup_seconds` | float | `60.0` | 同信号去重窗口（秒） |
+| `enable_stop_profit` | bool | `true` | 配置文件会解析；当前启动透传尚未接入，服务按 `XtQuantServerConfig` 默认启用 |
+| `stop_loss_ratio` | float | `-0.075` | 配置文件会解析；当前启动透传尚未接入，运行时可通过 `/api/v1/stop-profit/config` 更新 |
+| `initial_take_profit_ratio` | float | `0.06` | 配置文件会解析；当前启动透传尚未接入，运行时可通过 `/api/v1/stop-profit/config` 更新 |
+| `initial_take_profit_pullback_ratio` | float | `0.005` | 配置文件会解析；当前启动透传尚未接入，运行时可通过 `/api/v1/stop-profit/config` 更新 |
+| `initial_take_profit_sell_ratio` | float | `0.6` | 配置文件会解析；当前启动透传尚未接入，运行时可通过 `/api/v1/stop-profit/config` 更新 |
+| `stop_profit_interval` | float | `3.0` | 配置文件会解析；当前启动透传尚未接入，运行时字段名为 `monitor_interval` |
+| `stop_profit_dedup_seconds` | float | `60.0` | 配置文件会解析；当前 `/api/v1/stop-profit/config` 未暴露该字段，使用 `StopProfitConfig` 默认 |
 
 ## AccountConfig 参数
 
