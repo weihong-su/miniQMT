@@ -1432,8 +1432,25 @@ class PositionManager:
                     json.dump(sorted(list(current_positions)), f, indent=4, ensure_ascii=False)  # Sort for consistency
                 logger.info(f"更新 {self.stock_positions_file} with new positions.")
 
+            self._sync_runtime_stock_pool(current_positions)
+
         except Exception as e:
             logger.error(f"更新出错 {self.stock_positions_file}: {str(e)}")
+
+    def _sync_runtime_stock_pool(self, current_positions):
+        """同步运行态股票池，避免文件已更新但进程仍轮询旧股票。"""
+        runtime_pool = sorted({
+            str(code).strip()
+            for code in (current_positions or [])
+            if code is not None and str(code).strip()
+        })
+        if list(getattr(config, 'STOCK_POOL', []) or []) != runtime_pool:
+            config.STOCK_POOL = runtime_pool
+            logger.info(f"运行态股票池已同步: {runtime_pool}")
+
+        prune_func = getattr(self.data_manager, 'prune_untracked_stocks', None)
+        if callable(prune_func):
+            prune_func(runtime_pool)
 
     def _log_cleared_position_cost_warning(self, stock_code, message):
         """对清仓残留持仓的成本价告警限频，避免非交易时段刷屏。"""
@@ -4130,7 +4147,7 @@ class PositionManager:
             stock_code = self._field_any(trade, ['stock_code', 'm_strInstrumentID', '证券代码'])
             stock_code_short = self._base_stock_code(stock_code)
 
-            self._confirm_filled_order(
+            handled_by_pending = self._confirm_filled_order(
                 stock_code_short,
                 order_id,
                 "成交回报",
@@ -4138,12 +4155,22 @@ class PositionManager:
             )
 
             # 网格实盘委托只在成交回报到达后确认落账
+            grid_handled = False
             grid_manager = getattr(self, 'grid_manager', None)
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
                 try:
-                    grid_manager.handle_deal_callback(trade)
+                    grid_handled = bool(grid_manager.handle_deal_callback(trade))
                 except Exception as grid_err:
                     logger.warning(f"[GRID] 成交回调确认网格委托失败: {grid_err}")
+
+            if not handled_by_pending and not grid_handled and stock_code_short:
+                if self._has_tracked_pending_order(stock_code_short):
+                    logger.warning(
+                        f"[外部成交] {stock_code_short} order_id={order_id} 未匹配本机委托，"
+                        "但同股仍有待确认委托，跳过自动补账"
+                    )
+                else:
+                    self._record_external_trade_after_callback(stock_code_short, order_id, trade)
         except Exception as e:
             logger.error(f"_on_trade_callback 处理异常: {e}")
 
@@ -4284,17 +4311,30 @@ class PositionManager:
     def _record_trade_after_confirmation(self, order_id, order_info, trade=None):
         """成交确认后补写 trade_records；模拟模式跳过，避免测试/模拟盘误触发实盘流水。"""
         if getattr(config, 'ENABLE_SIMULATION_MODE', False):
-            return
+            return False
         try:
             from trading_executor import get_trading_executor
             trading_executor = get_trading_executor()
-            trading_executor.confirm_live_order_filled(
+            return trading_executor.confirm_live_order_filled(
                 order_id,
                 fallback_order_info=order_info,
                 deal_info=trade
             )
         except Exception as e:
             logger.warning(f"成交确认后写交易流水失败（不影响pending清理）: order_id={order_id}, error={e}")
+            return False
+
+    def _record_external_trade_after_callback(self, stock_code, order_id, trade):
+        """补写非本机发单但本机收到的 QMT 成交流水。"""
+        order_info = {
+            'stock_code': stock_code,
+            'strategy': 'external',
+            'signal_type': 'external'
+        }
+        recorded = self._record_trade_after_confirmation(order_id, order_info, trade=trade)
+        if recorded:
+            logger.info(f"[外部成交] 已确认交易流水: {stock_code} order_id={order_id}, strategy=external")
+        return recorded
 
     def _confirm_filled_order(self, stock_code, order_id, source, trade=None, order_info=None):
         """统一处理真实成交确认：清 pending、落状态、补流水、请求持仓快刷。"""
@@ -4329,6 +4369,7 @@ class PositionManager:
             self._record_trade_after_confirmation(order_id, pending_snapshot, trade=trade)
 
         self._request_immediate_position_refresh(stock_code_base, source)
+        return bool(matched_key or order_info)
 
     def _confirm_canceled_order(self, stock_code, order_id, source):
         """统一处理撤单完成确认：收到 54=已撤 后再清理旧委托，并按配置重挂。"""

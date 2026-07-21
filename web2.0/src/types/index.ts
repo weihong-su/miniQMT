@@ -81,6 +81,7 @@ export interface TradeRecord {
   trade_time: string
   trade_id: string
   strategy: string
+  strategy_label?: string
 }
 
 // ===== 买卖操作 =====

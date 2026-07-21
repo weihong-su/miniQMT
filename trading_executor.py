@@ -591,6 +591,7 @@ class TradingExecutor:
         signal_type = fallback_order_info.get('signal_type')
         strategy = (
             order_cache.get('strategy')
+            or fallback_order_info.get('strategy')
             or self._field_any(deal_info, ['strategy_name', '策略名称'])
             or self._fallback_strategy_from_signal(signal_type)
         )

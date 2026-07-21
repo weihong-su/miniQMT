@@ -13,6 +13,8 @@ xtdata 行情数据源单元测试
 import unittest
 import sys
 import os
+import json
+import tempfile
 from unittest.mock import MagicMock, patch, call, PropertyMock
 import threading
 
@@ -407,6 +409,50 @@ class TestSubscribeStocksTracking(TestBase):
         self.assertIn('000920.SZ', self.dm.subscribed_stocks)
         self.assertNotIn('301399.SZ', self.dm.subscribed_stocks)
         self.assertIn('600509.SH', self.dm.subscribed_stocks)
+
+    def test_prune_untracked_stocks_removes_subscription_and_tick_cache(self):
+        """股票移出运行态股票池后，应从订阅追踪和 tick 缓存中清理。"""
+        self.dm.subscribed_stocks = ['300105.SZ', '300990.SZ']
+        self.dm._tick_cache = {
+            '300105.SZ': {'lastPrice': 9.8},
+            '300990.SZ': {'lastPrice': 100.0},
+        }
+
+        removed = self.dm.prune_untracked_stocks(['300105'])
+
+        self.assertEqual(removed, ['300990.SZ'])
+        self.assertEqual(self.dm.subscribed_stocks, ['300105.SZ'])
+        self.assertIn('300105.SZ', self.dm._tick_cache)
+        self.assertNotIn('300990.SZ', self.dm._tick_cache)
+
+
+class TestRuntimeStockPoolSync(TestBase):
+    """验证持仓股票池文件更新后同步运行态股票池。"""
+
+    def test_update_stock_positions_file_syncs_config_stock_pool(self):
+        from position_manager import PositionManager
+
+        pm = object.__new__(PositionManager)
+        pm.data_manager = MagicMock()
+        original_pool = config.STOCK_POOL
+        saved_pool = None
+        runtime_pool = None
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pm.stock_positions_file = os.path.join(tmpdir, 'stock_pool.json')
+                config.STOCK_POOL = ['300105', '300990']
+
+                PositionManager._update_stock_positions_file(pm, {'300105'})
+                runtime_pool = list(config.STOCK_POOL)
+
+                with open(pm.stock_positions_file, 'r', encoding='utf-8') as f:
+                    saved_pool = json.load(f)
+        finally:
+            config.STOCK_POOL = original_pool
+        self.assertEqual(saved_pool, ['300105'])
+        self.assertEqual(runtime_pool, ['300105'])
+        pm.data_manager.prune_untracked_stocks.assert_called_once_with(['300105'])
 
 
 # ══════════════════════════════════════════════════════════════

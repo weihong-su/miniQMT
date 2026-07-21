@@ -640,8 +640,8 @@ class TestTradeRecords(WebAPITestBase):
             'price': 10.5,
             'volume': 1000,
             'trade_time': '2026-01-01 09:30:00',
-            'strategy': 'simu',
-            'trade_id': 'SIM001',
+            'strategy': 'external',
+            'trade_id': 'EXT001',
             'stock_name': '平安银行',
         }])
         mock_executor.get_trades.return_value = df
@@ -654,6 +654,7 @@ class TestTradeRecords(WebAPITestBase):
             extra_checks=lambda d: (
                 self.assertEqual(d.get('status'), 'success'),
                 self.assertEqual(len(d.get('data', [])), 1),
+                self.assertEqual(d.get('data', [{}])[0].get('strategy_label'), '外部'),
             ),
         )
         mock_executor.get_trades.return_value = pd.DataFrame()

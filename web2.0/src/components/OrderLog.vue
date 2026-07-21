@@ -1,6 +1,21 @@
 <script setup lang="ts">
 import { usePositionsStore } from '../stores/positions'
 const positions = usePositionsStore()
+
+const strategyLabels: Record<string, string> = {
+  simu: '模拟',
+  auto_partial: '浮盈',
+  auto_full: '止盈',
+  stop_loss: '止损',
+  grid: '网格',
+  manual: '手动',
+  external: '外部',
+  default: '默认'
+}
+
+function strategyLabel(t: any) {
+  return t.strategy_label || strategyLabels[t.strategy] || t.strategy || '--'
+}
 </script>
 
 <template>
@@ -28,7 +43,7 @@ const positions = usePositionsStore()
                 </span>
                 <span class="font-mono text-sm font-semibold text-slate-700">{{ t.stock_code }}</span>
               </div>
-              <div class="mt-1 text-xs text-slate-400">{{ t.stock_name || '--' }} · {{ t.strategy || '--' }}</div>
+              <div class="mt-1 text-xs text-slate-400">{{ t.stock_name || '--' }} · {{ strategyLabel(t) }}</div>
             </div>
             <div class="text-right">
               <div class="font-mono text-sm text-slate-700">¥{{ (t.price || 0).toFixed(2) }}</div>
@@ -63,7 +78,7 @@ const positions = usePositionsStore()
           <!-- amount -->
           <span class="font-mono text-slate-500 w-24 text-right flex-shrink-0">¥{{ ((t.price || 0) * (t.volume || 0)).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0}) }}</span>
           <!-- strategy tag -->
-          <span class="badge-slate !text-[9px] flex-shrink-0">{{ t.strategy || '--' }}</span>
+          <span class="badge-slate !text-[9px] flex-shrink-0">{{ strategyLabel(t) }}</span>
         </div>
         </div>
       </div>

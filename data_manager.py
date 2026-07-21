@@ -427,6 +427,26 @@ class DataManager:
         except Exception as e:
             logger.warning(f"xtdata 动态订阅失败: {code} - {e}")
 
+    def prune_untracked_stocks(self, active_stock_codes):
+        """移除已不在运行态股票池中的订阅和 tick 缓存记录。"""
+        active_codes = {
+            self._adjust_stock(code)
+            for code in (active_stock_codes or [])
+            if code is not None and str(code).strip()
+        }
+        before = list(getattr(self, 'subscribed_stocks', []) or [])
+        kept = [code for code in before if self._adjust_stock(code) in active_codes]
+        removed = [code for code in before if self._adjust_stock(code) not in active_codes]
+        if removed:
+            self.subscribed_stocks = kept
+            cache = getattr(self, '_tick_cache', None)
+            if isinstance(cache, dict):
+                for code in removed:
+                    cache.pop(code, None)
+                    cache.pop(str(code).split('.')[0], None)
+            logger.info(f"已清理运行态股票池外的行情订阅缓存: {removed}")
+        return removed
+
     def _verify_connection(self):
         """验证连接状态"""
         try:

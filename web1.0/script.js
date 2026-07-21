@@ -1414,6 +1414,7 @@
         stop_loss: '止损',
         grid: '网格',
         manual: '手动',
+        external: '外部',
         default: '默认'
     };
 

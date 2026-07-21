@@ -1013,6 +1013,68 @@ class TestTraderCallback(TestBase):
         self.assertEqual(rows[0][4], "DEAL_940572801")
         self.assertEqual(rows[0][5], "auto_partial")
 
+    def test_h3b_unmatched_live_deal_writes_external_trade_record(self):
+        """非本机 pending 的实盘成交回报应按 external 补写流水，并保持幂等。"""
+        executor = self._make_live_executor()
+        trade = _FakeTrade(
+            order_id=940572806,
+            stock_code="301560.SZ",
+            traded_volume=400,
+            traded_price=44.20,
+            traded_id="EXTERNAL_DEAL_940572806",
+            order_type=24,
+        )
+
+        old_sim = config.ENABLE_SIMULATION_MODE
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            with patch("trading_executor.get_trading_executor", return_value=executor), \
+                    patch.object(self.pm, "_request_immediate_position_refresh"):
+                self.pm._on_trade_callback(trade)
+                self.pm._on_trade_callback(trade)
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+
+        rows = executor.conn.execute(
+            "SELECT stock_code, trade_type, price, volume, trade_id, strategy FROM trade_records"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "301560")
+        self.assertEqual(rows[0][1], "SELL")
+        self.assertAlmostEqual(rows[0][2], 44.20)
+        self.assertEqual(rows[0][3], 400)
+        self.assertEqual(rows[0][4], "EXTERNAL_DEAL_940572806")
+        self.assertEqual(rows[0][5], "external")
+
+    def test_h3c_grid_handled_deal_does_not_write_external_record(self):
+        """网格管理器已接住的成交回报不应额外补写 external。"""
+        executor = self._make_live_executor()
+        self.pm.grid_manager = MagicMock()
+        self.pm.grid_manager.handle_deal_callback.return_value = True
+        trade = _FakeTrade(
+            order_id=940572807,
+            stock_code="301560.SZ",
+            traded_volume=400,
+            traded_price=44.20,
+            traded_id="GRID_DEAL_940572807",
+            order_type=24,
+        )
+
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_grid = config.ENABLE_GRID_TRADING
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_GRID_TRADING = True
+            with patch("trading_executor.get_trading_executor", return_value=executor), \
+                    patch.object(self.pm, "_request_immediate_position_refresh"):
+                self.pm._on_trade_callback(trade)
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_GRID_TRADING = old_grid
+
+        count = executor.conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0]
+        self.assertEqual(count, 0)
+
     def test_h4_confirm_filled_from_query_accepts_dataframe_dict_and_object(self):
         """成交兜底查询应兼容 easy/IPC/RPC DataFrame、list[dict] 和对象记录"""
         cases = [

@@ -642,6 +642,21 @@ def get_trade_records():
         # Format 'trade_time' to 'YYYY-MM-DD'
         if 'trade_time' in trades_df.columns:
             trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        if 'strategy' in trades_df.columns:
+            strategy_labels = {
+                'simu': '模拟',
+                'auto_partial': '浮盈',
+                'auto_full': '止盈',
+                'stop_loss': '止损',
+                'grid': '网格',
+                'manual': '手动',
+                'external': '外部',
+                'default': '默认',
+            }
+            trades_df['strategy_label'] = trades_df['strategy'].map(
+                lambda value: strategy_labels.get(str(value), value)
+            )
         
         # Replace NaN with None (which will become null in JSON)
         trades_df = trades_df.replace({pd.NA: None, float('nan'): None})
