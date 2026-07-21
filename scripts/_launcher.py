@@ -7,6 +7,7 @@ miniQMT 总控制台后端（被 miniqmt.bat 调用）。
   status                     查看每个账号的进程运行状态
   start [--accounts a,b] [--simulation]   启动账号（默认全部）
   stop  [--accounts a,b] [--force] [--timeout N]   停止账号
+  setup-wizard              首次部署向导：检查环境并生成本机配置骨架
   check-env                  检查 Python 版本与核心依赖
   install-deps               运行 pip install -r utils/requirements.txt
   check-config               校验 account_config.json 的合法性与 qmt_path 存在性
@@ -46,8 +47,13 @@ if sys.platform == "win32":
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH  = PROJECT_ROOT / "account_config.json"
 ENV_PATH     = PROJECT_ROOT / ".env"
+STOCK_POOL_PATH = PROJECT_ROOT / "stock_pool.json"
+XQM_CONFIG_PATH = PROJECT_ROOT / "xtquant_manager_config.json"
 MAIN_PY      = PROJECT_ROOT / "main.py"
 WEB_MODE_PREF = PROJECT_ROOT / "data" / ".web_mode"
+
+SUPPORTED_PYTHON_MIN = (3, 8)
+SUPPORTED_PYTHON_MAX = (3, 11)  # 仓库内 xtquant 二进制当前覆盖到 cp311
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +338,38 @@ CORE_DEPS = [
     "pandas", "numpy", "flask", "flask_cors", "mootdx",
     "marshmallow", "requests", "colorama",
 ]
+XQM_DEPS = [
+    "fastapi", "uvicorn", "pydantic",
+]
+RPC_DEPS = ["redis"]
 # 需要特殊处理的依赖：通过 QMT 客户端自带的 SDK 安装
 SPECIAL_DEPS = ["xtquant"]
+
+QMT_PATH_CANDIDATES = [
+    r"C:/QMT/userdata_mini",
+    r"C:/QMT1/userdata_mini",
+    r"C:/QMT2/userdata_mini",
+    r"C:/光大证券金阳光QMT实盘/userdata_mini",
+    r"D:/QMT/userdata_mini",
+    r"D:/QMT1/userdata_mini",
+    r"D:/QMT2/userdata_mini",
+    r"D:/光大证券金阳光QMT实盘/userdata_mini",
+]
+
+DEFAULT_ENV_TEXT = """# miniQMT 本机环境配置
+# 说明：空值表示未启用或不校验；不要把真实 token 提交到仓库。
+QMT_API_TOKEN=
+TUSHARE_TOKEN=
+ENABLE_TUSHARE_DATA_SOURCE=false
+ENABLE_QMT_IPC_FALLBACK=false
+ENABLE_QMT_RPC_FALLBACK=false
+QMT_RPC_TRANSPORT=redis
+QMT_RPC_REDIS_HOST=127.0.0.1
+QMT_RPC_REDIS_PORT=6379
+QMT_RPC_REDIS_DB=5
+QMT_RPC_REDIS_PASSWORD=
+QMT_RPC_ALLOW_ORDER=false
+"""
 
 
 def check_python_env() -> dict:
@@ -343,15 +379,36 @@ def check_python_env() -> dict:
         {
           "python": "3.9.x",
           "executable": "...",
+          "python_supported": True,
+          "python_issue": "",
           "missing": ["pandas", ...],          # pip 可装的缺失模块
+          "xqm_missing": ["fastapi", ...],      # web2.0 网关依赖
+          "rpc_missing": ["redis"],             # 大QMT RPC 依赖
           "special_missing": ["xtquant", ...], # 需特殊安装的缺失模块
         }
     """
     import importlib
+    major_minor = sys.version_info[:2]
+    python_supported = SUPPORTED_PYTHON_MIN <= major_minor <= SUPPORTED_PYTHON_MAX
+    python_issue = ""
+    if major_minor < SUPPORTED_PYTHON_MIN:
+        python_issue = (
+            f"当前 Python {major_minor[0]}.{major_minor[1]} 低于最低要求 "
+            f"{SUPPORTED_PYTHON_MIN[0]}.{SUPPORTED_PYTHON_MIN[1]}"
+        )
+    elif major_minor > SUPPORTED_PYTHON_MAX:
+        python_issue = (
+            f"当前 Python {major_minor[0]}.{major_minor[1]} 高于已验证范围 "
+            f"{SUPPORTED_PYTHON_MAX[0]}.{SUPPORTED_PYTHON_MAX[1]}"
+        )
     info = {
         "python": ".".join(map(str, sys.version_info[:3])),
         "executable": sys.executable,
+        "python_supported": python_supported,
+        "python_issue": python_issue,
         "missing": [],
+        "xqm_missing": [],
+        "rpc_missing": [],
         "special_missing": [],
     }
     for mod in CORE_DEPS:
@@ -359,12 +416,89 @@ def check_python_env() -> dict:
             importlib.import_module(mod)
         except Exception:
             info["missing"].append(mod)
+    for mod in XQM_DEPS:
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            info["xqm_missing"].append(mod)
+    for mod in RPC_DEPS:
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            info["rpc_missing"].append(mod)
     for mod in SPECIAL_DEPS:
         try:
             importlib.import_module(mod)
         except Exception:
             info["special_missing"].append(mod)
     return info
+
+
+def discover_qmt_paths(candidates: list[str] | None = None) -> list[str]:
+    """在常见安装位置里寻找 QMT 的 userdata_mini 目录。"""
+    found: list[str] = []
+    seen: set[str] = set()
+    for raw_path in candidates or QMT_PATH_CANDIDATES:
+        path = Path(os.path.expandvars(raw_path)).expanduser()
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.exists() and path.is_dir():
+            found.append(str(path))
+    return found
+
+
+def build_account_config(
+    account_id: str,
+    qmt_path: str,
+    account_type: str = "STOCK",
+) -> dict:
+    """构造单账号 account_config.json，保持与项目现有示例兼容。"""
+    return {
+        "account_id": account_id.strip(),
+        "account_type": (account_type.strip() or "STOCK").upper(),
+        "qmt_path": qmt_path.strip(),
+    }
+
+
+def ensure_env_file(path: Path | None = None) -> tuple[bool, Path]:
+    """确保 .env 存在；存在时不覆盖，避免误改用户 token。"""
+    target = path or ENV_PATH
+    if target.exists():
+        return False, target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(DEFAULT_ENV_TEXT, encoding="utf-8")
+    return True, target
+
+
+def ensure_stock_pool_file(path: Path | None = None) -> tuple[bool, Path]:
+    """确保 stock_pool.json 存在；默认创建空股票池。"""
+    target = path or STOCK_POOL_PATH
+    if target.exists():
+        return False, target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[]\n", encoding="utf-8")
+    return True, target
+
+
+def ensure_account_config_file(
+    account_id: str,
+    qmt_path: str,
+    account_type: str = "STOCK",
+    path: Path | None = None,
+) -> tuple[bool, Path]:
+    """确保 account_config.json 存在；存在时不覆盖。"""
+    target = path or CONFIG_PATH
+    if target.exists():
+        return False, target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_account_config(account_id, qmt_path, account_type)
+    target.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True, target
 
 
 def check_account_config() -> dict:
@@ -437,6 +571,14 @@ def cmd_check_env(_args) -> int:
     info = check_python_env()
     print(f"Python 版本 : {info['python']}")
     print(f"解释器路径  : {info['executable']}")
+    if info["python_supported"]:
+        print(
+            f"版本范围    : ✓ 已验证范围 "
+            f"{SUPPORTED_PYTHON_MIN[0]}.{SUPPORTED_PYTHON_MIN[1]}-"
+            f"{SUPPORTED_PYTHON_MAX[0]}.{SUPPORTED_PYTHON_MAX[1]}"
+        )
+    else:
+        print(f"版本范围    : ✗ {info['python_issue']}")
     print()
     if not info["missing"]:
         print("✓ PyPI 核心依赖全部已安装")
@@ -454,7 +596,176 @@ def cmd_check_env(_args) -> int:
         for m in info["special_missing"]:
             print(f"    - {m}")
         print("    具体方法见 utils/INSTALL.md")
-    return 0 if not info["missing"] and not info["special_missing"] else 1
+    print()
+    if not info["xqm_missing"]:
+        print("✓ web2.0 / xtquant_manager 依赖已安装")
+    else:
+        print("ℹ web2.0 / xtquant_manager 可选依赖未装:")
+        for m in info["xqm_missing"]:
+            print(f"    - {m}")
+    if not info["rpc_missing"]:
+        print("✓ 大QMT RPC 可选依赖已安装")
+    else:
+        print("ℹ 大QMT RPC 可选依赖未装:")
+        for m in info["rpc_missing"]:
+            print(f"    - {m}")
+    return 0 if info["python_supported"] and not info["missing"] and not info["special_missing"] else 1
+
+
+def cmd_setup_wizard(_args) -> int:
+    """首次部署向导：只生成安全默认配置，不自动安装依赖或开启实盘自动交易。"""
+    blockers: list[str] = []
+
+    def ask(prompt: str) -> str:
+        try:
+            return input(prompt).strip()
+        except (KeyboardInterrupt, EOFError):
+            return ""
+
+    print("=" * 64)
+    print("                  miniQMT 首次部署向导")
+    print("=" * 64)
+    print("本向导只做环境体检和配置骨架生成，不会自动安装依赖、不会启动实盘、不会打开自动交易总开关。")
+    print()
+
+    print("—— 1/5 Python 与依赖体检 ——")
+    info = check_python_env()
+    print(f"Python 版本 : {info['python']}")
+    print(f"解释器路径  : {info['executable']}")
+    if info["python_supported"]:
+        print("版本检查    : ✓ 通过")
+    else:
+        print(f"版本检查    : ✗ {info['python_issue']}")
+        blockers.append(info["python_issue"])
+
+    if info["missing"]:
+        print(f"核心依赖    : ✗ 缺失 {', '.join(info['missing'])}")
+        blockers.append("安装核心依赖: pip install -r utils/requirements.txt")
+    else:
+        print("核心依赖    : ✓ 通过")
+
+    if info["special_missing"]:
+        print(f"QMT SDK     : ✗ 缺失 {', '.join(info['special_missing'])}")
+        blockers.append("安装 xtquant：请按 utils/INSTALL.md 从 QMT 客户端目录配置")
+    else:
+        print("QMT SDK     : ✓ 通过")
+
+    if info["xqm_missing"]:
+        print(f"web2.0 网关 : ℹ 可选依赖未装 {', '.join(info['xqm_missing'])}")
+    else:
+        print("web2.0 网关 : ✓ 可用")
+    if info["rpc_missing"]:
+        print(f"大QMT RPC   : ℹ 可选依赖未装 {', '.join(info['rpc_missing'])}")
+    else:
+        print("大QMT RPC   : ✓ 可用")
+    print()
+
+    print("—— 2/5 本机 .env 安全默认值 ——")
+    created, env_path = ensure_env_file()
+    if created:
+        print(f"✓ 已创建 {env_path}")
+    else:
+        print(f"✓ 已存在 {env_path}，未覆盖")
+    print("  默认关闭 Tushare、IPC、RPC 与 RPC 下单权限；真实 token 后续按需填写。")
+    print()
+
+    print("—— 3/5 交易账号配置 ——")
+    if CONFIG_PATH.exists():
+        print(f"✓ 已存在 {CONFIG_PATH}，未覆盖")
+        cfg_status = check_account_config()
+        if not cfg_status["json_valid"]:
+            blockers.append(f"修正 account_config.json: {cfg_status['error']}")
+        else:
+            bad_accounts = [
+                acc for acc in cfg_status["accounts"]
+                if acc["issues"]
+            ]
+            if bad_accounts:
+                blockers.append("修正 account_config.json 中的账号 ID 或 qmt_path")
+                for acc in bad_accounts:
+                    print(f"  ✗ {acc['account_id'] or '<空账号>'}: {'; '.join(acc['issues'])}")
+            else:
+                print(f"  ✓ 检测到 {len(cfg_status['accounts'])} 个有效账号")
+    else:
+        found_paths = discover_qmt_paths()
+        if found_paths:
+            print("检测到可能的 QMT userdata_mini 目录：")
+            for i, path in enumerate(found_paths, 1):
+                print(f"  [{i}] {path}")
+        else:
+            print("未在常见位置自动发现 QMT userdata_mini 目录。")
+
+        account_id = ask("请输入交易账号 ID（留空=暂不创建 account_config.json）: ")
+        if account_id:
+            account_type = ask("账号类型（默认 STOCK）: ") or "STOCK"
+            default_qmt_path = found_paths[0] if found_paths else ""
+            if default_qmt_path:
+                qmt_path = ask(f"QMT userdata_mini 路径（留空使用 {default_qmt_path}）: ") or default_qmt_path
+            else:
+                qmt_path = ask("QMT userdata_mini 路径（例如 C:/QMT/userdata_mini，留空=暂不创建）: ")
+
+            if qmt_path:
+                ensure_account_config_file(account_id, qmt_path, account_type)
+                print(f"✓ 已创建 {CONFIG_PATH}")
+                if not Path(qmt_path).exists():
+                    print("  ⚠ 当前路径不存在，后续请确认 QMT 安装目录。")
+                    blockers.append("确认 account_config.json 中的 qmt_path 是否为真实 userdata_mini 目录")
+            else:
+                blockers.append("创建 account_config.json：需要交易账号 ID 和 QMT userdata_mini 路径")
+                print("已跳过 account_config.json 创建。")
+        else:
+            blockers.append("创建 account_config.json：需要交易账号 ID 和 QMT userdata_mini 路径")
+            print("已跳过 account_config.json 创建。")
+    print()
+
+    print("—— 4/5 股票池文件 ——")
+    created, stock_pool_path = ensure_stock_pool_file()
+    if created:
+        print(f"✓ 已创建空股票池 {stock_pool_path}")
+    else:
+        print(f"✓ 已存在 {stock_pool_path}，未覆盖")
+    print("  首次建议先保持空股票池，进入 Web 后再逐步添加。")
+    print()
+
+    print("—— 5/5 web2.0 网关配置 ——")
+    if XQM_CONFIG_PATH.exists():
+        print(f"✓ 已存在 {XQM_CONFIG_PATH}，未覆盖")
+    elif CONFIG_PATH.exists():
+        confirm = ask("是否生成 xtquant_manager_config.json（默认仅绑定 127.0.0.1）? [Y/n]: ")
+        if confirm.lower() != "n":
+            out_path = _ensure_xqm_config(host="127.0.0.1")
+            if out_path:
+                print("  ✓ 已生成本机访问配置；如需局域网访问，请设置 token 后再改 host。")
+            else:
+                print("  ⚠ 生成失败，请先检查 account_config.json。")
+        else:
+            print("已跳过 xtquant_manager_config.json 创建。")
+    else:
+        print("跳过：缺少 account_config.json。")
+    print()
+
+    print("=" * 64)
+    print("下一步建议")
+    print("=" * 64)
+    if info["missing"]:
+        print("1. 先安装核心依赖：菜单 [2] 或命令 python scripts/_launcher.py install-deps")
+    else:
+        print("1. 核心依赖已就绪，可跳过安装步骤。")
+    print("2. 运行配置检查：菜单 [3] 或命令 python scripts/_launcher.py check-config")
+    print("3. 首次启动建议使用模拟模式：菜单 [8]")
+    print("4. web1.0 默认访问：http://127.0.0.1:5000")
+    print("5. 确认 QMT 登录和模拟流程无误后，再考虑实盘与自动交易开关。")
+
+    if blockers:
+        print()
+        print("仍需处理：")
+        for item in blockers:
+            print(f"  - {item}")
+        return 1
+
+    print()
+    print("✓ 首次部署基础文件已就绪。")
+    return 0
 
 
 def cmd_install_deps(_args) -> int:
@@ -558,13 +869,13 @@ def _get_lan_ip() -> str:
 
 
 def _xqm_config_path() -> Path:
-    local = PROJECT_ROOT / "xtquant_manager_config.json"
+    local = XQM_CONFIG_PATH
     if local.exists():
         return local
     return PROJECT_ROOT / "xtquant_manager" / "standalone_config.py"
 
 
-def _ensure_xqm_config() -> Path | None:
+def _ensure_xqm_config(host: str = "0.0.0.0") -> Path | None:
     """从 account_config.json 自动生成 xtquant_manager_config.json。
     账号列表从 account_config.json 读取，其他参数使用默认值。
     """
@@ -593,7 +904,7 @@ def _ensure_xqm_config() -> Path | None:
 
     # 构建 xtquant_manager 配置
     xqm_cfg = {
-        "host": "0.0.0.0",
+        "host": host,
         "port": 8888,
         "api_token": "",
         "rate_limit": 600,
@@ -609,7 +920,7 @@ def _ensure_xqm_config() -> Path | None:
         ],
     }
 
-    out_path = PROJECT_ROOT / "xtquant_manager_config.json"
+    out_path = XQM_CONFIG_PATH
     out_path.write_text(json.dumps(xqm_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"  ✓ 已从 account_config.json 自动生成配置: {out_path}")
     print(f"    共 {len(xqm_cfg['accounts'])} 个账号")
@@ -1418,6 +1729,7 @@ def cmd_menu(_args) -> int:
         print(f"  Python   : {sys.executable}")
         print(DASH)
         print("  [首次部署 / 环境]")
+        print("   [0] 首次部署向导（新电脑推荐先运行）")
         print("   [1] 检查 Python 环境与核心依赖")
         print("   [2] 安装/更新 Python 依赖 (pip install -r utils/requirements.txt)")
         print("   [3] 检查配置文件 (account_config.json, qmt_path)")
@@ -1460,16 +1772,21 @@ def cmd_menu(_args) -> int:
         print()
         _print_xttrader_status()
         print(DASH)
-        print("   [0] 退出")
+        print("   [q] 退出")
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-p]: ").lower()
+        choice = ask("请选择 [0-9, a-q]: ").lower()
 
-        if choice == "0":
+        if choice == "q":
             print("\n再见!")
             return 0
 
         # ---- 部署 / 环境 ----
+        elif choice == "0":
+            print()
+            cmd_setup_wizard(None)
+            pause_return()
+
         elif choice == "1":
             print()
             cmd_check_env(None)
@@ -1678,6 +1995,7 @@ def main() -> int:
 
     sub.add_parser("status")
     sub.add_parser("menu")
+    sub.add_parser("setup-wizard")
     sub.add_parser("check-env")
     sub.add_parser("install-deps")
     sub.add_parser("check-config")
@@ -1700,6 +2018,7 @@ def main() -> int:
         "stop":          cmd_stop,
         "status":        cmd_status,
         "menu":          cmd_menu,
+        "setup-wizard":  cmd_setup_wizard,
         "check-env":     cmd_check_env,
         "install-deps":  cmd_install_deps,
         "check-config":  cmd_check_config,

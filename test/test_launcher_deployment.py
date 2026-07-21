@@ -3,10 +3,12 @@ scripts/_launcher.py 部署相关函数的单元测试。
 
 覆盖:
   - check_python_env() 返回字段齐全
+  - 首次部署向导的配置生成辅助函数
   - check_account_config() 能识别各种配置异常（文件不存在/JSON 非法/缺字段/
     重复 ID/qmt_path 不存在）以及全 OK 的情况
 """
 
+import io
 import json
 import os
 import shutil
@@ -27,12 +29,137 @@ class TestCheckPythonEnv(unittest.TestCase):
         info = _launcher.check_python_env()
         self.assertIn("python", info)
         self.assertIn("executable", info)
+        self.assertIn("python_supported", info)
+        self.assertIn("python_issue", info)
         self.assertIsInstance(info["missing"], list)
+        self.assertIsInstance(info["xqm_missing"], list)
+        self.assertIsInstance(info["rpc_missing"], list)
         self.assertIsInstance(info["special_missing"], list)
+        self.assertIsInstance(info["python_supported"], bool)
         # 当前测试环境一定能 import 自己（pandas 等是 miniQMT 必需依赖，应已安装）
         # 但不强求，因为某些精简 venv 可能确实缺；只断言结构正确
         self.assertRegex(info["python"], r"^\d+\.\d+\.\d+$")
         self.assertEqual(info["executable"], sys.executable)
+
+
+class TestSetupWizardHelpers(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="launcher_wizard_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_discover_qmt_paths_returns_existing_unique_paths(self):
+        existing = self.tmpdir / "QMT" / "userdata_mini"
+        existing.mkdir(parents=True)
+        missing = self.tmpdir / "missing" / "userdata_mini"
+
+        paths = _launcher.discover_qmt_paths([
+            str(missing),
+            str(existing),
+            str(existing),
+        ])
+
+        self.assertEqual(paths, [str(existing)])
+
+    def test_build_account_config_trims_values(self):
+        cfg = _launcher.build_account_config("  123456  ", "  C:/QMT/userdata_mini  ", " stock ")
+
+        self.assertEqual(cfg["account_id"], "123456")
+        self.assertEqual(cfg["account_type"], "STOCK")
+        self.assertEqual(cfg["qmt_path"], "C:/QMT/userdata_mini")
+
+    def test_ensure_env_file_creates_and_does_not_overwrite(self):
+        env_path = self.tmpdir / ".env"
+
+        created, path = _launcher.ensure_env_file(env_path)
+        self.assertTrue(created)
+        self.assertEqual(path, env_path)
+        self.assertIn("ENABLE_QMT_RPC_FALLBACK=false", env_path.read_text(encoding="utf-8"))
+
+        env_path.write_text("QMT_API_TOKEN=secret\n", encoding="utf-8")
+        created, _ = _launcher.ensure_env_file(env_path)
+        self.assertFalse(created)
+        self.assertEqual(env_path.read_text(encoding="utf-8"), "QMT_API_TOKEN=secret\n")
+
+    def test_ensure_stock_pool_file_creates_empty_pool(self):
+        pool_path = self.tmpdir / "stock_pool.json"
+
+        created, path = _launcher.ensure_stock_pool_file(pool_path)
+
+        self.assertTrue(created)
+        self.assertEqual(path, pool_path)
+        self.assertEqual(json.loads(pool_path.read_text(encoding="utf-8")), [])
+
+    def test_ensure_account_config_file_creates_single_account_config(self):
+        cfg_path = self.tmpdir / "account_config.json"
+
+        created, path = _launcher.ensure_account_config_file(
+            "ACC001",
+            "C:/QMT/userdata_mini",
+            path=cfg_path,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(path, cfg_path)
+        payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["account_id"], "ACC001")
+        self.assertEqual(payload["account_type"], "STOCK")
+        self.assertEqual(payload["qmt_path"], "C:/QMT/userdata_mini")
+
+
+class TestSetupWizardCommand(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="launcher_wizard_cmd_"))
+        self.qmt_path = self.tmpdir / "qmt" / "userdata_mini"
+        self.qmt_path.mkdir(parents=True)
+        self._orig_cfg = _launcher.CONFIG_PATH
+        self._orig_env = _launcher.ENV_PATH
+        self._orig_stock_pool = _launcher.STOCK_POOL_PATH
+        self._orig_xqm_config = _launcher.XQM_CONFIG_PATH
+        _launcher.CONFIG_PATH = self.tmpdir / "account_config.json"
+        _launcher.ENV_PATH = self.tmpdir / ".env"
+        _launcher.STOCK_POOL_PATH = self.tmpdir / "stock_pool.json"
+        _launcher.XQM_CONFIG_PATH = self.tmpdir / "xtquant_manager_config.json"
+
+    def tearDown(self):
+        _launcher.CONFIG_PATH = self._orig_cfg
+        _launcher.ENV_PATH = self._orig_env
+        _launcher.STOCK_POOL_PATH = self._orig_stock_pool
+        _launcher.XQM_CONFIG_PATH = self._orig_xqm_config
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_cmd_setup_wizard_creates_minimal_safe_files(self):
+        env_info = {
+            "python": "3.9.18",
+            "executable": sys.executable,
+            "python_supported": True,
+            "python_issue": "",
+            "missing": [],
+            "xqm_missing": [],
+            "rpc_missing": [],
+            "special_missing": [],
+        }
+
+        with patch.object(_launcher, "check_python_env", return_value=env_info), \
+             patch.object(_launcher, "discover_qmt_paths", return_value=[str(self.qmt_path)]), \
+             patch("builtins.input", side_effect=["ACC001", "", "", "y"]), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            rc = _launcher.cmd_setup_wizard(None)
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(_launcher.ENV_PATH.exists())
+        self.assertTrue(_launcher.STOCK_POOL_PATH.exists())
+        self.assertTrue(_launcher.CONFIG_PATH.exists())
+        self.assertTrue(_launcher.XQM_CONFIG_PATH.exists())
+
+        account_cfg = json.loads(_launcher.CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(account_cfg["account_id"], "ACC001")
+        self.assertEqual(account_cfg["qmt_path"], str(self.qmt_path))
+
+        xqm_cfg = json.loads(_launcher.XQM_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(xqm_cfg["host"], "127.0.0.1")
+        self.assertEqual(xqm_cfg["accounts"][0]["account_id"], "ACC001")
 
 
 class TestCheckAccountConfig(unittest.TestCase):
