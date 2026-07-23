@@ -75,6 +75,14 @@ class TestMarketDataHealthTrackerCore(unittest.TestCase):
                 stock_code="000920",
                 ok=True,
             )
+            self._record_at(
+                tracker,
+                1000,
+                source="Tushare",
+                purpose="history",
+                stock_code="000920",
+                ok=True,
+            )
             score = self._score_at(tracker, 1301, source="Mootdx")
             with patch("data_manager.time.time", return_value=1301):
                 summary = tracker.format_summary()
@@ -83,6 +91,7 @@ class TestMarketDataHealthTrackerCore(unittest.TestCase):
         self.assertEqual(score["status"], "unknown")
         self.assertEqual(score["event_count"], 0)
         self.assertIn("Mootdx=idle", summary)
+        self.assertIn("Tushare=idle", summary)
 
     def test_max_events_limits_each_source_purpose_stock_bucket(self):
         with patch.object(config, "MARKET_HEALTH_MAX_EVENTS", 3), \
