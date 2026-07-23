@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime
 import time
 import threading
+import concurrent.futures
 import sys
 import os
 import json
@@ -14,6 +15,7 @@ import config
 from logger import get_logger
 from data_manager import get_data_manager
 from easy_qmt_trader import easy_qmt_trader
+from timeout_utils import run_with_timeout
 
 
 # 获取logger
@@ -420,10 +422,13 @@ class PositionManager:
             def _refresh():
                 try:
                     self.last_position_update_time = 0
-                    positions = self.get_all_positions()
+                    timeout = config.MONITOR_CALL_TIMEOUT
+                    positions = run_with_timeout(self.get_all_positions, timeout)
                     self._increment_data_version()
                     count = 0 if positions is None else len(positions)
                     logger.info(f"[POSITION_REFRESH] {stock_code} {reason} 后已触发持仓快刷，当前缓存 {count} 条")
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"[POSITION_REFRESH] {stock_code} {reason} 持仓快刷超时({timeout}秒)，跳过本次刷新")
                 except Exception as refresh_err:
                     logger.warning(f"[POSITION_REFRESH] {stock_code} {reason} 持仓快刷失败: {refresh_err}")
 
@@ -3966,16 +3971,11 @@ class PositionManager:
                 # ⭐ 关键优化2: 更新最高价使用短超时,失败不阻塞
                 if time.time() - self.last_update_highest_time >= self.update_highest_interval:
                     try:
-                        import concurrent.futures
                         timeout = config.MONITOR_CALL_TIMEOUT
-
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(self.update_all_positions_highest_price)
-                            try:
-                                future.result(timeout=timeout)
-                            except concurrent.futures.TimeoutError:
-                                logger.warning(f"[MONITOR_TIMEOUT] 更新最高价超时({timeout}秒),跳过")
-                                # 不阻塞,继续执行
+                        run_with_timeout(self.update_all_positions_highest_price, timeout)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(f"[MONITOR_TIMEOUT] 更新最高价超时({timeout}秒),跳过")
+                        # 不阻塞,继续执行
                     except Exception as e:
                         logger.error(f"[MONITOR_ERROR] 更新最高价异常: {e}")
                         # 同样不阻塞
@@ -3986,43 +3986,39 @@ class PositionManager:
                 # ⭐ 关键优化3: 获取持仓使用短超时
                 try:
                     timeout = config.MONITOR_CALL_TIMEOUT
+                    positions_df = run_with_timeout(self.get_all_positions, timeout)
 
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(self.get_all_positions)
-                        try:
-                            positions_df = future.result(timeout=timeout)
+                    if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
+                        # qmt_connected=False 由 on_disconnected 立即设置，说明 QMT 进程已断连。
+                        # get_all_positions() 内部吞掉了 qmt_trader.position() 的异常，
+                        # 返回的是旧缓存数据——不能视为真实成功，也不能将 qmt_connected 翻回 True。
+                        consecutive_errors += 1
+                        logger.warning(
+                            f'[MONITOR] QMT 已断连，缓存数据不计为成功'
+                            f'（{consecutive_errors}/{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)}）'
+                        )
+                        if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                            logger.error(
+                                f'❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次QMT断连，触发重连'
+                            )
+                            self._attempt_qmt_reconnect()
+                        time.sleep(5)
+                        last_loop_time = time.time()
+                        continue
 
-                            if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
-                                # qmt_connected=False 由 on_disconnected 立即设置，说明 QMT 进程已断连。
-                                # get_all_positions() 内部吞掉了 qmt_trader.position() 的异常，
-                                # 返回的是旧缓存数据——不能视为真实成功，也不能将 qmt_connected 翻回 True。
-                                consecutive_errors += 1
-                                logger.warning(
-                                    f'[MONITOR] QMT 已断连，缓存数据不计为成功'
-                                    f'（{consecutive_errors}/{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)}）'
-                                )
-                                if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
-                                    logger.error(
-                                        f'❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次QMT断连，触发重连'
-                                    )
-                                    self._attempt_qmt_reconnect()
-                                time.sleep(5)
-                                last_loop_time = time.time()
-                                continue
-
-                            # QMT 连通（或模拟模式）：重置错误计数，不在此处写 qmt_connected
-                            # qmt_connected=True 由 _attempt_qmt_reconnect() 在重连成功后设置
-                            consecutive_errors = 0
-                        except concurrent.futures.TimeoutError:
-                            consecutive_errors += 1
-                            logger.warning(f"[MONITOR_TIMEOUT] 获取持仓超时,连续{consecutive_errors}次")
-                            if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
-                                logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次超时，标记断连并尝试重连")
-                                self.qmt_connected = False
-                                self._attempt_qmt_reconnect()
-                            time.sleep(5)
-                            last_loop_time = time.time()
-                            continue
+                    # QMT 连通（或模拟模式）：重置错误计数，不在此处写 qmt_connected
+                    # qmt_connected=True 由 _attempt_qmt_reconnect() 在重连成功后设置
+                    consecutive_errors = 0
+                except concurrent.futures.TimeoutError:
+                    consecutive_errors += 1
+                    logger.warning(f"[MONITOR_TIMEOUT] 获取持仓超时,连续{consecutive_errors}次")
+                    if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                        logger.error(f"❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次超时，标记断连并尝试重连")
+                        self.qmt_connected = False
+                        self._attempt_qmt_reconnect()
+                    time.sleep(5)
+                    last_loop_time = time.time()
+                    continue
                 except Exception as e:
                     consecutive_errors += 1
                     logger.error(f"[MONITOR_ERROR] 获取持仓失败: {e}")

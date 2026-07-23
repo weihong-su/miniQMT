@@ -191,28 +191,30 @@ class TestUnattendedOperation(TestBase):
         logger.info("Testing timeout protection")
 
         import concurrent.futures
+        from timeout_utils import run_with_timeout
 
         # 使用短超时以加速测试（仅验证机制，不需要实际等待生产超时）
         original_timeout = config.MONITOR_CALL_TIMEOUT
-        config.MONITOR_CALL_TIMEOUT = 0.1
-        timeout = config.MONITOR_CALL_TIMEOUT
+        blocker = threading.Event()
+        try:
+            config.MONITOR_CALL_TIMEOUT = 0.1
+            timeout = config.MONITOR_CALL_TIMEOUT
 
-        def slow_api_call():
-            """Simulate slow API call"""
-            time.sleep(0.3)  # 超过0.1秒超时阈值即可
-            return "success"
+            def stuck_api_call():
+                """Simulate stuck API call"""
+                blocker.wait(1.0)
+                return "success"
 
-        # Execute with timeout
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(slow_api_call)
+            start_time = time.time()
+            with self.assertRaises(concurrent.futures.TimeoutError):
+                run_with_timeout(stuck_api_call, timeout)
+            elapsed = time.time() - start_time
 
-            try:
-                result = future.result(timeout=timeout)
-                self.fail("Should have timed out")
-            except concurrent.futures.TimeoutError:
-                logger.info(f"API call timed out after {timeout}s (expected)")
-
-        config.MONITOR_CALL_TIMEOUT = original_timeout
+            self.assertLess(elapsed, 0.3, "Timeout helper should not wait for stuck call completion")
+            logger.info(f"API call timed out after {timeout}s in {elapsed:.3f}s (expected)")
+        finally:
+            blocker.set()
+            config.MONITOR_CALL_TIMEOUT = original_timeout
         logger.info("Timeout protection verified")
 
     def test_10_trading_hours_detection(self):
