@@ -1838,6 +1838,21 @@ class PositionManager:
 
                 # Get today's date for getStockData
                 today_formatted = datetime.now().strftime('%Y-%m-%d')
+                history_end_yyyymmdd = today_formatted.replace('-', '')
+                history_end_formatted = today_formatted
+                get_completed_end = getattr(self.data_manager, '_get_completed_history_end_date', None)
+                normalize_date = getattr(self.data_manager, '_normalize_date_arg', None)
+                if callable(get_completed_end) and callable(normalize_date):
+                    try:
+                        candidate = get_completed_end()
+                        if isinstance(candidate, (str, int, float)):
+                            normalized = normalize_date(candidate)
+                            if isinstance(normalized, str) and normalized:
+                                history_end_yyyymmdd = str(candidate).replace('-', '')[:8]
+                                history_end_formatted = normalized
+                    except Exception:
+                        history_end_yyyymmdd = today_formatted.replace('-', '')
+                        history_end_formatted = today_formatted
 
                 # ===== 使用缓存的历史最高价（避免频繁调用行情接口）=====
                 highest_price = 0.0
@@ -1864,21 +1879,28 @@ class PositionManager:
 
                     # 如果本地无数据，才尝试从行情接口拉取（日线）
                     if highest_price <= 0:
-                        try:
-                            history_data = self.data_manager.download_history_data(
-                                stock_code,
-                                period='1d',
-                                start_date=open_date_formatted.replace('-', ''),
-                                end_date=today_formatted.replace('-', '')
+                        if open_date_formatted > history_end_formatted:
+                            logger.debug(
+                                f"{stock_code} 开仓日线尚未完成("
+                                f"open={open_date_formatted}, end={history_end_formatted})，"
+                                "跳过历史最高价日线拉取"
                             )
-                            if history_data is not None and not history_data.empty:
-                                highest_price = history_data['high'].astype(float).max()
-                            else:
+                        else:
+                            try:
+                                history_data = self.data_manager.download_history_data(
+                                    stock_code,
+                                    period='1d',
+                                    start_date=open_date_formatted.replace('-', ''),
+                                    end_date=history_end_yyyymmdd
+                                )
+                                if history_data is not None and not history_data.empty:
+                                    highest_price = history_data['high'].astype(float).max()
+                                else:
+                                    highest_price = 0.0
+                                    logger.warning(f"未能获取 {stock_code} 从 {open_date_formatted} 到 {history_end_formatted} 的历史数据，跳过更新最高价")
+                            except Exception as e:
+                                logger.error(f"获取 {stock_code} 从 {open_date_formatted} 到 {history_end_formatted} 的历史数据时出错: {str(e)}")
                                 highest_price = 0.0
-                                logger.warning(f"未能获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据，跳过更新最高价")
-                        except Exception as e:
-                            logger.error(f"获取 {stock_code} 从 {open_date_formatted} 到 {today_formatted} 的历史数据时出错: {str(e)}")
-                            highest_price = 0.0
 
                     # 更新历史最高价缓存（1小时刷新一次）
                     self.history_high_cache[stock_code] = {

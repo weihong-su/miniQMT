@@ -120,3 +120,30 @@ class TestHighestPriceUpdate(TestBase):
         self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
 
         logger.info("最高价更新机制专项测试通过")
+
+    def test_intraday_new_position_skips_unfinished_daily_history(self):
+        """当天建仓且今日日线未完成时，不拉日线历史，直接用实时 high 校准最高价"""
+        stock_code = "000001.SZ"
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute(
+            "UPDATE positions SET open_date=?, highest_price=?, current_price=? WHERE stock_code=?",
+            ("2026-07-23 13:25:00", 10.0, 10.0, stock_code),
+        )
+        self.pm.memory_conn.commit()
+        self.pm.history_high_cache.clear()
+
+        self.pm.data_manager.get_history_data_from_db.return_value = pd.DataFrame()
+        self.pm.data_manager.download_history_data.reset_mock()
+        self.pm.data_manager.get_latest_data.return_value = {"high": 12.97, "lastPrice": 12.84}
+        self.pm.data_manager._get_completed_history_end_date.return_value = "20260722"
+        self.pm.data_manager._normalize_date_arg.return_value = "2026-07-22"
+
+        self.pm.update_all_positions_highest_price()
+
+        self.pm.data_manager.download_history_data.assert_not_called()
+        self.pm.data_manager.get_latest_data.assert_called()
+
+        cursor.execute("SELECT highest_price FROM positions WHERE stock_code=?", (stock_code,))
+        row = cursor.fetchone()
+        self.assertIsNotNone(row)
+        self.assertAlmostEqual(row[0], 12.97, places=2)

@@ -293,6 +293,7 @@ class DataManager:
         # 历史数据更新节流与告警降噪状态
         self._history_update_attempts = {}
         self._history_invalid_date_warnings = {}
+        self._history_no_data_warnings = {}
 
         # xtdata断连自动重连控制
         self._xtdata_reconnect_lock = threading.Lock()
@@ -871,7 +872,39 @@ class DataManager:
         self._history_invalid_date_warnings[key] = now
         return True
 
-    def _should_throttle_history_update(self, stock_code, start_date):
+    def _get_completed_history_end_date(self, now=None):
+        """返回适合日线历史数据补齐的最近已完成交易日。"""
+        current = now or datetime.now()
+        trade_days = set(getattr(config, 'TRADE_TIME', {}).get('trade_days', [1, 2, 3, 4, 5]))
+        available_after = getattr(config, 'HISTORY_TODAY_DAILY_AVAILABLE_AFTER', '15:30:00')
+
+        if current.weekday() + 1 in trade_days and current.strftime('%H:%M:%S') >= available_after:
+            return current.strftime('%Y%m%d')
+
+        day = current - timedelta(days=1)
+        while day.weekday() + 1 not in trade_days:
+            day -= timedelta(days=1)
+        return day.strftime('%Y%m%d')
+
+    def _should_log_history_no_data_warning(self, stock_code, source, reason='empty'):
+        """同一股票同一来源的历史空数据告警限频，避免生产日志刷屏。"""
+        interval = getattr(config, 'HISTORY_NO_DATA_LOG_INTERVAL_SECONDS', 300)
+        if interval <= 0:
+            return True
+
+        if not hasattr(self, '_history_no_data_warnings'):
+            self._history_no_data_warnings = {}
+
+        key = (str(stock_code), str(source), str(reason))
+        now = time.time()
+        last_time = self._history_no_data_warnings.get(key, 0)
+        if now - last_time < interval:
+            return False
+
+        self._history_no_data_warnings[key] = now
+        return True
+
+    def _should_throttle_history_update(self, stock_code, start_date, end_date=None):
         """限制同一股票同一增量窗口的历史数据重复更新频率。"""
         interval = getattr(config, 'HISTORY_UPDATE_THROTTLE_SECONDS', 300)
         if interval <= 0:
@@ -882,16 +915,23 @@ class DataManager:
 
         key = str(stock_code)
         start_key = start_date or ''
+        end_key = end_date or ''
         now = time.time()
         last = self._history_update_attempts.get(key)
-        if last and last.get('start_date') == start_key and now - last.get('time', 0) < interval:
+        if (
+            last
+            and last.get('start_date') == start_key
+            and last.get('end_date') == end_key
+            and now - last.get('time', 0) < interval
+        ):
             logger.debug(
                 f"{stock_code} 历史数据更新节流中，"
-                f"距离上次尝试 {now - last.get('time', 0):.1f}s，start={start_key or 'full'}"
+                f"距离上次尝试 {now - last.get('time', 0):.1f}s，"
+                f"start={start_key or 'full'}, end={end_key or 'default'}"
             )
             return True
 
-        self._history_update_attempts[key] = {'time': now, 'start_date': start_key}
+        self._history_update_attempts[key] = {'time': now, 'start_date': start_key, 'end_date': end_key}
         return False
 
     def _normalize_history_dates(self, data_df, stock_code, source='history'):
@@ -991,14 +1031,21 @@ class DataManager:
         pandas.DataFrame: 历史数据，若失败则返回None
         """
         # ── 历史数据源策略：xtdata 优先，Mootdx 兜底 ──
+        effective_period = period or 'day'
+        _daily_periods = ('day', '1d', 'week', '1w', 'mon', '1mon')
+        _is_daily_period = effective_period in _daily_periods
+        effective_end_date = end_date
+        if _is_daily_period and not effective_end_date:
+            effective_end_date = self._get_completed_history_end_date()
+
         _period_map = {
             'day': '1d', 'week': '1w', 'mon': '1mon',
             '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h',
             '1d': '1d',  # 直通
         }
-        xt_period = _period_map.get(period or 'day', '1d')
+        xt_period = _period_map.get(effective_period, '1d')
         xt_start_date = self._format_xt_history_date(start_date)
-        xt_end_date = self._format_xt_history_date(end_date)
+        xt_end_date = self._format_xt_history_date(effective_end_date)
         if not xt_start_date:
             xt_start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d')
 
@@ -1019,10 +1066,9 @@ class DataManager:
 
         # ── 标准模式：Tushare 优先 → Mootdx 兜底 ──
         # 仅在日线/周线/月线周期时走 Tushare（分钟线需单独购买 2000元/年权限）
-        _is_daily_period = period in ('day', '1d', 'week', '1w', 'mon', '1mon')
         if _is_daily_period and getattr(config, 'ENABLE_TUSHARE_DATA_SOURCE', False):
             ts_start_date = start_date
-            ts_end_date = end_date
+            ts_end_date = effective_end_date
             # 网关模式 xtdata 失败 fallthrough 时，日期格式已经是 YYYYMMDD
             # 标准模式直接走此路径时，日期可能为 YYYY-MM-DD 或 YYYYMMDD
             ts_df = self._download_history_tushare(
@@ -1038,19 +1084,19 @@ class DataManager:
             import Methods  # Import the Methods module
 
             # Determine frequency code for Mootdx
-            if period == 'day':
+            if effective_period == 'day':
                 freq = 9  # 日线
-            elif period == 'week':
+            elif effective_period == 'week':
                 freq = 5  # 周线
-            elif period == 'mon':
+            elif effective_period == 'mon':
                 freq = 6  # 月线
-            elif period == '5m':
+            elif effective_period == '5m':
                 freq = 0  # 5分钟
-            elif period == '15m':
+            elif effective_period == '15m':
                 freq = 1  # 15分钟
-            elif period == '30m':
+            elif effective_period == '30m':
                 freq = 2  # 30分钟
-            elif period == '1h':
+            elif effective_period == '1h':
                 freq = 3  # 小时线
             else:
                 freq = 9  # Default to 日线
@@ -1085,7 +1131,10 @@ class DataManager:
                 raise
 
             if df is None or df.empty:
-                logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据为空")
+                if self._should_log_history_no_data_warning(stock_code, 'Mootdx', 'empty'):
+                    logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据为空")
+                else:
+                    logger.debug(f"使用Mootdx获取 {stock_code} 的历史数据为空，重复告警已降噪")
                 return None
 
             # Rename columns to match expected format
@@ -1101,12 +1150,15 @@ class DataManager:
 
             df = self._normalize_history_dates(df, stock_code, source='Mootdx')
             if df.empty:
-                logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据清洗后为空")
+                if self._should_log_history_no_data_warning(stock_code, 'Mootdx', 'cleaned_empty'):
+                    logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据清洗后为空")
+                else:
+                    logger.debug(f"使用Mootdx获取 {stock_code} 的历史数据清洗后为空，重复告警已降噪")
                 return None
 
-            df = self._filter_history_date_range(df, start_date=start_date, end_date=end_date)
+            df = self._filter_history_date_range(df, start_date=start_date, end_date=effective_end_date)
             if df.empty:
-                logger.debug(f"Mootdx获取 {stock_code} 的历史数据无新增记录(start={start_date}, end={end_date})")
+                logger.debug(f"Mootdx获取 {stock_code} 的历史数据无新增记录(start={start_date}, end={effective_end_date})")
                 return None
 
             # Ensure 'close' column is numeric
@@ -2186,26 +2238,37 @@ class DataManager:
             cursor = self.conn.cursor()
             cursor.execute(latest_date_query, (stock_code,))
             result = cursor.fetchone()
-        
+
+        history_end_date = self._get_completed_history_end_date()
+        history_end_normalized = self._normalize_date_arg(history_end_date)
+
         if result and result[0]:
             latest_date = self._normalize_date_arg(result[0]) or result[0]
-            today = datetime.now().strftime('%Y-%m-%d')
-            if latest_date >= today:
-                logger.debug(f"{stock_code} 历史数据已最新(latest={latest_date})，跳过下载")
+            if history_end_normalized and latest_date >= history_end_normalized:
+                logger.debug(f"{stock_code} 历史数据已最新(latest={latest_date}, end={history_end_normalized})，跳过下载")
                 return
             # 从最新日期的下一天开始获取
             start_date = (datetime.strptime(latest_date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y%m%d')
+            start_normalized = self._normalize_date_arg(start_date)
+            if history_end_normalized and start_normalized and start_normalized > history_end_normalized:
+                logger.debug(
+                    f"{stock_code} 历史数据无已完成日线需要更新("
+                    f"start={start_normalized}, end={history_end_normalized})"
+                )
+                return
             # logger.info(f"更新 {stock_code} 的数据，从 {start_date} 开始")
         else:
             # 如果没有历史数据，获取完整的历史数据
             start_date = None
-            logger.info(f"获取 {stock_code} 的完整历史数据")
 
-        if self._should_throttle_history_update(stock_code, start_date):
+        if self._should_throttle_history_update(stock_code, start_date, history_end_date):
             return
-        
+
+        if start_date is None:
+            logger.info(f"获取 {stock_code} 的完整历史数据，截止 {history_end_date}")
+
         # 下载并保存数据
-        data_df = self.download_history_data(stock_code, start_date=start_date)
+        data_df = self.download_history_data(stock_code, start_date=start_date, end_date=history_end_date)
         if data_df is not None and not data_df.empty:
             self.save_history_data(stock_code, data_df)
     

@@ -24,6 +24,7 @@ import threading
 import logging
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
@@ -216,6 +217,40 @@ class TestCalculateAllIndicators(unittest.TestCase):
         result = calc.calculate_all_indicators(sc)
 
         self.assertFalse(result)
+
+    def test_1_6_1_no_history_warning_is_throttled(self):
+        """无历史数据时只首次 warning，节流期内后续降级为 debug"""
+        conn, days, sc = _create_db(0, 0)
+        calc = _make_calc(conn)
+
+        with patch("config.INDICATOR_EMPTY_DATA_LOG_INTERVAL_SECONDS", 300), \
+             self.assertLogs("miniQMT.ic", level="DEBUG") as cm:
+            self.assertFalse(calc.calculate_all_indicators(sc))
+            self.assertFalse(calc.calculate_all_indicators(sc))
+
+        warning_logs = [m for m in cm.output if "WARNING" in m and f"没有 {sc} 的历史数据" in m]
+        debug_logs = [m for m in cm.output if "DEBUG" in m and "重复告警已降噪" in m]
+        self.assertEqual(len(warning_logs), 1)
+        self.assertEqual(len(debug_logs), 1)
+
+    def test_1_6_2_empty_signal_warning_is_throttled(self):
+        """无指标数据时买卖信号告警分别限频"""
+        conn, days, sc = _create_db(0, 0)
+        calc = _make_calc(conn)
+
+        with patch("config.INDICATOR_EMPTY_DATA_LOG_INTERVAL_SECONDS", 300), \
+             self.assertLogs("miniQMT.ic", level="DEBUG") as cm:
+            self.assertFalse(calc.check_buy_signal(sc))
+            self.assertFalse(calc.check_buy_signal(sc))
+            self.assertFalse(calc.check_sell_signal(sc))
+            self.assertFalse(calc.check_sell_signal(sc))
+
+        buy_warnings = [m for m in cm.output if "WARNING" in m and "检查买入信号" in m]
+        sell_warnings = [m for m in cm.output if "WARNING" in m and "检查卖出信号" in m]
+        debug_logs = [m for m in cm.output if "DEBUG" in m and "重复告警已降噪" in m]
+        self.assertEqual(len(buy_warnings), 1)
+        self.assertEqual(len(sell_warnings), 1)
+        self.assertEqual(len(debug_logs), 2)
 
     # ── 1.7 BUG-01 重现：force_update 重复调用产生重复行 ─────────────────
     def test_1_7_bug01_force_update_duplicate_rows(self):

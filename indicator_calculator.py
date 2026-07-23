@@ -21,6 +21,25 @@ class IndicatorCalculator:
         """初始化指标计算器"""
         self.data_manager = get_data_manager()
         self.conn = self.data_manager.conn
+        self._empty_data_warning_times = {}
+
+    def _should_log_empty_data_warning(self, stock_code, purpose):
+        """同一股票同一指标目的的空数据告警限频。"""
+        interval = getattr(config, 'INDICATOR_EMPTY_DATA_LOG_INTERVAL_SECONDS', 300)
+        if interval <= 0:
+            return True
+
+        if not hasattr(self, '_empty_data_warning_times'):
+            self._empty_data_warning_times = {}
+
+        key = (str(stock_code), str(purpose))
+        now_ts = datetime.now().timestamp()
+        last_ts = self._empty_data_warning_times.get(key, 0)
+        if now_ts - last_ts < interval:
+            return False
+
+        self._empty_data_warning_times[key] = now_ts
+        return True
     
     def calculate_all_indicators(self, stock_code, force_update=False):
         """
@@ -37,7 +56,10 @@ class IndicatorCalculator:
             # 获取全量历史数据（用于滑动窗口计算上下文）
             df_full = self.data_manager.get_history_data_from_db(stock_code)
             if df_full.empty:
-                logger.warning(f"没有 {stock_code} 的历史数据，无法计算指标")
+                if self._should_log_empty_data_warning(stock_code, 'history'):
+                    logger.warning(f"没有 {stock_code} 的历史数据，无法计算指标")
+                else:
+                    logger.debug(f"没有 {stock_code} 的历史数据，无法计算指标，重复告警已降噪")
                 return False
 
             # 按日期排序并重置索引
@@ -300,7 +322,10 @@ class IndicatorCalculator:
             # 获取最近的指标数据
             indicators_df = self.get_indicators_history(stock_code, days=10)
             if indicators_df.empty:
-                logger.warning(f"没有足够的 {stock_code} 指标数据来检查买入信号")
+                if self._should_log_empty_data_warning(stock_code, 'buy_signal'):
+                    logger.warning(f"没有足够的 {stock_code} 指标数据来检查买入信号")
+                else:
+                    logger.debug(f"没有足够的 {stock_code} 指标数据来检查买入信号，重复告警已降噪")
                 return False
             
             # 计算MACD金叉信号
@@ -355,7 +380,10 @@ class IndicatorCalculator:
             # 获取最近的指标数据
             indicators_df = self.get_indicators_history(stock_code, days=10)
             if indicators_df.empty:
-                logger.warning(f"没有足够的 {stock_code} 指标数据来检查卖出信号")
+                if self._should_log_empty_data_warning(stock_code, 'sell_signal'):
+                    logger.warning(f"没有足够的 {stock_code} 指标数据来检查卖出信号")
+                else:
+                    logger.debug(f"没有足够的 {stock_code} 指标数据来检查卖出信号，重复告警已降噪")
                 return False
             
             # 计算MACD死叉信号
