@@ -445,6 +445,19 @@ def connection_status():
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
 
+
+@app.route('/api/macd/advice', methods=['GET'])
+def get_macd_advice():
+    """MACD 操盘建议(悬浮窗)。code 缺省时使用深证成指。"""
+    try:
+        import macd_advisor
+        code = request.args.get('code') or macd_advisor.SHENZHEN_INDEX_CODE
+        return jsonify(macd_advisor.get_advice(code))
+    except Exception as e:
+        logger.error(f"获取MACD操盘建议时出错: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """获取系统状态 - 增加超时保护"""

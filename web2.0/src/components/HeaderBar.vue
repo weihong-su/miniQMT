@@ -11,6 +11,9 @@ import { isGatewayMode } from '../api/accounts'
 import type { BuyStrategy } from '../types'
 import type { AccountEntry } from '../api/accounts'
 import ConnectionSettings from './ConnectionSettings.vue'
+import { useAdviceTooltip } from '../composables/useAdviceTooltip'
+
+const { show: showAdvice, hide: hideAdvice } = useAdviceTooltip()
 
 const system = useSystemStore()
 const config = useConfigStore()
@@ -110,7 +113,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
         <!-- Account switcher -->
         <div class="relative" ref="dropdownRef">
-          <button @click="toggleDropdown" class="flex min-h-9 max-w-[150px] sm:max-w-none items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 hover:bg-blue-100 transition-colors">
+          <button @click="toggleDropdown" class="flex min-h-9 max-w-[150px] sm:max-w-none items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 hover:bg-blue-100 transition-colors" @mouseenter="showAdvice($event, '399001.SZ')" @mouseleave="hideAdvice()">
             <span class="dot-green"></span>
             <span class="truncate">{{ system.currentAccount.label || system.currentAccount.id }}</span>
             <svg class="w-3 h-3 opacity-40 transition-transform" :class="showDropdown ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>

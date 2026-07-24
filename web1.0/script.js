@@ -12,6 +12,7 @@
         getPositionsAll: `/api/positions-all`, // 获取所有持仓数据
         getTradeRecords: `/api/trade-records`, // 获取交易记录
         getStockPool: `/api/stock_pool/list`,
+        getMacdAdvice: `/api/macd/advice`,
         // --- POST Endpoints ---
         saveConfig: `/api/config/save`,
         checkConnection: '/api/connection/status',
@@ -1223,7 +1224,7 @@
                        onmouseleave="hideGridTooltip()">
             </td>
             <td class="border p-2">${normalizedCode || '--'}</td>
-            <td class="border p-2">${stock.stock_name || stock.name || '--'}</td>
+            <td class="border p-2 cursor-help" onmouseenter="showAdviceTooltip(event, '${normalizedCode}')" onmouseleave="hideAdviceTooltip()">${stock.stock_name || stock.name || '--'}</td>
             <td class="border p-2 ${changePercentage >= 0 ? 'text-red-600' : 'text-green-600'}">${changePercentage.toFixed(2)}%</td>
             <td class="border p-2">${parseFloat(stock.current_price || 0).toFixed(2)}</td>
             <td class="border p-2">${parseFloat(stock.cost_price || 0).toFixed(2)}</td>
@@ -3421,6 +3422,52 @@
 
     // ======================= 网格Tooltip功能结束 =======================
 
+    // ======================= MACD操盘建议Tooltip =======================
+    let adviceCache = {};                    // {code: {data, timestamp}}
+    const ADVICE_CACHE_TIME = 300000;        // 5分钟缓存
+
+    async function showAdviceTooltip(event, code) {
+        if (!code) return;
+        const tooltip = document.getElementById('adviceTooltip');
+        if (!tooltip) return;
+
+        const now = Date.now();
+        const cached = adviceCache[code];
+        let data;
+        if (cached && (now - cached.timestamp < ADVICE_CACHE_TIME)) {
+            data = cached.data;
+        } else {
+            try {
+                data = await apiRequest(`${API_ENDPOINTS.getMacdAdvice}?code=${encodeURIComponent(code)}`);
+            } catch (error) {
+                console.error('加载操盘建议失败:', error);
+                return;
+            }
+            adviceCache[code] = { data, timestamp: now };
+        }
+
+        if (!data || data.status !== 'success') return;  // 数据不足/降级，不显示
+
+        const difDea = (data.dif !== null && data.dif !== undefined)
+            ? `DIF ${data.dif} / DEA ${data.dea}` : `DEA ${data.dea}`;
+        tooltip.innerHTML = `
+            <div class="advice-trend">${data.trend || ''}</div>
+            <div class="advice-line">底仓：<b>${data.base_position || '--'}</b>；网格：<b>${data.grid || '--'}</b></div>
+            <div class="advice-meta">${data.cross || ''}<br>${difDea}｜${data.updated || ''}（${data.code || code}）</div>
+        `;
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + window.scrollX}px`;
+        tooltip.style.top = `${rect.bottom + window.scrollY + 8}px`;
+        tooltip.style.display = 'block';
+    }
+
+    function hideAdviceTooltip() {
+        const tooltip = document.getElementById('adviceTooltip');
+        if (tooltip) tooltip.style.display = 'none';
+    }
+    // ======================= MACD操盘建议Tooltip结束 =======================
+
     console.log("Adding event listeners and fetching initial data...");
 
     const gridDetailCloseBtn = document.getElementById('gridDetailCloseBtn');
@@ -3445,6 +3492,8 @@
     window.applyRiskTemplate = applyRiskTemplate;
     window.showGridTooltip = showGridTooltip;
     window.hideGridTooltip = hideGridTooltip;
+    window.showAdviceTooltip = showAdviceTooltip;
+    window.hideAdviceTooltip = hideAdviceTooltip;
     window.showGridDetailDialog = showGridDetailDialog;
 });
 

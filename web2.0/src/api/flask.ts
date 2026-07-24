@@ -6,6 +6,10 @@ export async function getStatus() {
   return { account: r.account, settings: r.settings, isMonitoring: r.isMonitoring }
 }
 
+export async function getMacdAdvice(code: string) {
+  return await apiGet(`/api/macd/advice?code=${encodeURIComponent(code)}`)
+}
+
 export async function getConfig() {
   const r = await apiGet('/api/config')
   if (!r || r.status !== 'success') return null

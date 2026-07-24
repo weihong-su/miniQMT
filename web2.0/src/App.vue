@@ -14,6 +14,7 @@ import ConfigPanel from './components/ConfigPanel.vue'
 import HoldingsTable from './components/HoldingsTable.vue'
 import GridStatusPanel from './components/GridStatusPanel.vue'
 import OrderLog from './components/OrderLog.vue'
+import AdviceTooltip from './components/AdviceTooltip.vue'
 
 const system = useSystemStore()
 const config = useConfigStore()
@@ -88,4 +89,5 @@ watch(() => system.currentAccountId, () => {
       <OrderLog />
     </main>
   </div>
+  <AdviceTooltip />
 </template>

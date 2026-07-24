@@ -4,6 +4,9 @@ import { usePositionsStore } from '../stores/positions'
 import { useGridStore } from '../stores/grid'
 import { fmtPrice, fmtPercent, fmtMoney, profitClass } from '../utils/format'
 import GridConfigDialog from './GridConfigDialog.vue'
+import { useAdviceTooltip } from '../composables/useAdviceTooltip'
+
+const { show: showAdvice, hide: hideAdvice } = useAdviceTooltip()
 
 const positions = usePositionsStore()
 const grid = useGridStore()
@@ -98,7 +101,7 @@ function shortName(pos: any): string {
               {{ pos.stock_code }}
             </button>
             <div class="mt-0.5 flex min-w-0 items-center gap-1.5">
-              <span class="min-w-0 truncate text-xs text-slate-500">{{ shortName(pos) }}</span>
+              <span class="min-w-0 truncate text-xs text-slate-500 cursor-help" @mouseenter="showAdvice($event, pos.stock_code)" @mouseleave="hideAdvice()">{{ shortName(pos) }}</span>
               <span v-if="hasActiveGrid(pos)" class="badge-green !text-[9px] !px-1.5 !py-0">网格</span>
               <span v-if="pos.profit_triggered" class="badge-amber !text-[9px] !px-1.5 !py-0">止盈</span>
             </div>
@@ -177,8 +180,10 @@ function shortName(pos: any): string {
               </button>
             </td>
             <td v-for="col in COLS.slice(1)" :key="col.k"
-              :class="['px-2 py-2 whitespace-nowrap', col.c,
-                       (col.k === 'profit_ratio' || col.k === 'change_percentage') ? ((pos[col.k] ?? 0) > 0 ? 'text-red-600' : (pos[col.k] ?? 0) < 0 ? 'text-emerald-600' : 'text-slate-400') : '']">
+              :class="['px-2 py-2 whitespace-nowrap', col.c, col.k === 'stock_name' ? 'cursor-help' : '',
+                       (col.k === 'profit_ratio' || col.k === 'change_percentage') ? ((pos[col.k] ?? 0) > 0 ? 'text-red-600' : (pos[col.k] ?? 0) < 0 ? 'text-emerald-600' : 'text-slate-400') : '']"
+              @mouseenter="col.k === 'stock_name' && showAdvice($event, pos.stock_code)"
+              @mouseleave="col.k === 'stock_name' && hideAdvice()">
               <span v-if="col.k === 'profit_triggered'" class="inline-flex items-center justify-center">
                 <svg v-if="pos.profit_triggered" class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="已触发首次止盈"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                 <span v-else class="text-slate-300" title="未触发">—</span>

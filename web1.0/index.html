@@ -378,6 +378,26 @@
           font-size: 13px;
         }
 
+        .advice-tooltip {
+          display: none;
+          position: absolute;
+          background: white;
+          border: 2px solid #d97706;
+          border-radius: 8px;
+          padding: 10px 14px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+          z-index: 9999;
+          min-width: 220px;
+          max-width: 320px;
+          pointer-events: none;
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .advice-tooltip .advice-trend { font-weight: bold; font-size: 14px; margin-bottom: 6px; color: #78350f; }
+        .advice-tooltip .advice-line { color: #333; }
+        .advice-tooltip .advice-line b { color: #b45309; }
+        .advice-tooltip .advice-meta { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee; color: #888; font-size: 12px; }
+
         .tooltip-header {
           display: flex;
           justify-content: space-between;
@@ -593,7 +613,7 @@
             </div>
 
             <div class="mt-4 flex justify-between items-center">
-                 <div id="accountInfo" class="text-sm text-gray-700">
+                 <div id="accountInfo" class="text-sm text-gray-700 cursor-help" onmouseenter="showAdviceTooltip(event, '399001.SZ')" onmouseleave="hideAdviceTooltip()">
                     账号 <span id="accountId" class="font-bold">--</span>:
                     可用金额: <span id="availableBalance" class="font-bold text-green-600">--</span>
                     最高持股: <span id="maxHoldingValue" class="font-bold">--</span>
@@ -1005,6 +1025,9 @@
         点击复选框，再点“查看详情”查看交易明细
       </div>
     </div>
+
+    <!-- MACD 操盘建议悬浮窗 -->
+    <div id="adviceTooltip" class="advice-tooltip"></div>
 
     <script src="script.js"></script>
 </body>
