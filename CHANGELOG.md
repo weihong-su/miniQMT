@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed
+- **网格真实盈亏账本改为 LIFO 最近优先配对**：`grid_lots` 普通卖出优先匹配最近买入批次；`grid_lot_matches` 中先卖后买的底仓回补优先匹配最近未回补卖出，使策略绩效口径贴近“上涨卖出、回落买回”的网格闭环。
+
+### Tests
+- 使用 `C:\Users\PC\Anaconda3\envs\python39\python.exe test\run_integration_regression_tests.py --all-with-fast` 完整回归：31 组、107 模块、1963 用例，1963 通过，0 失败，0 错误，成功率 100%。
+
+### Docs
+- 更新 README、架构文档和在线网格/数据库文档中的真实账本口径说明，从 FIFO 调整为 LIFO 最近优先。
+
 ## [3.8.1] - 2026-07-15
 
 > 本版本聚焦**实盘成交确认闭环与 Web 网格状态口径修正**：动态止盈止损、补仓和网格交易均以成交确认为准写入普通成交流水；web1.0 网格悬停卡片统一真实盈亏和中心价偏离展示口径。
@@ -182,7 +191,7 @@
 - **信号执行前复核**：信号有效期（`GRID_SIGNAL_MAX_AGE_SECONDS`，60s）+ 价格漂移（`GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO`，1%）双重校验，丢弃陈旧/失真信号
 - **启动对账（startup reconcile）**：系统重启从 `grid_orders` 恢复未完成委托，查询券商当日成交/委托补记差异、关闭终态委托
 - **对手方资金/持仓预留**：下单计划扣除待成交委托占用，防止锁外窗口期重复下单超额
-- **真实盈亏账本**：新增 `grid_lots`（买入批次）+ `grid_lot_matches`（FIFO 卖出配对）表；`get_pnl_snapshot` 统一盈亏视图按数据可用性分级（`ledger_true_pnl` / `memory_true_pnl` / `cash_flow_legacy` / `fallback_market_value_ratio`），含已实现/未实现盈亏与降级标记
+- **真实盈亏账本**：新增 `grid_lots`（买入批次）+ `grid_lot_matches`（初版 FIFO 卖出配对，当前已在 Unreleased 改为 LIFO 最近优先）表；`get_pnl_snapshot` 统一盈亏视图按数据可用性分级（`ledger_true_pnl` / `memory_true_pnl` / `cash_flow_legacy` / `fallback_market_value_ratio`），含已实现/未实现盈亏与降级标记
 - **网格盈亏前端面板**：web1.0 / web2.0 新增 `GridStatusPanel`，展示利润来源、降级提示，Web API 网格端点返回 `pnl_snapshot`
 - **清仓残留持仓告警限频**（`CLEARED_POSITION_WARNING_INTERVAL`，默认 1800s）：券商盘后仍返回已清仓行时降噪，超频降为 DEBUG
 

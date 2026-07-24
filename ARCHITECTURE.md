@@ -880,11 +880,11 @@ sequenceDiagram
 | **启动对账** | — | 重启从 `grid_orders` 恢复未完成委托，查券商当日成交/委托补记差异 |
 | **对手方预留** | — | 下单计划扣除待成交委托占用的资金(买)/持仓(卖)，防锁外窗口期重复下单 |
 
-**真实盈亏账本与统一视图**：`grid_lots`（买入批次）+ `grid_lot_matches`（FIFO 卖出配对）记录每笔买卖配对，`get_pnl_snapshot` 按数据可用性分级输出盈亏：
+**真实盈亏账本与统一视图**：`grid_lots`（买入批次）+ `grid_lot_matches`（LIFO 最近优先配对）记录每笔买卖配对，`get_pnl_snapshot` 按数据可用性分级输出盈亏：
 
 | 方法 | 触发条件 |
 |------|---------|
-| `ledger_true_pnl` | 账本可用（最准确，FIFO 已实现 + 未实现） |
+| `ledger_true_pnl` | 账本可用（最准确，LIFO 已实现 + 未实现） |
 | `memory_true_pnl` | 有会话买卖量 + 行情价（现金流 + 浮动市值估算） |
 | `cash_flow_legacy` / `fallback_market_value_ratio` | 仅现金流 / 仅持仓市值（降级，标记 `is_degraded`） |
 
@@ -1101,7 +1101,7 @@ CREATE TABLE grid_orders (
 
 **用途**: 实盘下单后登记待确认委托，成交回报 `handle_deal_callback` 到达后再落账并重建网格；系统重启时据此对账恢复未完成委托。
 
-#### grid_lots (网格买入批次表，FIFO 库存)
+#### grid_lots (网格买入批次表，LIFO 库存)
 
 ```sql
 CREATE TABLE grid_lots (
@@ -1122,7 +1122,7 @@ CREATE TABLE grid_lots (
 )
 ```
 
-#### grid_lot_matches (FIFO 卖出配对表，真实盈亏)
+#### grid_lot_matches (LIFO 配对表，真实盈亏)
 
 ```sql
 CREATE TABLE grid_lot_matches (
@@ -1145,7 +1145,7 @@ CREATE TABLE grid_lot_matches (
 )
 ```
 
-**账本用途**: `grid_lots` + `grid_lot_matches` 按先进先出逐笔配对卖出与买入，计算真实已实现/未实现盈亏，供 `get_pnl_snapshot` 统一盈亏视图使用（详见[网格实盘交易机制](#网格实盘交易机制)）。
+**账本用途**: `grid_lots` + `grid_lot_matches` 按 LIFO 最近优先逐笔配对卖出与买入，计算真实已实现/未实现盈亏，供 `get_pnl_snapshot` 统一盈亏视图使用。普通卖出优先匹配最近买入批次；先卖后买的底仓回补优先匹配最近未回补卖出，贴近网格策略闭环（详见[网格实盘交易机制](#网格实盘交易机制)）。
 
 > 此外 `grid_config_templates` 表持久化用户保存的网格参数模板；`init_risk_level_templates()` 预置「激进型网格 / 稳健型网格 / 保守型网格」三档风险模板。
 
@@ -1484,7 +1484,7 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
 | v1.6 | 2026-06-27 | 同步行情源健康评分（内存观察版、不落库、`/api/market/health`）与网格启动条件默认值：`GRID_REQUIRE_PROFIT_TRIGGERED=False` |
-| v1.5 | 2026-06-13 | 新增「网格实盘交易机制」章节（成交确认/对手价/涨跌停防护/信号复核/启动对账/FIFO真实盈亏账本）；新增 grid_orders/grid_lots/grid_lot_matches 表及 grid_config_templates；grid_trading_sessions 补 total_buy_volume/total_sell_volume；修正错误表名 grid_sessions→grid_trading_sessions、目标盈利 8%→10%；修正失效文档死链 |
+| v1.5 | 2026-06-13 | 新增「网格实盘交易机制」章节（成交确认/对手价/涨跌停防护/信号复核/启动对账/真实盈亏账本）；新增 grid_orders/grid_lots/grid_lot_matches 表及 grid_config_templates；grid_trading_sessions 补 total_buy_volume/total_sell_volume；修正错误表名 grid_sessions→grid_trading_sessions、目标盈利 8%→10%；修正失效文档死链 |
 | v1.4 | 2026-03-28 | 修正数据库表结构（grid_trading_sessions/grid_trades真实字段）；修正会话状态值（active/stopped）；更新网格交易配置参数（GRID_DEFAULT_PRICE_INTERVAL等）；修正ENABLE_GRID_TRADING/ENABLE_SELL_MONITOR默认值 |
 | v1.3 | 2026-03-25 | 更新网格退出条件（止盈/止损非对称设计、双重偏离度）；新增信号三级优先级体系；记录 stop_loss 硬优先级防死锁机制 |
 | v1.2 | 2026-03-13 | 新增 QMT Fail-Safe 重连架构；XtQuantManager 三级健康监控 |

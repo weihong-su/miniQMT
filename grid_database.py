@@ -792,14 +792,14 @@ class DatabaseManager:
         return cursor.lastrowid
 
     def _record_grid_buy_lot(self, cursor, trade_data: dict):
-        """记录买入；若存在先卖出的未匹配底仓，则优先回补并确认收益。"""
+        """记录买入；若存在先卖出的未匹配底仓，则按 LIFO 最近优先回补并确认收益。"""
         remaining = int(trade_data['volume'])
         price = float(trade_data['trigger_price'])
 
         cursor.execute("""
             SELECT * FROM grid_lot_matches
             WHERE session_id=? AND match_type='unmatched' AND volume > 0
-            ORDER BY matched_at ASC, id ASC
+            ORDER BY matched_at DESC, id DESC
         """, (trade_data['session_id'],))
         unmatched_sells = cursor.fetchall()
 
@@ -872,7 +872,7 @@ class DatabaseManager:
             )
 
     def _match_grid_sell_lots(self, cursor, trade_data: dict):
-        """按 FIFO 将已确认卖出匹配到网格买入批次，未匹配部分标记为底仓卖出。"""
+        """按 LIFO 将已确认卖出匹配到网格买入批次，未匹配部分标记为底仓卖出。"""
         remaining = int(trade_data['volume'])
         sell_price = float(trade_data['trigger_price'])
         sell_trade_id = str(trade_data.get('trade_id') or '')
@@ -882,7 +882,7 @@ class DatabaseManager:
         cursor.execute("""
             SELECT * FROM grid_lots
             WHERE session_id=? AND remaining_volume > 0
-            ORDER BY opened_at ASC, id ASC
+            ORDER BY opened_at DESC, id DESC
         """, (trade_data['session_id'],))
         lots = cursor.fetchall()
 

@@ -5,7 +5,7 @@
 1. 会话状态机: 提交中停止、撤单失败、终态回调闭环、stopping 状态拒绝新信号。
 2. 下单并发: 锁外下单异常清理、提交中买入预算预占、未完成卖单数量预占。
 3. 委托回调: 超量成交钳制、部分成交后撤单状态映射、历史委托终态补偿。
-4. 真实账本: FIFO 跨 lot 匹配、未匹配卖出、账本事务原子回滚。
+4. 真实账本: LIFO 跨 lot 匹配、未匹配卖出、账本事务原子回滚。
 5. 重启恢复与退出: 孤儿委托标记、账本查询异常时降级旧 True P&L 口径。
 """
 
@@ -390,25 +390,27 @@ class TestGridOrderCallbackMece(GridMeceRegressionBase):
 
 
 class TestGridLedgerMece(GridMeceRegressionBase):
-    def test_fifo_ledger_matches_across_multiple_lots_and_marks_open_remainder(self):
+    def test_lifo_ledger_matches_across_multiple_lots_and_marks_open_remainder(self):
         session = self.make_session(max_investment=10000)
 
-        self.record_trade(session, 'BUY', 100, 10.0, 'FIFO_BUY_1')
-        self.record_trade(session, 'BUY', 100, 9.0, 'FIFO_BUY_2')
-        self.record_trade(session, 'SELL', 150, 11.0, 'FIFO_SELL_1')
+        self.record_trade(session, 'BUY', 100, 10.0, 'LIFO_BUY_1')
+        self.record_trade(session, 'BUY', 100, 9.0, 'LIFO_BUY_2')
+        self.record_trade(session, 'SELL', 150, 11.0, 'LIFO_SELL_1')
 
         lots = self.db.get_grid_lots(session.id)
         matches = self.db.get_grid_lot_matches(session.id)
         summary = self.db.get_grid_ledger_summary(session.id, current_price=12.0)
 
-        self.assertEqual([lot['remaining_volume'] for lot in lots], [0, 50])
-        self.assertEqual([lot['status'] for lot in lots], ['closed', 'open'])
+        self.assertEqual([lot['remaining_volume'] for lot in lots], [50, 0])
+        self.assertEqual([lot['status'] for lot in lots], ['open', 'closed'])
         self.assertEqual([match['volume'] for match in matches], [100, 50])
-        self.assertAlmostEqual(matches[0]['realized_pnl'], 100.0, places=2)
-        self.assertAlmostEqual(matches[1]['realized_pnl'], 100.0, places=2)
+        self.assertAlmostEqual(matches[0]['buy_price'], 9.0, places=2)
+        self.assertAlmostEqual(matches[1]['buy_price'], 10.0, places=2)
+        self.assertAlmostEqual(matches[0]['realized_pnl'], 200.0, places=2)
+        self.assertAlmostEqual(matches[1]['realized_pnl'], 50.0, places=2)
         self.assertEqual(summary['open_volume'], 50)
-        self.assertAlmostEqual(summary['open_cost'], 450.0, places=2)
-        self.assertAlmostEqual(summary['unrealized_pnl'], 150.0, places=2)
+        self.assertAlmostEqual(summary['open_cost'], 500.0, places=2)
+        self.assertAlmostEqual(summary['unrealized_pnl'], 100.0, places=2)
         self.assertAlmostEqual(summary['true_pnl'], 350.0, places=2)
 
     def test_unmatched_sell_is_recorded_without_fake_profit(self):
@@ -469,6 +471,31 @@ class TestGridLedgerMece(GridMeceRegressionBase):
         self.assertAlmostEqual(summary['true_pnl'], 166.0, places=2)
         self.assertAlmostEqual(session.current_investment, 0.0, places=2)
         self.assertAlmostEqual(db_session['current_investment'], 0.0, places=2)
+
+    def test_sell_first_buy_back_matches_latest_unmatched_sell(self):
+        session = self.make_session(stock_code='600509.SH', max_investment=20000, position_ratio=0.2)
+
+        self.record_trade(session, 'SELL', 700, 7.60, 'SELL_LOW_FIRST')
+        self.record_trade(session, 'SELL', 600, 8.006666666666666, 'SELL_HIGH_LATEST')
+        self.record_trade(session, 'BUY', 400, 7.66, 'BUY_BACK_LATEST')
+
+        matches = self.db.get_grid_lot_matches(session.id)
+        summary = self.db.get_grid_ledger_summary(session.id, current_price=7.66)
+
+        matched = [m for m in matches if m['match_type'] == 'matched']
+        unmatched = [m for m in matches if m['match_type'] == 'unmatched']
+
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]['sell_trade_id'], 'SELL_HIGH_LATEST')
+        self.assertEqual(matched[0]['volume'], 400)
+        self.assertAlmostEqual(matched[0]['sell_price'], 8.006666666666666, places=6)
+        self.assertAlmostEqual(matched[0]['buy_price'], 7.66, places=2)
+        self.assertAlmostEqual(matched[0]['realized_pnl'], 138.66666666666632, places=2)
+        self.assertEqual(sum(m['volume'] for m in unmatched), 900)
+        self.assertEqual(summary['matched_volume'], 400)
+        self.assertEqual(summary['unmatched_volume'], 900)
+        self.assertAlmostEqual(summary['realized_pnl'], 138.66666666666632, places=2)
+        self.assertAlmostEqual(summary['true_pnl'], 138.66666666666632, places=2)
 
     def test_rebuild_ledger_repairs_historical_sell_first_open_buy_lot(self):
         session = self.make_session(stock_code='003025.SZ', max_investment=25000, position_ratio=0.2)

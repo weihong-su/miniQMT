@@ -4,7 +4,7 @@
 覆盖:
 1. 停止策略时对未完成网格委托发起撤单，并等待终态后再清理会话
 2. execute_grid_trade 在锁外调用交易执行器，避免 QMT 卡顿阻塞网格全局锁
-3. 真实网格账本按 FIFO lot 匹配，退出盈亏优先使用账本口径
+3. 真实网格账本按 LIFO lot 匹配，退出盈亏优先使用账本口径
 """
 
 import os
@@ -277,7 +277,7 @@ class TestGridRealLedger(GridLifecycleLedgerBase):
         self.assertEqual(len(self.manager.pending_grid_orders), 0)
         self.assertEqual(len(self.db.get_grid_lots(session.id)), 1)
 
-    def test_buy_creates_lot_and_sell_fifo_matches_realized_pnl(self):
+    def test_buy_creates_lot_and_sell_lifo_matches_realized_pnl(self):
         config.ENABLE_SIMULATION_MODE = True
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = False
         session = self.make_session(max_investment=10000)
