@@ -1,0 +1,4215 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="无人值守量化交易系统 + XtQuantManager HTTP 网关">
+      
+      
+      
+        <link rel="canonical" href="https://weihong-su.github.io/miniQMT/miniqmt/configuration/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../stop-profit-loss/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>配置参考 - miniQMT 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="miniQMT 文档" class="md-header__button md-logo" aria-label="miniQMT 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            miniQMT 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              配置参考
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换深色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换深色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换浅色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换浅色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/weihong-su/miniQMT" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    weihong-su/miniQMT
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  miniQMT 核心系统
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../xqm/" class="md-tabs__link">
+          
+  
+  
+  XtQuantManager
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/" class="md-tabs__link">
+          
+  
+  
+  源码 API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  变更日志
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../license/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  许可证
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="miniQMT 文档" class="md-nav__button md-logo" aria-label="miniQMT 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    miniQMT 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/weihong-su/miniQMT" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    weihong-su/miniQMT
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    miniQMT 核心系统
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    miniQMT 核心系统
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置参考
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心功能开关
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置开关全景图
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置开关全景图">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        图 1 · 功能投退与执行逻辑
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        图 2 · 数据源与交易通道切换
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        交易通道配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="交易通道配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#xtquantmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        XtQuantManager 网关参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#qmtipc-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        大QMT文件IPC Fallback 参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#qmt-rpc-rediszmq-fallback-v370" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        大QMT RPC (Redis/ZMQ) Fallback 参数 [v3.7.0]
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        交易参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        止盈止损参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="止盈止损参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        动态止盈档位
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        卖出委托超时与重挂参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格交易参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="网格交易参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enable_simulation_mode-false" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格实盘交易参数（仅 ENABLE_SIMULATION_MODE = False 生效）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        线程与监控参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#web" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web 服务参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        行情与历史数据参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="行情与历史数据参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tushare-pro" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tushare Pro 数据源参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        行情源健康评分参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据库维护与日志轮转参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        发布版本号
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动买入配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        日志参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置文件格式
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置文件格式">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#account_configjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        account_config.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stock_pooljson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stock_pool.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stop-profit-loss/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    止盈止损策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grid-trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网格交易
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autobuy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自动买入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../qmt-ipc-fallback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    大QMT文件 IPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../qmt-rpc-redis-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    大QMT RPC Redis 部署
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web-frontend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web 前端（web1.0 / web2.0）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unattended/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    无人值守运行
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据库表结构
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试框架
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    XtQuantManager
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    XtQuantManager
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    配置指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/single-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    单账号（开发/测试）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/dual-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    双账号（多策略）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/lan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    局域网共享
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/embedded/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    嵌入 miniQMT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/unattended/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    无人值守
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    全量参数参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 手册
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API 手册
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    账号管理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    交易操作
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/market/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    行情接口
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/curl-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    curl 速查表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    使用指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    使用指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/multi-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多账号实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安全配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/miniqmt-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    与 miniQMT 集成
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参考
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    参考
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/service-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    服务管理脚本
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    源码 API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    源码 API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网格交易
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    网格交易
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-trading-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_trading_manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持仓与执行
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    持仓与执行
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/position-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    position_manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    XtQuantManager
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    XtQuantManager
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-health/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    health_monitor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-stop-profit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stop_profit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    变更日志
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../license/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    许可证
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心功能开关
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置开关全景图
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置开关全景图">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        图 1 · 功能投退与执行逻辑
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        图 2 · 数据源与交易通道切换
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        交易通道配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="交易通道配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#xtquantmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        XtQuantManager 网关参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#qmtipc-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        大QMT文件IPC Fallback 参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#qmt-rpc-rediszmq-fallback-v370" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        大QMT RPC (Redis/ZMQ) Fallback 参数 [v3.7.0]
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        交易参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        止盈止损参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="止盈止损参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        动态止盈档位
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        卖出委托超时与重挂参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格交易参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="网格交易参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enable_simulation_mode-false" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格实盘交易参数（仅 ENABLE_SIMULATION_MODE = False 生效）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        线程与监控参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#web" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web 服务参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        行情与历史数据参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="行情与历史数据参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tushare-pro" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tushare Pro 数据源参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        行情源健康评分参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据库维护与日志轮转参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        发布版本号
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动买入配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        日志参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置文件格式
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置文件格式">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#account_configjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        account_config.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stock_pooljson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stock_pool.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="_1">配置参考<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>所有可配置参数集中在 <code>config.py</code> 中。<strong>严禁在业务代码中硬编码魔法数字。</strong></p>
+<hr />
+<h2 id="_2">核心功能开关<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_SIMULATION_MODE</code></td>
+<td><code>True</code></td>
+<td><code>True</code> = 模拟，<code>False</code> = 实盘</td>
+</tr>
+<tr>
+<td><code>ENABLE_AUTO_OPERATION</code></td>
+<td><code>False</code></td>
+<td>全局自动操作总开关；关闭时动态止盈止损和网格交易都不产生新单；运行时开关，不持久化</td>
+</tr>
+<tr>
+<td><code>ENABLE_AUTO_TRADING</code></td>
+<td><code>False</code></td>
+<td>自动止盈分开关（动态止盈止损自动执行，不影响网格）；持久化</td>
+</tr>
+<tr>
+<td><code>ENABLE_DYNAMIC_STOP_PROFIT</code></td>
+<td><code>True</code></td>
+<td>动态止盈止损功能</td>
+</tr>
+<tr>
+<td><code>ENABLE_GRID_TRADING</code></td>
+<td><code>True</code></td>
+<td>自动网格分开关；持久化</td>
+</tr>
+<tr>
+<td><code>ENABLE_ALLOW_BUY</code></td>
+<td><code>True</code></td>
+<td>允许买入</td>
+</tr>
+<tr>
+<td><code>ENABLE_ALLOW_SELL</code></td>
+<td><code>True</code></td>
+<td>允许卖出</td>
+</tr>
+<tr>
+<td><code>DEBUG</code></td>
+<td><code>False</code></td>
+<td>调试模式</td>
+</tr>
+<tr>
+<td><code>DEBUG_SIMU_STOCK_DATA</code></td>
+<td><code>False</code></td>
+<td>模拟股票数据（绕过交易时间限制）</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title">实盘交易前必须检查</p>
+<ol>
+<li><code>ENABLE_SIMULATION_MODE = False</code></li>
+<li><code>ENABLE_AUTO_OPERATION = True</code></li>
+<li>按需打开分开关：<code>ENABLE_AUTO_TRADING = True</code>（动态止盈止损）和/或 <code>ENABLE_GRID_TRADING = True</code>（网格交易）</li>
+<li>QMT 客户端已启动并登录</li>
+<li><code>account_config.json</code> 配置正确</li>
+</ol>
+</div>
+<div class="admonition info">
+<p class="admonition-title">三层开关关系</p>
+<p>自动操作采用“总开关 → 策略分开关 → 个股开关”的结构：<code>ENABLE_AUTO_OPERATION</code> 是所有自动策略的新单总闸；<code>ENABLE_AUTO_TRADING</code> 只控制动态止盈止损等非网格策略；<code>ENABLE_GRID_TRADING</code> 控制网格模块；单个网格会话还可通过 <code>grid_trading_sessions.enabled</code> 在 Web 中切换“自动/暂停”。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">持久化规则</p>
+<p>Web1.0 的“开始/停止自动操作”按钮对应 <code>ENABLE_AUTO_OPERATION</code>，只在当前进程运行时生效；API Token 同一行的“模拟交易模式”“允许自动止盈”“允许自动网格”分别对应 <code>ENABLE_SIMULATION_MODE</code>、<code>ENABLE_AUTO_TRADING</code>、<code>ENABLE_GRID_TRADING</code>，其中自动止盈和自动网格会保存到配置数据库并在下次启动恢复。</p>
+</div>
+<hr />
+<h2 id="_3">配置开关全景图<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>下面两张图把 <code>config.py</code> 的核心开关映射到<strong>功能投退 / 执行逻辑</strong>和<strong>数据源 / 交易通道切换</strong>，帮助一眼看清每个开关控制什么。</p>
+<h3 id="1">图 1 · 功能投退与执行逻辑<a class="headerlink" href="#1" title="Permanent link">&para;</a></h3>
+<p>信号检测始终运行；<code>ENABLE_AUTO_OPERATION</code> 是所有自动策略的总闸，下面挂两个策略分开关，网格再细分到单只股票会话，最后由 <code>ENABLE_SIMULATION_MODE</code> 决定走模拟还是实盘通道。</p>
+<pre class="mermaid"><code>flowchart TD
+    MON["持仓监控线程（始终运行，每 3s）"] --&gt; SIG["信号检测 → latest_signals 队列"]
+
+    SIG --&gt; OP{"ENABLE_AUTO_OPERATION&lt;br/&gt;全局自动操作总闸"}
+    OP --&gt;|False| STOP["只监控、不产生新单"]
+    OP --&gt;|True| AT{"ENABLE_AUTO_TRADING&lt;br/&gt;非网格策略分开关"}
+    OP --&gt;|True| GT{"ENABLE_GRID_TRADING&lt;br/&gt;网格分开关"}
+
+    AT --&gt;|True| SP{"ENABLE_DYNAMIC_STOP_PROFIT"}
+    SP --&gt;|True| SPX["动态止盈止损信号"]
+    GT --&gt;|True| GSESS{"grid_trading_sessions.enabled&lt;br/&gt;单只股票网格开关"}
+    GSESS --&gt;|自动| GRID["网格买卖信号"]
+    GSESS --&gt;|暂停| GPAUSE["保留会话、不发新网格单"]
+
+    SPX --&gt; EXEC["trading_executor 交易执行"]
+    GRID --&gt; EXEC
+
+    EXEC --&gt; BUYSELL{"ENABLE_ALLOW_BUY / ENABLE_ALLOW_SELL"}
+    BUYSELL --&gt; SIM{"ENABLE_SIMULATION_MODE"}
+    SIM --&gt;|True 模拟| SIMU["模拟成交（SIMULATION_BALANCE 扣减）"]
+    SIM --&gt;|False 实盘| REAL["真实下单 → 交易通道（见图 2）"]</code></pre>
+<h3 id="2">图 2 · 数据源与交易通道切换<a class="headerlink" href="#2" title="Permanent link">&para;</a></h3>
+<p>交易通道由工厂函数 <code>_create_qmt_trader()</code> 四选一（三开关互斥）；行情/历史/名称三条数据链各有独立的降级顺序和开关门控。</p>
+<pre class="mermaid"><code>flowchart TD
+    subgraph CH["交易通道（下单 / 查持仓 / 查资产）"]
+        direction LR
+        F{"_create_qmt_trader()"}
+        F --&gt;|默认| EASY["easy_qmt_trader&lt;br/&gt;xttrader 直连"]
+        F --&gt;|ENABLE_XTQUANT_MANAGER| XQM["XtQuantClient&lt;br/&gt;HTTP 网关 :8888"]
+        F --&gt;|ENABLE_QMT_IPC_FALLBACK| IPC["QmtIpcTrader&lt;br/&gt;大QMT 文件 IPC"]
+        F --&gt;|ENABLE_QMT_RPC_FALLBACK| RPC["QmtRpcTrader&lt;br/&gt;大QMT RPC Redis/ZMQ"]
+    end
+
+    subgraph RT["实时行情 get_latest_data"]
+        direction TB
+        RT1["xtdata get_full_tick"] --&gt;|失败/超时| RT2["Mootdx 兜底"]
+    end
+
+    subgraph HIS["历史 K 线 download_history_data"]
+        direction TB
+        HGW{"ENABLE_XTQUANT_MANAGER?"}
+        HGW --&gt;|网关模式| HXT["xtdata"]
+        HXT --&gt;|失败/空| HTS{"ENABLE_TUSHARE_DATA_SOURCE?"}
+        HGW --&gt;|标准模式| HTS
+        HTS --&gt;|True| HTS2["Tushare 优先"]
+        HTS2 --&gt;|失败/空| HMO["Mootdx 兜底"]
+        HTS --&gt;|False| HMO
+    end
+
+    subgraph NAME["股票名称 get_stock_name（逐层降级）"]
+        direction TB
+        N1["内存缓存"] --&gt; N2["QMT 持仓"] --&gt; N3["xtdata"] --&gt; N4{"Tushare&lt;br/&gt;ENABLE_TUSHARE_DATA_SOURCE"} --&gt; N5{"baostock&lt;br/&gt;ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP"} --&gt; N6["返回代码兜底"]
+    end</code></pre>
+<div class="admonition warning">
+<p class="admonition-title">xtdata 历史接口的 BSON 崩溃约束</p>
+<p>标准模式（<code>ENABLE_XTQUANT_MANAGER=False</code>）下历史数据<strong>绝不走 xtdata</strong>，因为部分 QMT 客户端的 <code>get_market_data_ex</code> 会触发底层 BSON 断言直接 abort 进程，<code>try/except</code> 与超时都拦不住。因此标准模式的历史链是 <code>Tushare → Mootdx</code>，只有网关模式才用 xtdata 拉历史。</p>
+</div>
+<hr />
+<h2 id="_4">交易通道配置<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>交易接口（下单/撤单/查持仓/查资产）由 <code>position_manager._create_qmt_trader()</code> 工厂四选一，三个开关互斥：</p>
+<table>
+<thead>
+<tr>
+<th>开关组合</th>
+<th>交易通道</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>都为 <code>False</code>（默认）</td>
+<td><code>easy_qmt_trader</code>（xttrader 直连）</td>
+<td>单机直连 QMT，最低延迟</td>
+</tr>
+<tr>
+<td><code>ENABLE_XTQUANT_MANAGER=True</code></td>
+<td><code>XtQuantClient</code>（HTTP 网关 :8888）</td>
+<td>多账号统一入口、远程 API</td>
+</tr>
+<tr>
+<td><code>ENABLE_QMT_IPC_FALLBACK=True</code></td>
+<td><code>QmtIpcTrader</code>（大QMT 文件 IPC）</td>
+<td>xttrader 失效时的降级：用大QMT自带授权，文件系统 IPC</td>
+</tr>
+<tr>
+<td><code>ENABLE_QMT_RPC_FALLBACK=True</code></td>
+<td><code>QmtRpcTrader</code>（大QMT RPC）</td>
+<td>xttrader 失效时的降级：Redis/ZMQ RPC 驱动大QMT，毫秒级延迟</td>
+</tr>
+</tbody>
+</table>
+<h3 id="xtquantmanager">XtQuantManager 网关参数<a class="headerlink" href="#xtquantmanager" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_XTQUANT_MANAGER</code></td>
+<td><code>False</code></td>
+<td>启用后所有交易/行情走 HTTP 网关</td>
+</tr>
+<tr>
+<td><code>XTQUANT_MANAGER_URL</code></td>
+<td><code>"http://127.0.0.1:8888"</code></td>
+<td>网关服务地址</td>
+</tr>
+<tr>
+<td><code>XTQUANT_MANAGER_TOKEN</code></td>
+<td><code>""</code></td>
+<td>网关 API Token（空=不验证）</td>
+</tr>
+<tr>
+<td><code>XTQUANT_MANAGER_RATE_LIMIT</code></td>
+<td><code>600</code></td>
+<td>速率限制（次/分钟，0=不限速）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="qmtipc-fallback">大QMT文件IPC Fallback 参数<a class="headerlink" href="#qmtipc-fallback" title="Permanent link">&para;</a></h3>
+<p>启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（<code>QMT_trade_executor.py</code>）读取执行。多账号自动隔离到 <code>{QMT_IPC_ROOT}/{account_id}/</code> 子目录。部署见 <a href="https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md">qmt-trader/部署手册.md</a>，调试经验见 <a href="../qmt-ipc-fallback/">大QMT文件 IPC Fallback</a>。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_QMT_IPC_FALLBACK</code></td>
+<td><code>False</code>（环境变量 <code>ENABLE_QMT_IPC_FALLBACK</code>）</td>
+<td>大QMT文件IPC 交易通道总开关；与 <code>ENABLE_XTQUANT_MANAGER</code> 互斥</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_ROOT</code></td>
+<td><code>"C:\QuantIPC"</code>（环境变量 <code>QMT_IPC_ROOT</code>）</td>
+<td>IPC 文件目录，策略端与大QMT端必须一致</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_ORDER_TIMEOUT</code></td>
+<td><code>30</code></td>
+<td>下单后等待成交回执最大秒数</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_HEARTBEAT_MAX_AGE</code></td>
+<td><code>10</code></td>
+<td>心跳超过此秒数判定大QMT离线</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_DEAL_POLL_INTERVAL</code></td>
+<td><code>1.0</code></td>
+<td>成交回报轮询间隔（秒）</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_DONE_LOOKBACK_SECONDS</code></td>
+<td><code>86400</code></td>
+<td>done/ 目录委托查询回溯窗口（秒）</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_LOG_MAX_BYTES</code></td>
+<td><code>5242880</code></td>
+<td>大QMT端单个日志文件大小上限；设为 <code>0</code> 表示关闭大小轮转</td>
+</tr>
+<tr>
+<td><code>QMT_IPC_LOG_BACKUP_COUNT</code></td>
+<td><code>5</code></td>
+<td>大QMT端每日日志轮转备份数量</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">控制台快捷配置</p>
+<p><code>miniqmt.bat</code> 菜单 <code>[n] Tushare Pro 数据源配置</code> / <code>[o] 大QMT IPC Trader 配置</code> / <code>[p] XtTrader 通道总控</code> 可直接切换通道、改 RPC/Redis/目录等配置。</p>
+</div>
+<h3 id="qmt-rpc-rediszmq-fallback-v370">大QMT RPC (Redis/ZMQ) Fallback 参数  [v3.7.0]<a class="headerlink" href="#qmt-rpc-rediszmq-fallback-v370" title="Permanent link">&para;</a></h3>
+<p>启用后通过 Redis（或 ZMQ）RPC 驱动大QMT策略进程执行交易，延迟毫秒级，可跨机部署。部署前提：安装 Redis 服务（推荐 Memurai），大QMT 端运行 <code>BIGQMT_REDIS_DRYRUN.py</code>。详见 <a href="../qmt-rpc-redis-setup/">大QMT RPC Redis 部署</a> 和 <a href="https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC方案.md">qmt-trader/大QMT-RPC方案.md</a>。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_QMT_RPC_FALLBACK</code></td>
+<td><code>False</code>（环境变量 <code>ENABLE_QMT_RPC_FALLBACK</code>）</td>
+<td>大QMT RPC 交易通道总开关；与前两个开关互斥</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_TRANSPORT</code></td>
+<td><code>"redis"</code>（环境变量 <code>QMT_RPC_TRANSPORT</code>）</td>
+<td>传输方式：<code>redis</code>(生产)、<code>zmq</code>(低延迟)、<code>mysql</code>(兜底)</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_REDIS_HOST</code></td>
+<td><code>"127.0.0.1"</code></td>
+<td>Redis 主机地址（两端一致）</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_REDIS_PORT</code></td>
+<td><code>6379</code></td>
+<td>Redis 端口</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_REDIS_DB</code></td>
+<td><code>5</code></td>
+<td>Redis 库号（两端一致）</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_REDIS_PASSWORD</code></td>
+<td><code>""</code></td>
+<td>Redis 密码（⚠️ 切勿硬编码）</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_TIMEOUT_SECONDS</code></td>
+<td><code>6.0</code></td>
+<td>RPC 请求超时（秒）</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_ORDER_TIMEOUT</code></td>
+<td><code>30</code></td>
+<td>下单后等待成交回执最大秒数</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_DEAL_POLL_INTERVAL</code></td>
+<td><code>1.0</code></td>
+<td>成交/委托回报轮询兜底间隔（秒）</td>
+</tr>
+<tr>
+<td><code>QMT_RPC_ALLOW_ORDER</code></td>
+<td><code>False</code>（环境变量 <code>QMT_RPC_ALLOW_ORDER</code>）</td>
+<td>下单二次确认开关：<code>False</code> 时即使 <code>ENABLE_QMT_RPC_FALLBACK=True</code> 也拒绝真实下单（只读安全），联调无误后再改为 <code>True</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_5">交易参数<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POSITION_UNIT</code></td>
+<td><code>35000</code></td>
+<td>单次买入金额（元）</td>
+</tr>
+<tr>
+<td><code>MAX_POSITION_VALUE</code></td>
+<td><code>70000</code></td>
+<td>单只股票最大持仓市值（元）</td>
+</tr>
+<tr>
+<td><code>MAX_TOTAL_POSITION_RATIO</code></td>
+<td><code>0.95</code></td>
+<td>总持仓占比上限（95%）</td>
+</tr>
+<tr>
+<td><code>SIMULATION_BALANCE</code></td>
+<td><code>1000000</code></td>
+<td>模拟模式初始资金（元）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_6">止盈止损参数<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>STOP_LOSS_RATIO</code></td>
+<td><code>-0.075</code></td>
+<td>止损比例：成本价下跌 7.5%</td>
+</tr>
+<tr>
+<td><code>INITIAL_TAKE_PROFIT_RATIO</code></td>
+<td><code>0.06</code></td>
+<td>首次止盈触发：盈利 6%</td>
+</tr>
+<tr>
+<td><code>INITIAL_TAKE_PROFIT_PULLBACK_RATIO</code></td>
+<td><code>0.005</code></td>
+<td>首次止盈回撤触发：从高点回落 0.5%</td>
+</tr>
+<tr>
+<td><code>INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE</code></td>
+<td><code>0.6</code></td>
+<td>首次止盈卖出比例：60%</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">动态止盈档位<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">DYNAMIC_TAKE_PROFIT</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="p">(</span><span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.96</span><span class="p">),</span>   <span class="c1"># 最高浮盈 5% 时，止盈位 = 最高价 × 96%</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="p">(</span><span class="mf">0.10</span><span class="p">,</span> <span class="mf">0.93</span><span class="p">),</span>   <span class="c1"># 最高浮盈 10% 时，止盈位 = 最高价 × 93%</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="p">(</span><span class="mf">0.15</span><span class="p">,</span> <span class="mf">0.90</span><span class="p">),</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="p">(</span><span class="mf">0.20</span><span class="p">,</span> <span class="mf">0.87</span><span class="p">),</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="p">(</span><span class="mf">0.30</span><span class="p">,</span> <span class="mf">0.85</span><span class="p">),</span>   <span class="c1"># 最高浮盈 30% 时，止盈位 = 最高价 × 85%</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">]</span>
+</code></pre></div>
+<h3 id="_8">卖出委托超时与重挂参数<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_PENDING_ORDER_AUTO_CANCEL</code></td>
+<td><code>True</code></td>
+<td>启用后，止盈止损卖出委托超时未成交时自动撤单</td>
+</tr>
+<tr>
+<td><code>PENDING_ORDER_TIMEOUT_MINUTES</code></td>
+<td><code>5</code></td>
+<td>普通止盈委托超时阈值（分钟）</td>
+</tr>
+<tr>
+<td><code>STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES</code></td>
+<td><code>0.5</code></td>
+<td>止损委托超时阈值（分钟），默认 30 秒后更快撤单重挂</td>
+</tr>
+<tr>
+<td><code>PENDING_ORDER_AUTO_REORDER</code></td>
+<td><code>True</code></td>
+<td>撤单成功后是否自动重新挂单</td>
+</tr>
+<tr>
+<td><code>PENDING_ORDER_REORDER_PRICE_MODE</code></td>
+<td><code>"best"</code></td>
+<td>重挂价格模式：<code>market</code>=最新价，<code>limit</code>=原信号价，<code>best</code>=对手价</td>
+</tr>
+<tr>
+<td><code>ALLOW_TAKE_PROFIT_FULL_WITH_PENDING</code></td>
+<td><code>False</code></td>
+<td>全仓止盈是否允许跳过活跃委托检查；生产建议保持 <code>False</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">首次止盈状态以成交为准</p>
+<p>实盘 <code>take_profit_half</code> 委托提交成功后不会立即标记 <code>profit_triggered=True</code>，只有成交回报确认后才写入内存与 SQLite。已有本地跟踪委托或 QMT 活跃委托时，同一股票新的动态止盈止损信号会被阻断，防止重复卖出。</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">对手价重挂兜底</p>
+<p><code>PENDING_ORDER_REORDER_PRICE_MODE="best"</code> 时，卖单优先使用买三价；若买三价为 <code>0</code> 或缺失，会按买一价、最新价、收盘价、原信号价逐级降级。<code>sell_stock(price=0)</code> 同样会自动改为获取有效买盘/最新价。</p>
+</div>
+<hr />
+<h2 id="_9">网格交易参数<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GRID_CALLBACK_RATIO</code></td>
+<td><code>0.005</code></td>
+<td>回调触发比例（0.5%）</td>
+</tr>
+<tr>
+<td><code>GRID_LEVEL_COOLDOWN</code></td>
+<td><code>60</code></td>
+<td>同一档位冷却时间（秒）</td>
+</tr>
+<tr>
+<td><code>GRID_BUY_COOLDOWN</code></td>
+<td><code>300</code></td>
+<td>买入成功后冷却（秒）</td>
+</tr>
+<tr>
+<td><code>GRID_SELL_COOLDOWN</code></td>
+<td><code>300</code></td>
+<td>卖出成功后冷却（秒）</td>
+</tr>
+<tr>
+<td><code>GRID_REQUIRE_PROFIT_TRIGGERED</code></td>
+<td><code>False</code></td>
+<td>是否要求持仓已触发首次止盈后才能启动网格；默认不要求，设为 <code>True</code> 可恢复更保守风控</td>
+</tr>
+<tr>
+<td><code>grid_trading_sessions.enabled</code></td>
+<td><code>1</code></td>
+<td>单个网格会话自动执行开关；Web 中显示为“自动/暂停”，暂停后保留会话但不再发新网格单</td>
+</tr>
+<tr>
+<td><code>GRID_MAX_DEVIATION_RATIO</code></td>
+<td><code>0.15</code></td>
+<td>最大偏离中心价比例（±15%）</td>
+</tr>
+<tr>
+<td><code>GRID_TARGET_PROFIT_RATIO</code></td>
+<td><code>0.10</code></td>
+<td>网格目标盈利比例（10%）</td>
+</tr>
+<tr>
+<td><code>GRID_STOP_LOSS_RATIO</code></td>
+<td><code>-0.10</code></td>
+<td>网格止损比例（-10%）</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">网格启动条件</p>
+<p>当前默认允许已有持仓直接启动网格，不再强制要求 <code>profit_triggered=True</code>。若显式设置 <code>GRID_REQUIRE_PROFIT_TRIGGERED = True</code>，或通过同名环境变量设置为 <code>true/1/yes/on</code>，未触发首次止盈的持仓会被拒绝启动网格。</p>
+</div>
+<h3 id="enable_simulation_mode-false">网格实盘交易参数（仅 <code>ENABLE_SIMULATION_MODE = False</code> 生效）<a class="headerlink" href="#enable_simulation_mode-false" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GRID_CONFIRM_LIVE_ORDER_BY_DEAL</code></td>
+<td><code>True</code></td>
+<td>实盘下单后以<strong>成交回报</strong>为准更新统计（推荐保持开启）</td>
+</tr>
+<tr>
+<td><code>GRID_SIGNAL_MAX_AGE_SECONDS</code></td>
+<td><code>60</code></td>
+<td>网格信号最长有效期（秒），超龄丢弃</td>
+</tr>
+<tr>
+<td><code>GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO</code></td>
+<td><code>0.01</code></td>
+<td>执行前最新价相对触发价最大容忍偏离（1%）</td>
+</tr>
+<tr>
+<td><code>GRID_USE_COUNTERPARTY_PRICE</code></td>
+<td><code>True</code></td>
+<td>实盘用对手价下单（买取卖三价/卖取买三价）提高成交概率</td>
+</tr>
+<tr>
+<td><code>GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO</code></td>
+<td><code>0.02</code></td>
+<td>对手价买入资金预占缓冲（2%），防止超 <code>max_investment</code></td>
+</tr>
+<tr>
+<td><code>GRID_ENABLE_PRICE_LIMIT_GUARD</code></td>
+<td><code>True</code></td>
+<td>下单前检查涨跌停/停牌，封板跳过本次交易</td>
+</tr>
+<tr>
+<td><code>GRID_PRICE_LIMIT_EPS</code></td>
+<td><code>0.001</code></td>
+<td>涨跌停判定容差（元），补偿浮点误差</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">对手价依赖成交确认</p>
+<p><code>GRID_USE_COUNTERPARTY_PRICE</code> 仅在 <code>GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True</code> 时启用——成交以真实回报价落账，统计才准确。详见<a href="../grid-trading/">网格交易 · 实盘交易机制</a>。</p>
+</div>
+<hr />
+<h2 id="_10">线程与监控参数<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_THREAD_MONITOR</code></td>
+<td><code>True</code></td>
+<td>线程自愈监控</td>
+</tr>
+<tr>
+<td><code>THREAD_CHECK_INTERVAL</code></td>
+<td><code>60</code></td>
+<td>线程检查间隔（秒）</td>
+</tr>
+<tr>
+<td><code>THREAD_RESTART_COOLDOWN</code></td>
+<td><code>60</code></td>
+<td>重启冷却时间（秒）</td>
+</tr>
+<tr>
+<td><code>MONITOR_LOOP_INTERVAL</code></td>
+<td><code>3</code></td>
+<td>持仓监控循环间隔（秒）</td>
+</tr>
+<tr>
+<td><code>MONITOR_CALL_TIMEOUT</code></td>
+<td><code>8.0</code></td>
+<td>持仓监控 API 调用超时（秒）</td>
+</tr>
+<tr>
+<td><code>MONITOR_NON_TRADE_SLEEP</code></td>
+<td><code>60</code></td>
+<td>非交易时段休眠（秒）</td>
+</tr>
+<tr>
+<td><code>GRID_POSITION_QUERY_TIMEOUT</code></td>
+<td><code>5.0</code></td>
+<td>网格交易持仓查询超时（秒）</td>
+</tr>
+<tr>
+<td><code>HISTORY_DATA_DOWNLOAD_TIMEOUT</code></td>
+<td><code>5</code></td>
+<td>启动时单只股票历史数据下载超时（秒），超时跳过</td>
+</tr>
+<tr>
+<td><code>GRID_LOCK_ACQUIRE_TIMEOUT</code></td>
+<td><code>5.0</code></td>
+<td>网格交易锁获取超时（秒）</td>
+</tr>
+<tr>
+<td><code>QMT_POSITION_QUERY_INTERVAL</code></td>
+<td><code>10.0</code></td>
+<td>QMT 持仓查询间隔（秒）</td>
+</tr>
+<tr>
+<td><code>POSITION_SYNC_INTERVAL</code></td>
+<td><code>15.0</code></td>
+<td>SQLite 同步间隔（秒）</td>
+</tr>
+<tr>
+<td><code>CLEARED_POSITION_WARNING_INTERVAL</code></td>
+<td><code>1800</code></td>
+<td>清仓残留持仓成本价告警限频（秒），<code>0</code> 不限频；券商盘后可能仍返回已清仓行，超频降为 DEBUG</td>
+</tr>
+<tr>
+<td><code>ENABLE_SELL_MONITOR</code></td>
+<td><code>True</code></td>
+<td>卖出委托超时监控</td>
+</tr>
+<tr>
+<td><code>ENABLE_HEARTBEAT_LOG</code></td>
+<td><code>True</code></td>
+<td>心跳日志</td>
+</tr>
+<tr>
+<td><code>HEARTBEAT_INTERVAL</code></td>
+<td><code>1800</code></td>
+<td>心跳间隔（30 分钟）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="web">Web 服务参数<a class="headerlink" href="#web" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WEB_SERVER_HOST</code></td>
+<td><code>"127.0.0.1"</code></td>
+<td>web1.0 Flask 监听地址，默认仅本机访问</td>
+</tr>
+<tr>
+<td><code>WEB_SERVER_PORT</code></td>
+<td><code>5000</code></td>
+<td>监听端口</td>
+</tr>
+<tr>
+<td><code>WEB_API_TOKEN</code></td>
+<td><code>""</code></td>
+<td>API Token（通过 <code>QMT_API_TOKEN</code> 环境变量设置）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_11">行情与历史数据参数<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DEFAULT_PERIOD</code></td>
+<td><code>"1d"</code></td>
+<td>默认行情周期</td>
+</tr>
+<tr>
+<td><code>INITIAL_DAYS</code></td>
+<td><code>365</code></td>
+<td>初始拉取历史天数</td>
+</tr>
+<tr>
+<td><code>UPDATE_INTERVAL</code></td>
+<td><code>60</code></td>
+<td>行情更新间隔（秒）</td>
+</tr>
+<tr>
+<td><code>HISTORY_UPDATE_THROTTLE_SECONDS</code></td>
+<td><code>300</code></td>
+<td>单只股票历史数据更新节流，避免策略线程每轮重复拉日线</td>
+</tr>
+<tr>
+<td><code>HISTORY_INVALID_DATE_LOG_INTERVAL</code></td>
+<td><code>600</code></td>
+<td>同一股票同一数据源非法历史日期告警降噪间隔</td>
+</tr>
+<tr>
+<td><code>ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP</code></td>
+<td><code>False</code></td>
+<td>是否允许用 baostock 兜底查询股票名称；默认关闭，避免无人值守时外部接口反复报错</td>
+</tr>
+<tr>
+<td><code>ENABLE_BAOSTOCK_HISTORY_DATA</code></td>
+<td><code>False</code></td>
+<td>是否允许旧 <code>Methods.getStockData(freq='d/w/m')</code> 路径使用 baostock；默认改走 Mootdx</td>
+</tr>
+<tr>
+<td><code>BAOSTOCK_API_KEY</code></td>
+<td><code>""</code>（环境变量 <code>BAOSTOCK_API_KEY</code>）</td>
+<td>新版 baostock(0.9.x) 收紧访问后支持的 API Key，登录前经 <code>set_API_key</code> 传入；为空则匿名访问。⚠️ 仅用环境变量，切勿硬编码</td>
+</tr>
+<tr>
+<td><code>BAOSTOCK_LOGIN_TIMEOUT</code></td>
+<td><code>5</code></td>
+<td>baostock 登录超时秒数，防止外部接口阻塞无人值守循环</td>
+</tr>
+<tr>
+<td><code>BAOSTOCK_RETRY_COOLDOWN</code></td>
+<td><code>300</code></td>
+<td>baostock 连续失败后冷却时间（秒）</td>
+</tr>
+<tr>
+<td><code>BAOSTOCK_MAX_CONSECUTIVE_FAILURES</code></td>
+<td><code>3</code></td>
+<td>连续失败达到阈值后进入冷却期</td>
+</tr>
+</tbody>
+</table>
+<p>历史数据源策略分模式处理：标准模式（<code>ENABLE_XTQUANT_MANAGER=False</code>）为 <code>Tushare（日/周/月）→ Mootdx</code>，分钟线直接走 Mootdx；网关模式会先尝试 <code>xtdata</code>，失败或为空后再进入 <code>Tushare → Mootdx</code>。baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。</p>
+<h3 id="tushare-pro">Tushare Pro 数据源参数<a class="headerlink" href="#tushare-pro" title="Permanent link">&para;</a></h3>
+<p>启用后，标准模式下日/周/月历史 K 线优先走 Tushare（分钟线仍走 Mootdx），股票名称查询在 xtdata 之后、baostock 之前插入 Tushare。Token 为空或未安装 <code>tushare</code> 包时自动跳过，行为与关闭一致。降级链见<a href="#2">图 2</a>。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_TUSHARE_DATA_SOURCE</code></td>
+<td><code>True</code>（环境变量 <code>ENABLE_TUSHARE_DATA_SOURCE</code>）</td>
+<td>Tushare 数据源总开关；Token 为空时自动跳过</td>
+</tr>
+<tr>
+<td><code>TUSHARE_TOKEN</code></td>
+<td><code>""</code>（环境变量 <code>TUSHARE_TOKEN</code>）</td>
+<td>Tushare Pro Token。⚠️ 仅用环境变量，切勿硬编码</td>
+</tr>
+<tr>
+<td><code>TUSHARE_API_TIMEOUT</code></td>
+<td><code>10</code></td>
+<td>历史数据 API 超时（秒）</td>
+</tr>
+<tr>
+<td><code>TUSHARE_STOCK_NAME_TIMEOUT</code></td>
+<td><code>5</code></td>
+<td>股票名称 API 超时（秒）</td>
+</tr>
+<tr>
+<td><code>TUSHARE_RETRY_COOLDOWN</code></td>
+<td><code>300</code></td>
+<td>连续失败后冷却时间（秒）</td>
+</tr>
+<tr>
+<td><code>TUSHARE_MAX_CONSECUTIVE_FAILURES</code></td>
+<td><code>3</code></td>
+<td>连续失败达到阈值后进入冷却期</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">Tushare 权限说明</p>
+<p>免费版（120 积分）仅能取非复权日线，实际不可用于生产；推荐 2000 积分（200 元/年）版本，可用复权日线 + 股票基础信息。Tushare 无 tick 级实时行情，<strong>只用于历史数据和股票名称</strong>，实时价格仍由 xtdata/Mootdx 提供。</p>
+</div>
+<p>新版 baostock(0.9.x) 收紧了访问格式与行为，本项目已统一适配（见 <a href="https://github.com/weihong-su/miniQMT/blob/main/baostock_helper.py">baostock_helper.py</a>）：登录前自动应用 <code>BAOSTOCK_API_KEY</code>（旧版 0.8.x 无 <code>set_API_key</code> 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 <code>'1'/'2'/'3'</code>，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖约束为 <code>baostock&gt;=0.9.1</code>（仅在显式开启 baostock 功能时需要）。</p>
+<h3 id="_12">行情源健康评分参数<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<p>第一阶段为轻量内存版健康评分，不落库，系统重启后样本清空。当前默认启用严格门禁，持仓监控会按评分与数据源策略判断行情是否可参与交易信号检测。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MARKET_HEALTH_ENABLED</code></td>
+<td><code>True</code></td>
+<td>启用行情源健康评分</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_OBSERVE_ONLY</code></td>
+<td><code>False</code></td>
+<td><code>True</code>=只记录评分不拦截；<code>False</code>=按评分门禁交易信号检测</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_WINDOW_SECONDS</code></td>
+<td><code>300</code></td>
+<td>统计窗口（秒），默认最近 5 分钟</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_MAX_EVENTS</code></td>
+<td><code>100</code></td>
+<td>单个 source/purpose/stock 组合最多保留事件数</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_MIN_EVENTS</code></td>
+<td><code>3</code></td>
+<td>达到最少样本数后才输出有效评分，否则为 <code>unknown</code></td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_HEALTHY_SCORE</code></td>
+<td><code>80</code></td>
+<td><code>healthy</code> 状态阈值</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_DEGRADED_SCORE</code></td>
+<td><code>60</code></td>
+<td><code>degraded</code> 状态阈值</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_UNSTABLE_SCORE</code></td>
+<td><code>40</code></td>
+<td><code>unstable</code> 状态阈值；低于该值为 <code>down</code></td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_TRADING_MIN_SCORE</code></td>
+<td><code>70</code></td>
+<td>严格模式下允许参与交易信号检测的最低评分</td>
+</tr>
+<tr>
+<td><code>MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING</code></td>
+<td><code>False</code></td>
+<td>严格模式下是否允许 Mootdx 兜底行情参与交易</td>
+</tr>
+</tbody>
+</table>
+<p>评分综合成功率、平均延迟、最近成功时间和数据质量。持仓监控会调用 <code>data_manager.is_quote_tradable()</code>；当前默认严格模式会按分数和数据源限制拦截，若希望只观察不影响交易，可显式设置 <code>MARKET_HEALTH_OBSERVE_ONLY = True</code>。</p>
+<p>健康快照接口见 <a href="../web-api/#market-health">Web API · 行情源健康</a>。</p>
+<hr />
+<h2 id="_13">数据库维护与日志轮转参数<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h2>
+<p>维护任务由 <code>maintenance.py</code> 执行，主程序启动时在后台线程调度。默认每天非交易时段清理追加型历史数据，并按大小轮转 XtQuantManager 批处理重定向日志。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENABLE_DB_MAINTENANCE</code></td>
+<td><code>True</code></td>
+<td>启用数据库维护后台线程</td>
+</tr>
+<tr>
+<td><code>DB_MAINTENANCE_TIME</code></td>
+<td><code>"00:10:00"</code></td>
+<td>每日维护目标时间</td>
+</tr>
+<tr>
+<td><code>DB_MAINTENANCE_CHECK_INTERVAL</code></td>
+<td><code>600</code></td>
+<td>调度检查间隔（秒）</td>
+</tr>
+<tr>
+<td><code>DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME</code></td>
+<td><code>True</code></td>
+<td>仅允许非交易时段执行维护</td>
+</tr>
+<tr>
+<td><code>DB_MAINTENANCE_ENABLE_VACUUM</code></td>
+<td><code>True</code></td>
+<td>清理达到阈值后执行 SQLite <code>VACUUM</code></td>
+</tr>
+<tr>
+<td><code>DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS</code></td>
+<td><code>1000</code></td>
+<td>触发 <code>VACUUM</code> 的最小删除行数</td>
+</tr>
+<tr>
+<td><code>TRADE_RECORD_RETENTION_DAYS</code></td>
+<td><code>1095</code></td>
+<td><code>trade_records</code> 保留天数（3 年）</td>
+</tr>
+<tr>
+<td><code>GRID_SESSION_RETENTION_DAYS</code></td>
+<td><code>365</code></td>
+<td>非 active 网格会话保留天数</td>
+</tr>
+<tr>
+<td><code>AUTOBUY_DECISION_LOG_RETENTION_DAYS</code></td>
+<td><code>90</code></td>
+<td>自动买入 <code>decision_log</code> 保留天数</td>
+</tr>
+<tr>
+<td><code>PREMARKET_HISTORY_RETENTION_DAYS</code></td>
+<td><code>365</code></td>
+<td>盘前同步历史保留天数</td>
+</tr>
+<tr>
+<td><code>CONFIG_HISTORY_RETENTION_DAYS</code></td>
+<td><code>365</code></td>
+<td>配置变更审计保留天数</td>
+</tr>
+<tr>
+<td><code>XQM_LOG_FILE</code></td>
+<td><code>"logs/xqm_manager.log"</code></td>
+<td>XtQuantManager 批处理重定向日志路径</td>
+</tr>
+<tr>
+<td><code>XQM_LOG_MAX_SIZE</code></td>
+<td><code>10 MB</code></td>
+<td>XtQuantManager 日志轮转阈值</td>
+</tr>
+<tr>
+<td><code>XQM_LOG_BACKUP_COUNT</code></td>
+<td><code>5</code></td>
+<td>XtQuantManager 日志备份数量</td>
+</tr>
+</tbody>
+</table>
+<p>主交易日志 <code>logs/qmt_trading.log</code> 仍由 <code>logger.py</code> 的 <code>RotatingFileHandler</code> 管理；上述 <code>XQM_LOG_*</code> 只处理 <code>xqm_manager.bat</code> / 独立网关进程追加写入的普通日志文件。</p>
+<hr />
+<h2 id="_14">发布版本号<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h2>
+<p>发布版本号统一存放在项目根目录的 <code>release_version.json</code>。web1.0 由 <code>web_server.py</code> 渲染首页时替换 <code>%MINIQMT_RELEASE_VERSION%</code>，web2.0 由 <code>web2.0/vite.config.ts</code> 在构建时替换同名占位符；发布新版本时只需要同步更新 <code>release_version.json</code> 和 <code>CHANGELOG.md</code>。</p>
+<hr />
+<h2 id="_15">自动买入配置<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<p>自动买入模块使用独立配置文件 <code>autobuy/miniqmt_autobuy.cfg</code>，不放在 <code>config.py</code> 中。与主程序相关联的配置主要有：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>位置</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POSITION_UNIT</code></td>
+<td><code>config.py</code></td>
+<td>自动买入最终复用 Web 买入 API，单笔金额沿用主程序买入金额</td>
+</tr>
+<tr>
+<td><code>QMT_API_TOKEN</code></td>
+<td>环境变量</td>
+<td>若 Flask Web 开启 Token，需同步写入 <code>[web].api_token</code></td>
+</tr>
+<tr>
+<td><code>[web].base_url</code></td>
+<td><code>autobuy/miniqmt_autobuy.cfg</code></td>
+<td>目标账号 Web 服务地址，多账号时按端口切换</td>
+</tr>
+<tr>
+<td><code>[risk].max_buys_per_run</code></td>
+<td><code>autobuy/miniqmt_autobuy.cfg</code></td>
+<td>单次触发最多买入数量</td>
+</tr>
+<tr>
+<td><code>[schedule].only_trade_time</code></td>
+<td><code>autobuy/miniqmt_autobuy.cfg</code></td>
+<td>使用真实市场时段判断，区别于模拟模式下恒为 True 的 <code>is_trade_time()</code></td>
+</tr>
+</tbody>
+</table>
+<p>完整说明见<a href="../autobuy/">自动买入模块</a>。</p>
+<hr />
+<h2 id="_16">日志参数<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LOG_LEVEL</code></td>
+<td><code>"INFO"</code></td>
+<td>日志级别</td>
+</tr>
+<tr>
+<td><code>LOG_FILE</code></td>
+<td><code>"qmt_trading.log"</code></td>
+<td>日志文件路径</td>
+</tr>
+<tr>
+<td><code>LOG_MAX_SIZE</code></td>
+<td><code>10 MB</code></td>
+<td>单个日志文件最大大小</td>
+</tr>
+<tr>
+<td><code>LOG_BACKUP_COUNT</code></td>
+<td><code>5</code></td>
+<td>日志备份数量</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_17">配置文件格式<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h2>
+<h3 id="account_configjson">account_config.json<a class="headerlink" href="#account_configjson" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;account_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;您的交易账号&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;account_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;STOCK&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;qmt_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;C:/光大证券金阳光QMT实盘/userdata_mini&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="stock_pooljson">stock_pool.json<a class="headerlink" href="#stock_pooljson" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">[</span><span class="s2">&quot;000001.SZ&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;600036.SH&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;000333.SZ&quot;</span><span class="p">]</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Business Source License 1.1 &mdash; 商业用途需获授权 &bull; 2030-04-13 后转 MIT
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy", "content.code.annotate", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
