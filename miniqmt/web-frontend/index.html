@@ -1,0 +1,3799 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="无人值守量化交易系统 + XtQuantManager HTTP 网关">
+      
+      
+      
+        <link rel="canonical" href="https://weihong-su.github.io/miniQMT/miniqmt/web-frontend/">
+      
+      
+        <link rel="prev" href="../qmt-rpc-redis-setup/">
+      
+      
+        <link rel="next" href="../web-api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Web 前端（web1.0 / web2.0） - miniQMT 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#web-web10-web20" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="miniQMT 文档" class="md-header__button md-logo" aria-label="miniQMT 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            miniQMT 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Web 前端（web1.0 / web2.0）
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换深色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换深色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换浅色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换浅色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/weihong-su/miniQMT" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    weihong-su/miniQMT
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  miniQMT 核心系统
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../xqm/" class="md-tabs__link">
+          
+  
+  
+  XtQuantManager
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/" class="md-tabs__link">
+          
+  
+  
+  源码 API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  变更日志
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../license/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  许可证
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="miniQMT 文档" class="md-nav__button md-logo" aria-label="miniQMT 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    miniQMT 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/weihong-su/miniQMT" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    weihong-su/miniQMT
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    miniQMT 核心系统
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    miniQMT 核心系统
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stop-profit-loss/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    止盈止损策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grid-trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网格交易
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autobuy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自动买入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../qmt-ipc-fallback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    大QMT文件 IPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../qmt-rpc-redis-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    大QMT RPC Redis 部署
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web 前端（web1.0 / web2.0）
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web 前端（web1.0 / web2.0）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        双端职责对比
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#web20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web2.0 能力清单（全部只读）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="web2.0 能力清单（全部只读）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        三态状态（开 / 关 / 未知）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        三级开关总览
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据新鲜度
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        轮询节奏
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        盈亏率口径
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        页面标题与发布版本
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        顶部控制条
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="顶部控制条">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        持仓列表（web1.0）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据管理按钮语义
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        卖出委托状态
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格悬停卡片口径
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        连接设置面板
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="连接设置面板">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        字段说明
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动化行为
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#miniqmtbat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        启动菜单（miniqmt.bat）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="启动菜单（miniqmt.bat）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web 模式偏好记忆
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        绑定地址 vs 客户端地址分离
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vercel-web20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vercel 远程部署（web2.0）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Vercel 远程部署（web2.0）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        关键安全要点
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        开发与构建
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unattended/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    无人值守运行
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据库表结构
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试框架
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    XtQuantManager
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    XtQuantManager
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    配置指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/single-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    单账号（开发/测试）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/dual-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    双账号（多策略）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/lan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    局域网共享
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/embedded/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    嵌入 miniQMT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/unattended/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    无人值守
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/configuration/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    全量参数参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 手册
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API 手册
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    账号管理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    交易操作
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/market/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    行情接口
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/api/curl-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    curl 速查表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    使用指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    使用指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/multi-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多账号实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安全配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/guides/miniqmt-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    与 miniQMT 集成
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参考
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    参考
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/service-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    服务管理脚本
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../xqm/faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    源码 API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    源码 API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网格交易
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    网格交易
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-trading-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_trading_manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/grid-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    grid_validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持仓与执行
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    持仓与执行
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/position-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    position_manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    XtQuantManager
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    XtQuantManager
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-health/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    health_monitor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/xqm-stop-profit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    stop_profit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    变更日志
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../license/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    许可证
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        双端职责对比
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#web20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web2.0 能力清单（全部只读）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="web2.0 能力清单（全部只读）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        三态状态（开 / 关 / 未知）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        三级开关总览
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据新鲜度
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        轮询节奏
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        盈亏率口径
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        页面标题与发布版本
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        顶部控制条
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="顶部控制条">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        持仓列表（web1.0）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据管理按钮语义
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        卖出委托状态
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格悬停卡片口径
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        连接设置面板
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="连接设置面板">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        字段说明
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动化行为
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#miniqmtbat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        启动菜单（miniqmt.bat）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="启动菜单（miniqmt.bat）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web 模式偏好记忆
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        绑定地址 vs 客户端地址分离
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vercel-web20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vercel 远程部署（web2.0）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Vercel 远程部署（web2.0）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        关键安全要点
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        开发与构建
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="web-web10-web20">Web 前端（web1.0 / web2.0）<a class="headerlink" href="#web-web10-web20" title="Permanent link">&para;</a></h1>
+<p>miniQMT 提供<strong>两套</strong>Web 界面，职责明确分工：</p>
+<ul>
+<li><strong>web1.0</strong> — 完整操作台（读 + 写），仅绑本机</li>
+<li><strong>web2.0</strong> — <strong>纯只读监控端</strong>（monitor），可远程访问</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">web2.0 是只读监控端</p>
+<p>自 2026-08-01 起，web2.0 <strong>不再提供任何写操作</strong>：下单、配置保存、网格启停、
+个股开关、初始化持仓等入口全部移除，前端 HTTP 适配层也只导出 <code>apiGet</code>
+（<code>web2.0/src/api/adapter.ts</code>），从源头杜绝误触发。
+所有写操作请使用 web1.0。该约束由单元测试 <code>src/api/readonly.test.ts</code> 持续守护。</p>
+</div>
+<hr />
+<h2 id="_1">双端职责对比<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>web1.0（操作台）</th>
+<th>web2.0（只读监控端）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>前端栈</td>
+<td>Flask 模板渲染 (<code>web1.0/</code>)</td>
+<td>Vue3 + Vite + TypeScript + Tailwind + Pinia (<code>web2.0/</code>)</td>
+</tr>
+<tr>
+<td>定位</td>
+<td>读 + 写，完整功能</td>
+<td><strong>只读</strong>，展示与告警</td>
+</tr>
+<tr>
+<td>后端</td>
+<td>每账号独立 Flask 进程 (<code>web_server.py</code>)</td>
+<td>Flask 直连 <strong>或</strong> xtquant_manager 网关</td>
+</tr>
+<tr>
+<td>默认端口</td>
+<td><code>:5000</code>、<code>:5001</code>、…</td>
+<td>直连沿用 Flask 端口；网关 <code>:8888</code></td>
+</tr>
+<tr>
+<td>绑定地址</td>
+<td><code>127.0.0.1</code> — <strong>只绑本机</strong></td>
+<td>网关模式 <code>0.0.0.0</code>，可远程</td>
+</tr>
+<tr>
+<td>实时推送</td>
+<td>✅ SSE</td>
+<td>直连 ✅ SSE；网关 ❌（轮询兜底，不影响数据更新）</td>
+</tr>
+<tr>
+<td>PWA 离线</td>
+<td>❌</td>
+<td>✅ 可安装到桌面</td>
+</tr>
+<tr>
+<td>多账号切换</td>
+<td>❌（每实例一个账号）</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="web20">web2.0 能力清单（全部只读）<a class="headerlink" href="#web20" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>Flask 直连</th>
+<th>网关模式</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>持仓列表（16 列）</td>
+<td>✅</td>
+<td>✅</td>
+<td>含基准成本、浮盈金额、个股止盈状态</td>
+</tr>
+<tr>
+<td><strong>委托队列（在途优先）</strong></td>
+<td>✅</td>
+<td>✅</td>
+<td><code>/api/orders</code>，感知"已报未成交"挂单</td>
+</tr>
+<tr>
+<td>成交记录（按天分组 + 筛选）</td>
+<td>✅</td>
+<td>✅</td>
+<td>支持代码/名称、买卖方向、策略筛选</td>
+</tr>
+<tr>
+<td>账户资产 / QMT 连接状态</td>
+<td>✅</td>
+<td>✅</td>
+<td>连接状态持续轮询（15s）</td>
+</tr>
+<tr>
+<td>网格会话列表</td>
+<td>✅</td>
+<td>✅</td>
+<td>状态、盈亏、自动/暂停（只读徽章）</td>
+</tr>
+<tr>
+<td><strong>网格真实账本</strong></td>
+<td>✅</td>
+<td>✅</td>
+<td>批次 / LIFO 配对 / 汇总；网关侧为只读 SQL</td>
+</tr>
+<tr>
+<td>网格悬停速览卡</td>
+<td>✅</td>
+<td>✅</td>
+<td>悬停不发请求，复用已加载会话数据</td>
+</tr>
+<tr>
+<td>参数展示</td>
+<td>✅</td>
+<td>✅</td>
+<td>只读；读不到显示 <code>--</code>，不用默认值冒充</td>
+</tr>
+<tr>
+<td>运行开关状态（含三级开关总览）</td>
+<td>✅</td>
+<td>✅ 反向探测 Flask</td>
+<td>探测不到时标为「未知」，见下方「三态状态」</td>
+</tr>
+<tr>
+<td>MACD 建议 + 迷你 K 线</td>
+<td>✅</td>
+<td>✅</td>
+<td>悬停弹出</td>
+</tr>
+<tr>
+<td>数据新鲜度指示</td>
+<td>✅</td>
+<td>✅</td>
+<td>见下方「数据新鲜度」</td>
+</tr>
+<tr>
+<td>🔒 任何写操作</td>
+<td>❌</td>
+<td>❌</td>
+<td>一律使用 web1.0</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_2">三态状态（开 / 关 / 未知）<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p>顶栏的运行开关是<strong>只读徽章</strong>，有三种状态：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>开 / 关</td>
+<td>后端返回的真实值</td>
+</tr>
+<tr>
+<td><strong>未知</strong></td>
+<td>后端未提供该状态</td>
+</tr>
+</tbody>
+</table>
+<p>大部分开关持久化在账号 SQLite 的 <code>system_config</code> 表里，网关直接读即可。
+但 <code>ENABLE_AUTO_OPERATION</code>（全局总闸）和 <code>ENABLE_SIMULATION_MODE</code> 按设计<strong>不持久化</strong>
+（见 <code>config_manager.apply_configs_to_runtime</code> 的注释：总闸每次启动需手动确认），
+只存在于主进程内存中。</p>
+<p><strong>网关通过反向探测获取它们</strong>：收到 <code>/api/status</code> 时调用该账号 Flask 的
+<code>/api/status</code>（端口 = <code>5000 + 账号在 account_config.json 中的索引</code>，
+带 5 秒缓存、1 秒超时），拿到真实的内存态开关。</p>
+<p>为此，<strong>web2.0 启动模式下 Flask 仍会启动</strong>（只绑 <code>127.0.0.1</code>，不对外暴露）：
+launcher 先探测该账号的 Flask 端口，空闲则启动、已被占用则跳过（设 <code>QMT_NO_FLASK=1</code>）
+避免端口冲突。</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>总闸显示</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Flask 直连模式</td>
+<td>✅ 真实值</td>
+</tr>
+<tr>
+<td>网关模式（web1.0 或 web2.0 方式启动主程序）</td>
+<td>✅ 真实值（反向探测成功）</td>
+</tr>
+<tr>
+<td>手动设 <code>QMT_NO_FLASK=1</code> 启动</td>
+<td>⚠️ 未知</td>
+</tr>
+<tr>
+<td>账号不在 <code>account_config.json</code> 中</td>
+<td>⚠️ 未知</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title">为什么宁可显示「未知」也不猜</p>
+<p>网关早期实现把这些开关<strong>硬编码为 <code>True</code></strong>，导致监控界面无论后端实际状态如何
+都显示「自动ON」；<code>/api/config</code> 同样返回一组写死的默认值（35000/5.0/7.0…）。
+同理，账号不在配置列表时网关<strong>不会</strong>回落到默认端口 5000 —— 那会读到
+另一个账号的状态并张冠李戴。监控端显示假状态比不显示更危险。
+回归用例见 <code>test/test_xqm_monitor_endpoints.py</code>
+的 <code>TestStatusNoFakeState</code> 与 <code>TestFlaskReverseProbe</code>。</p>
+</div>
+<h3 id="_3">三级开关总览<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
+<p>自动止盈止损和网格交易各有一条<strong>三级门控链</strong>，任何一级关闭则该策略不产生新单。
+web2.0 用「三级开关总览」面板（<code>TierSwitches.vue</code>，位于参数面板下方）一屏呈现整条链路，
+省去逐项排查：</p>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>第 1 级（全局总闸）</th>
+<th>第 2 级（策略开关）</th>
+<th>第 3 级（个体开关）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>动态止盈止损</td>
+<td><code>ENABLE_AUTO_OPERATION</code></td>
+<td><code>ENABLE_AUTO_TRADING</code></td>
+<td><code>positions.stop_profit_enabled</code>（<strong>个股级</strong>）</td>
+</tr>
+<tr>
+<td>网格交易</td>
+<td><code>ENABLE_AUTO_OPERATION</code></td>
+<td><code>ENABLE_GRID_TRADING</code></td>
+<td><code>grid_trading_sessions.enabled</code>（<strong>会话级</strong>）</td>
+</tr>
+</tbody>
+</table>
+<p>面板呈现方式：</p>
+<ul>
+<li>前两级用 ✔ / ✘ / ? 徽章（绿 / 红 / 灰），<code>?</code> 即上文的「未知」态</li>
+<li>第 3 级因为是逐个体的，用聚合计数展示：<ul>
+<li>动态止盈止损：<code>已开启 / 持仓总数</code></li>
+<li>网格交易：<code>启用 / 暂停 / 会话总数</code></li>
+</ul>
+</li>
+<li>逐个体的明细在各自列表里查看：持仓列表末列「自动止盈」列、网格会话列表的「自动/暂停」徽章</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">第 3 级只读，切换请用 web1.0</p>
+<p>个股止盈开关（<code>POST /api/holdings/stop_profit</code>）和网格会话开关
+（<code>POST /api/grid/session/&lt;id&gt;/enabled</code>）都是写操作，web2.0 只展示状态。</p>
+</div>
+<p><code>ENABLE_DYNAMIC_STOP_PROFIT</code> 是更底层的<strong>模块开关</strong>（控制信号是否被检测），
+仅存在于 <code>config.py</code>，web1.0 和 web2.0 都无对应 UI 控件。</p>
+<h3 id="_4">数据新鲜度<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<p>监控界面最危险的失效方式不是"没数据"，而是"显示着 10 分钟前的数据却看不出来"。
+因此每个数据块都标注自身年龄，并按阈值降级：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>阈值</th>
+<th>表现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>新鲜</td>
+<td>&lt; 30s</td>
+<td>灰色时间标注</td>
+</tr>
+<tr>
+<td>陈旧</td>
+<td>≥ 30s</td>
+<td>琥珀色</td>
+</tr>
+<tr>
+<td>失联</td>
+<td>≥ 90s</td>
+<td>红色 + 顶部横幅告警</td>
+</tr>
+</tbody>
+</table>
+<p>实现见 <code>web2.0/src/utils/freshness.ts</code>。</p>
+<h3 id="_5">轮询节奏<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<p>轮询<strong>不因任何业务开关而停止</strong>（旧版「停止自动操作」会连带停掉数据刷新），
+只随页面可见性调整频率：前台 3s 基准，后台切换到 15s，回到前台立即补一次全量刷新。</p>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>前台周期</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>系统状态</td>
+<td>9s</td>
+</tr>
+<tr>
+<td><strong>QMT 连接状态</strong></td>
+<td>15s</td>
+</tr>
+<tr>
+<td>委托队列</td>
+<td>15s</td>
+</tr>
+<tr>
+<td>成交记录</td>
+<td>18s</td>
+</tr>
+<tr>
+<td>持仓 + 网格会话</td>
+<td>30s（SSE 可用时主要靠推送）</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">QMT 连接状态必须轮询</p>
+<p>旧版只在页面初始化时查一次连接状态，QMT 掉线后顶栏指示灯会永远停在
+「QMT·OK」—— 对监控盘这是最不能坏的指示灯。</p>
+</div>
+<hr />
+<h2 id="_6">盈亏率口径<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>单只持仓的 <code>profit_ratio</code> 后端已乘 100（百分比数），而汇总指标是<strong>小数</strong>，
+且两个后端键名还不一致：</p>
+<table>
+<thead>
+<tr>
+<th>后端</th>
+<th>汇总键名</th>
+<th>单位</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Flask (<code>utils.calculate_position_metrics</code>)</td>
+<td><code>profit_ratio</code></td>
+<td>小数</td>
+</tr>
+<tr>
+<td>网关 (<code>server.flask_positions</code>)</td>
+<td><code>total_profit_ratio</code></td>
+<td>小数</td>
+</tr>
+</tbody>
+</table>
+<p>前端在 <code>web2.0/src/utils/metrics.ts</code> 的 <code>normalizeMetrics()</code> 统一收口：
+兼容两个键名并 ×100，出口一律是百分比数。</p>
+<div class="admonition warning">
+<p class="admonition-title">历史缺陷</p>
+<p>旧版直接把小数当百分比展示，5.23% 显示成 <strong>0.05%</strong>；Flask 直连模式下
+因键名不匹配更是恒显示 <strong>0.00%</strong>。回归用例见 <code>src/utils/metrics.test.ts</code>。</p>
+</div>
+<hr />
+<h2 id="_7">页面标题与发布版本<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>web1.0 和 web2.0 的页面标题都使用 <code>%MINIQMT_RELEASE_VERSION%</code> 占位符，真实发布版本统一来自项目根目录的 <code>release_version.json</code>。</p>
+<ul>
+<li>web1.0：<code>web_server.py</code> 在返回 <code>web1.0/index.html</code> 时注入版本号，同时给 <code>script.js</code> 添加基于 mtime 的缓存破坏参数</li>
+<li>web2.0：<code>web2.0/vite.config.ts</code> 在 Vite 构建阶段注入版本号，更新 <code>release_version.json</code> 后需要重新执行 <code>npm run build</code></li>
+</ul>
+<p><code>web2.0/package.json</code> 中的 <code>version</code> 仅表示前端包自身元数据，不作为 miniQMT 发布版本来源。</p>
+<hr />
+<h2 id="_8">顶部控制条<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<p>Flask 直连模式下，顶部控制条包含以下控件（部分仅后端存在，前端由配置表单统一渲染）：</p>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>后端字段/配置</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>开始/停止自动操作按钮</td>
+<td><code>ENABLE_AUTO_OPERATION</code>（API 兼容字段 <code>isMonitoring</code>）</td>
+<td>全局自动操作总开关，只运行时生效不持久化；关闭时动态止盈止损和网格交易都不再产生新单</td>
+</tr>
+<tr>
+<td>模拟交易模式</td>
+<td><code>ENABLE_SIMULATION_MODE</code></td>
+<td>切换实盘/模拟模式，<strong>只运行时生效不持久化</strong>；切换会重建内存持仓库，切到模拟时释放 <code>qmt_trader</code>、切到实盘时异步重连 QMT</td>
+</tr>
+<tr>
+<td>允许自动止盈</td>
+<td><code>ENABLE_AUTO_TRADING</code>（保存配置字段 <code>globalAllowBuySell</code>）</td>
+<td>动态止盈止损自动执行开关，持久化</td>
+</tr>
+<tr>
+<td>允许自动网格</td>
+<td><code>ENABLE_GRID_TRADING</code>（保存配置字段 <code>globalAllowGridTrading</code>）</td>
+<td>网格模块自动执行开关，持久化</td>
+</tr>
+<tr>
+<td>买 / 卖</td>
+<td><code>ENABLE_ALLOW_BUY</code> / <code>ENABLE_ALLOW_SELL</code></td>
+<td>手动和自动交易的方向权限</td>
+</tr>
+<tr>
+<td>动态止盈（后端配置开关）</td>
+<td><code>ENABLE_DYNAMIC_STOP_PROFIT</code></td>
+<td>控制动态止盈止损模块是否检测信号（此开关仅在后端 config.py 中存在，web1.0 前端无对应 UI 控件；如需切换请直接编辑配置文件）</td>
+</tr>
+<tr>
+<td>网格自动/暂停</td>
+<td><code>grid_trading_sessions.enabled</code></td>
+<td>单只股票网格会话开关，位于<strong>网格配置对话框内</strong>（非顶部控制条），暂停后保留会话但不发新网格单</td>
+</tr>
+<tr>
+<td>自动止盈（持仓列表末列）</td>
+<td><code>positions.stop_profit_enabled</code></td>
+<td><strong>个股级</strong>动态止盈止损拨动开关，暂停后该股不再检测止盈止损信号，持久化</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">为什么 API 仍叫 isMonitoring</p>
+<p>早期前端使用 <code>isMonitoring</code> 表示顶部开关状态。为兼容旧接口，字段名保留不变，但当前语义已经是全局自动操作总开关；持仓监控线程状态请看 <code>positionMonitorRunning</code>。</p>
+</div>
+<p>Web1.0 参数区中，<code>API Token</code> 与"模拟交易模式""允许自动止盈""允许自动网格"位于同一行；Token 值由前端 <code>localStorage</code> 持久化，通过 <code>X-API-Token</code> 请求头发送，后端与 <code>QMT_API_TOKEN</code> 环境变量比对验证。</p>
+<p>Web2.0 顶部不再有任何控制控件：原先的 7 个开关/按钮已全部替换为<strong>只读状态徽章</strong>
+（开 / 关 / 未知三态），切换请到 web1.0 完成。</p>
+<h3 id="web10">持仓列表（web1.0）<a class="headerlink" href="#web10" title="Permanent link">&para;</a></h3>
+<p><strong>列定义</strong>（共 16 列）：网格 / 代码 / 名称 / 涨幅 / 价格 / 成本 / 盈亏 / 市值 / 可用 / 总数 / 浮盈 / 冲高 / 止损 / 建仓 / 基准 / 自动止盈。</p>
+<p>首列「网格」为网格配置入口（点击打开网格配置对话框，非勾选框语义），列头已从旧版全选 checkbox 改为「网格」文本并居中。末列「自动止盈」为个股级动态止盈止损拨动开关：</p>
+<ul>
+<li>开关状态来自 <code>positions.stop_profit_enabled</code>，切换即调用 <code>POST /api/holdings/stop_profit</code> 并持久化到 SQLite</li>
+<li>关闭后该股不再检测止盈止损信号（不影响其网格会话，也不影响其他股票）</li>
+<li>切换失败时开关自动回滚到原状态并提示</li>
+</ul>
+<p><strong>字段释义</strong>：
+| 列名 | 后端字段 | 含义 |
+|------|---------|------|
+| 代码 | <code>stock_code</code> | 6 位股票代码 |
+| 名称 | <code>stock_name</code> | 股票名称（悬停弹出 MACD 操盘建议） |
+| 涨幅 | <code>change_percentage</code> | 当日涨跌幅（%） |
+| 价格 | <code>current_price</code> | 实时市价 |
+| 成本 | <code>cost_price</code> | 平均持仓成本 |
+| 盈亏 | <code>profit_ratio</code> | 浮动盈亏比例（%） |
+| 市值 | <code>market_value</code> | 持仓市值 |
+| 可用 | <code>available</code> | 可卖股数 |
+| 总数 | <code>volume</code> | 持仓总股数 |
+| 浮盈 | <code>profit_triggered</code> | 首次止盈是否已触发（成交确认后标记） |
+| 冲高 | <code>highest_price</code> | 持仓期间最高价 |
+| 止损 | <code>stop_loss_price</code> | 动态止损/止盈价格（随 profit_triggered 切换算法） |
+| 建仓 | <code>open_date</code> | 首次建仓日期 |
+| 基准 | <code>base_cost_price</code> | 初次建仓成本（补仓摊薄后保持不变） |
+| 自动止盈 | <code>stop_profit_enabled</code> | 个股级动态止盈止损开关（拨动切换） |</p>
+<p>与旧版布局相比的改动：
+- ~~全选 checkbox~~ → 文本「网格」（全选逻辑随之移除）
+- 新增末列「自动止盈」iOS 风格拨动开关
+- 表头文字精简并统一居中
+- 消息提示改为 <code>position:fixed</code> 浮层，不再挤压页面布局
+- 持仓列表与下单日志的宽度比例从 2:1 调整为 <strong>3:1</strong>（<code>lg:grid-cols-4</code> + <code>col-span-3</code>）</p>
+<p><strong>下单日志</strong>：单行左至右为 名称 → B/S 方向（买红卖绿加粗）→ 金额 → 策略标签 → 时间，所有列严格对齐表头。内容靠左聚拢，无多余空白。时间列由后端 <code>/api/trade-records</code> 统一格式化为 <code>YYYY-MM-DD HH:MM:SS</code>，QMT 回报的微秒精度不会透出到前端。</p>
+<h3 id="_9">数据管理按钮语义<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>按钮</th>
+<th>端点</th>
+<th>实际影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>清空买卖日志</td>
+<td><code>POST /api/data/clear_buysell</code></td>
+<td>仅 <code>DELETE FROM trade_records</code>，<strong>持仓数据不受影响</strong></td>
+</tr>
+<tr>
+<td>初始化持股</td>
+<td><code>POST /api/holdings/init</code></td>
+<td>从 QMT 拉取持仓重建本地元数据，成功与否以返回体 <code>status</code> 字段判定</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">二次确认文案与实际行为对齐</p>
+<p>「清空买卖日志」的两道 <code>confirm</code> 提示曾写作"删除所有交易记录<strong>和持仓信息</strong>"，与后端只删 <code>trade_records</code> 的实现不符，容易让人误以为持仓会被清掉而不敢点。文案已改为"清空全部买入/卖出日志……不会清空持仓数据"。</p>
+</div>
+<h3 id="_10">卖出委托状态<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
+<p>动态止盈止损卖出委托由后端 <code>pending_orders</code> 跟踪。委托超时后，如果启用了自动重挂，系统会先撤销旧委托，再以新价格重新提交；<code>best</code> 对手价模式下买三价无效时会降级到买一价、最新价、收盘价或原信号价。</p>
+<p>这意味着 Web 中“首次止盈已触发”代表<strong>成交确认后的状态</strong>，不是“委托已提交”。生产排查时应同时查看交易记录、后台日志和 QMT 当日委托，避免把待成交卖单误判为已经落账。</p>
+<h3 id="_11">网格悬停卡片口径<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
+<p>web1.0 持仓列表中，鼠标悬停在已启动网格交易的个股复选框上会显示网格状态卡片。卡片顶部显示<strong>运行时长</strong>，其余比例字段统一使用后端小数比例，由前端格式化为百分比，避免重复乘以 100。</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>数据来源</th>
+<th>口径</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行时长</td>
+<td>会话创建时间差</td>
+<td>从 <code>created_at</code> 差值计算（天/时/分）</td>
+</tr>
+<tr>
+<td>网格盈亏</td>
+<td><code>stats.pnl_snapshot.profit_ratio</code></td>
+<td>LIFO 账本真实盈亏率；账本不可用时使用 <code>get_pnl_snapshot()</code> 的降级口径</td>
+</tr>
+<tr>
+<td>已实现/未实现</td>
+<td><code>stats.pnl_snapshot.realized_pnl</code> / <code>unrealized_pnl</code></td>
+<td>已配对卖出收益 + 未平网格库存浮动盈亏</td>
+</tr>
+<tr>
+<td>交易次数</td>
+<td><code>stats.trade_count</code> / <code>buy_count</code> / <code>sell_count</code></td>
+<td>已成交确认并落账后的网格交易次数</td>
+</tr>
+<tr>
+<td>资金使用</td>
+<td><code>stats.current_investment</code> / <code>config.max_investment</code></td>
+<td>当前未平网格投入占最大投入额度比例</td>
+</tr>
+<tr>
+<td>中心价偏离</td>
+<td><code>stats.deviation_ratio</code> + <code>stats.center_deviation_ratio</code></td>
+<td>当前网格中心价相对初始中心价的漂移幅度；显示为正数并标注”上移/下移”</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">中心价偏离不是当前市价偏离</p>
+<p>网格风控内部同时计算两种偏离：<code>drift_deviation = abs(current_center_price - center_price) / center_price</code> 和 <code>market_deviation = abs(current_price - current_center_price) / current_center_price</code>，退出判断取二者最大值。悬停卡片中的“中心价偏离”只展示前者，即网格中心价漂移；当前市价偏离作为后端字段保留，不混入该展示项。</p>
+</div>
+<hr />
+<h2 id="_12">连接设置面板<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<p>顶部 ⚙ 齿轮按钮打开「连接设置」面板：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌──────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│ 当前: HTTPS (安全) — 后端也必须 HTTPS         │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├──────────────────────────────────────────────┤
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│ 后端模式：  [ 网关模式 ]  [ 直连模式 ]        │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├──────────────────────────────────────────────┤
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│ 网关地址：  http://127.0.0.1:8888             │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│ API Token： •••••••••••• (留空=不验证)        │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├──────────────────────────────────────────────┤
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│ 连通性测试：[ 测试连接 ]                      │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│   ✓ 连接成功 — 2 个账号, 2 个在线             │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>└──────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="_13">字段说明<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>网关模式</th>
+<th>直连模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>地址</td>
+<td>网关地址（所有账户共用），如 <code>http://127.0.0.1:8888</code></td>
+<td>Flask 地址（每账户独立），在账户下拉菜单的 ✎ 中编辑</td>
+</tr>
+<tr>
+<td>Token</td>
+<td>xtquant_manager 的 <code>api_token</code></td>
+<td>Flask 的 <code>QMT_API_TOKEN</code> 环境变量值</td>
+</tr>
+<tr>
+<td>测试连接</td>
+<td><code>GET /api/v1/health</code> — 显示账号总数与在线数</td>
+<td><code>GET /api/status</code> — 显示账户 ID</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_14">自动化行为<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>保存后自动发现账号</strong>：保存连接配置后调用 <code>discoverAccounts()</code>，从网关同步真实账号 ID 到下拉列表（无需手动新增）</li>
+<li><strong>HTTPS Mixed Content 警告</strong>：HTTPS 页面访问 HTTP 后端会被浏览器阻止，面板自动给出警告</li>
+<li><strong>无 Token 远程警告</strong>：远程连接而不设 Token 时提示安全风险</li>
+<li><strong>8s 超时 + 非 JSON 检测</strong>：测试连接遇到反代/Nginx 错误页时给出明确诊断</li>
+</ul>
+<hr />
+<h2 id="miniqmtbat">启动菜单（miniqmt.bat）<a class="headerlink" href="#miniqmtbat" title="Permanent link">&para;</a></h2>
+<p><code>miniqmt.bat</code>（或 <code>python scripts/_launcher.py menu</code>）打开交互式控制台菜单，完整选项如下：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>部署/环境：
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  [0] 首次部署向导        [1] 检查 Python 环境与核心依赖
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  [2] 安装/更新依赖       [3] 检查配置文件
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  [4] 拉取最新代码 (git pull)
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>查看：
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  [5] 查看所有账号配置    [6] 查看运行状态
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>启动（Flask 直连）：
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>  [7] 启动所有账号 (实盘，启动时选择 web1.0/web2.0)
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>  [8] 启动所有账号 (模拟，启动时选择 web1.0/web2.0)
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>  [9] 启动指定账号 (选择实盘/模拟 + web1.0/web2.0)
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>         web1.0 = Flask :5000 起, 仅本机访问 (配置/监控用)
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>         web2.0 = xtquant_manager :8888, 全网卡 (只读监控)
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>                  Flask 仍会启动(仅本机)供网关读取运行时开关
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>停止：
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>  [a] 停止所有账号         [b] 停止指定账号
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>  [c] 强制停止所有账号
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>XtQuantManager：
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>  [d] 启动 XtQuantManager 网关   [e] 停止网关
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>  [f] 网关状态                    [g] 打开 web2.0 UI（浏览器）
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>  [h] 重启网关                    [i] 查看网关日志
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>自动买入：
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>  [j] 启动自动买入服务     [k] 停止自动买入服务
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>  [l] 查看自动买入状态     [m] 查看自动买入日志
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>数据源 / 通道切换：
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>  [n] Tushare Pro 数据源配置
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>  [o] 大QMT IPC Trader 配置
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>  [p] XtTrader 通道总控（miniQMT 直连 / IPC-Trader / RPC-Trader）
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>  [q] 退出
+</code></pre></div>
+<p>菜单底部自动显示当前 XtTrader 通道状态（活跃通道 / 连接状态 / 路径）。</p>
+<div class="admonition note">
+<p class="admonition-title">菜单节选说明</p>
+<p>以上为 <code>python scripts/_launcher.py menu</code> 的完整选项。CLAUDE.md 中的菜单概览表仅列出了高频使用的子集，请以本文档为准。</p>
+</div>
+<h3 id="web">Web 模式偏好记忆<a class="headerlink" href="#web" title="Permanent link">&para;</a></h3>
+<p>启动菜单 [7]/[8]/[9] 会读取 <code>data/.web_mode</code> 中上次的选择：</p>
+<ul>
+<li><code>1</code> → web1.0（Flask）— 系统在每账号端口上启动完整 Flask 服务</li>
+<li><code>2</code> → web2.0（xtquant_manager）— 界面与网关由 xtquant_manager 统一托管；Flask 仍在本机启动（端口空闲时），供网关反向读取运行时开关</li>
+</ul>
+<p>每次选择都会持久化，下次启动直接套用偏好。</p>
+<h3 id="vs">绑定地址 vs 客户端地址分离<a class="headerlink" href="#vs" title="Permanent link">&para;</a></h3>
+<p>xtquant_manager 在 <a href="https://github.com/weihong-su/miniQMT/blob/main/scripts/_launcher.py">_launcher.py</a> 中明确分离两个概念，避免 <code>0.0.0.0</code> 被错误用作客户端目标：</p>
+<table>
+<thead>
+<tr>
+<th>常量</th>
+<th>值</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XQM_DEFAULT_HOST</code></td>
+<td><code>0.0.0.0</code></td>
+<td><strong>绑定地址</strong> — 监听全部网卡，对外可达</td>
+</tr>
+<tr>
+<td><code>XQM_CLIENT_HOST</code></td>
+<td><code>127.0.0.1</code></td>
+<td><strong>客户端地址</strong> — 本机健康检查、浏览器打开</td>
+</tr>
+</tbody>
+</table>
+<p>启动后菜单会同时显示「本机 URL」和「局域网 URL」：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>✓ xtquant_manager 已启动
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  Web UI:          http://127.0.0.1:8888  (本机)  |  http://192.168.1.10:8888  (局域网)
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  API 文档:        http://127.0.0.1:8888/docs
+</code></pre></div>
+<hr />
+<h2 id="vercel-web20">Vercel 远程部署（web2.0）<a class="headerlink" href="#vercel-web20" title="Permanent link">&para;</a></h2>
+<p>如需将 web2.0 部署到 Vercel/Netlify 等公网托管，通过 Cloudflare Tunnel 暴露 Windows 上的 xtquant_manager：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Vercel (静态 UI) ──HTTPS──► Cloudflare Tunnel ──► Windows xtquant_manager :8888 ──► QMT
+</code></pre></div>
+<p>完整步骤（含 Tunnel 配置、Token 安全清单、CORS 排错）参见 <a href="https://github.com/weihong-su/miniQMT/blob/main/web2.0/VERCEL_DEPLOY.md">web2.0/VERCEL_DEPLOY.md</a>。</p>
+<h3 id="_15">关键安全要点<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
+<ul>
+<li>⚠️ <strong>必须设置 <code>api_token</code></strong>：远程暴露唯一的安全防线，用强随机字符串（≥32 位）</li>
+<li>⚠️ <strong>必须用 HTTPS 隧道</strong>：Cloudflare Tunnel 自动 HTTPS；直接暴露 <code>:8888</code> 到公网会触发浏览器 Mixed Content 拦截</li>
+<li>远程用户始终通过网关模式接入，写操作（配置/监控/初始化）只能在本机用 web1.0 完成</li>
+</ul>
+<hr />
+<h2 id="_16">开发与构建<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>web2.0
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>npm<span class="w"> </span>install<span class="w">               </span><span class="c1"># 仅首次</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>npm<span class="w"> </span>run<span class="w"> </span>dev<span class="w">               </span><span class="c1"># 开发模式 (http://localhost:5173，热更新)</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>npm<span class="w"> </span>run<span class="w"> </span>build<span class="w">             </span><span class="c1"># 生产构建 → dist/</span>
+</code></pre></div>
+<p>构建产物 <code>web2.0/dist/</code> 会被 xtquant_manager 自动托管（静态文件 + SPA fallback），也可直接部署到 Vercel。</p>
+<hr />
+<h2 id="_17">相关文档<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../web-api/">Web API</a> — REST 端点完整列表（标注网关模式可用性）</li>
+<li><a href="../autobuy/">自动买入</a> — 自动买入独立进程、候选池筛选和调度配置</li>
+<li><a href="../architecture/">架构说明</a> — 双层存储、信号检测与执行分离</li>
+<li><a href="../../xqm/">XtQuantManager 概述</a> — 网关详细文档</li>
+<li><a href="https://github.com/weihong-su/miniQMT/blob/main/web2.0/VERCEL_DEPLOY.md">web2.0/VERCEL_DEPLOY.md</a> — Vercel 远程部署完整指南</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Business Source License 1.1 &mdash; 商业用途需获授权 &bull; 2030-04-13 后转 MIT
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy", "content.code.annotate", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
