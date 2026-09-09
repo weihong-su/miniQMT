@@ -157,6 +157,27 @@ def _format_heartbeat_status_lines(active_grid_session_count):
         f"活跃网格会话数:{active_grid_session_count}",
     )
 
+
+def _format_resource_line():
+    """进程资源占用行：线程数与内存。
+
+    长跑进程线程/内存持续增长会以 RuntimeError: can't start new thread 收场，
+    且进程静默死亡后无任何线索，因此把这两个指标写进心跳便于事后归因。
+    """
+    thread_count = threading.active_count()
+    try:
+        from utils import memory_usage
+        mem = memory_usage()
+    except Exception:
+        mem = None
+
+    if mem:
+        mem_str = f"内存:RSS {mem['rss_mb']:.0f}MB / VMS {mem['vms_mb']:.0f}MB"
+    else:
+        mem_str = "内存:获取失败"
+
+    return f"   线程数:{thread_count} | {mem_str}"
+
 def _spinner_worker():
     """在终端同一行滚动显示 |/-\\ 旋转符号，表示程序正在运行。
     直接写 stdout，不进入日志文件；logger 输出的完整行会自然覆盖该符号。"""
@@ -346,6 +367,7 @@ def heartbeat_logger():
             for status_line in _format_heartbeat_status_lines(active_grid_session_count):
                 logger.info(status_line)
             logger.info(f"   持仓数量:{position_count} | {asset_str}")
+            logger.info(_format_resource_line())
             logger.info(f"   {market_health_str}")
             logger.info("=" * 50)
 

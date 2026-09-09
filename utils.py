@@ -429,6 +429,52 @@ def get_trading_days(start_date, end_date=None):
     
     return trading_days
 
+def _memory_usage_windows():
+    """未安装 psutil 时，通过 Win32 API 获取当前进程内存占用。
+
+    口径与 psutil 保持一致：WorkingSetSize->rss, PagefileUsage->vms。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class _ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", ctypes.c_ulong),
+            ("PageFaultCount", ctypes.c_ulong),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    # 必须显式声明句柄类型：64 位下默认 c_int 会截断伪句柄，导致调用失败
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    get_memory_info = kernel32.K32GetProcessMemoryInfo
+    get_memory_info.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(_ProcessMemoryCounters), ctypes.c_ulong
+    ]
+    get_memory_info.restype = wintypes.BOOL
+
+    counters = _ProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(_ProcessMemoryCounters)
+    if not get_memory_info(
+        kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+    ):
+        return None
+
+    return {
+        'rss': counters.WorkingSetSize,
+        'vms': counters.PagefileUsage,
+        'rss_mb': counters.WorkingSetSize / (1024 * 1024),
+        'vms_mb': counters.PagefileUsage / (1024 * 1024)
+    }
+
+
 def memory_usage():
     """
     获取当前进程的内存使用情况
@@ -448,8 +494,12 @@ def memory_usage():
             'vms_mb': memory_info.vms / (1024 * 1024)  # MB
         }
     except ImportError:
-        logger.warning("未安装psutil模块，无法获取内存使用情况")
-        return None
+        # psutil 非必装依赖，Windows 下回退到 Win32 API
+        try:
+            return _memory_usage_windows()
+        except Exception as e:
+            logger.warning(f"未安装psutil模块，Win32回退也失败，无法获取内存使用情况: {str(e)}")
+            return None
     except Exception as e:
         logger.error(f"获取内存使用情况时出错: {str(e)}")
         return None

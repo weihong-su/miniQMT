@@ -32,9 +32,14 @@
   - ⚠️ **实际生效粒度为 30~60 秒**：超时检查由 `PositionManager.order_check_interval`（硬编码 30 秒）轮询驱动，止损的 0.5 分钟一直同样受此限制，两者行为一致。相比原先的 300~330 秒仍改善约 6 倍。
 
 ### Added
+- **系统心跳新增线程数与内存指标**（2026-09-09 日志审查后补，纯可观测性）：当日 16:25 主进程在连续运行 **138 小时**后抛 `RuntimeError: can't start new thread`（`data_manager.get_latest_xtdata` 提交线程池任务时），随后 3 小时**无任何日志、心跳全停**，直到 19:20 手工重启——属进程级静默死亡，`thread_monitor` 对此无能为力（它只能重启线程，不能重启进程）。事后排查发现**没有任何指标可用于归因**：`timeout_utils` 的泄漏计数本运行周期仅告警 5 次，[data_manager.py](data_manager.py) 的 9 处 `ThreadPoolExecutor` 均已 `shutdown(wait=False)`，无法区分线程泄漏与内存耗尽。现在心跳每 30 分钟输出一行 `线程数:N | 内存:RSS xxxMB / VMS xxxMB`，两条曲线足以分辨故障类型（线程数单调上升=线程泄漏；线程数平稳而 RSS/VMS 增长=内存泄漏）。
+  - 新增独立函数 `main._format_resource_line()`，**未改动 `_format_heartbeat_status_lines()` 的二元组返回签名**——既有用例按 `status_line, grid_line = ...` 解包，加行会直接解包失败。
+  - `utils.memory_usage()` 补 Win32 回退：**psutil 既未安装也不在 [utils/requirements.txt](utils/requirements.txt) 中**，原实现在缺失时只打一句 warning 返回 `None`，不补回退则该指标永远是「获取失败」。回退走 `kernel32.K32GetProcessMemoryInfo`，零新依赖，口径与 psutil 对齐（`WorkingSetSize`→rss、`PagefileUsage`→vms，实测两者差异 <0.5%）。**必须显式声明 `GetCurrentProcess.restype = wintypes.HANDLE`**——默认 `c_int` 会在 64 位下截断伪句柄 `-1`，第一版因此实测返回 `None`。psutil 若日后装上则优先使用。
+  - ⚠️ **主判据是线程数而非 VMS**：Windows 的 `PagefileUsage` 是私有提交量，线程栈是保留而非提交，每条只贡献约 8KB，对 `can't start new thread` 的指示远不如线程数直接。
 - `scripts/restore_line_endings.py`：还原被编辑器规范化的行尾分布。本仓库 HEAD 中多数文件为 **CRLF/LF 混合**行尾且 `core.autocrlf=false`，编辑器保存会把整个文件统一为纯 CRLF，导致 `git diff` 显示全文件重写（本次 `position_manager.py` 一度显示 2728 行改动、`web1.0/script.js` 489 行）。脚本以“去掉行尾后的内容”为基准做 `difflib` 比对，`equal` 块取 HEAD 原始行、改动块沿用上下文行尾，并带正文一致性断言防止误改代码。
 
 ### Tests
+- `test/test_runtime_logging.py` 新增 2 例：心跳资源行包含实时 `threading.active_count()` 且内存格式匹配 `RSS \d+MB / VMS \d+MB`；`memory_usage()` 返回 `None` 时降级为「内存:获取失败」而非抛异常——心跳线程绝不能因取指标失败而中断。
 - `test/test_trader_callback.py` 新增 5 例（`d5e`~`d5i`）：买入委托被拦截且不触发行情查询、显式 `order_side='SELL'` 正常重挂并校验 `strategy` 拼接、**历史 `signal_info` 缺 `order_side` 时按三种卖出信号类型兜底放行**、方向无法判定时保守放弃、以及从超时撤单到 `54=已撤` 回调的**端到端链路**断言全程无卖出委托。
 - 既有用例 `test_d2_stop_loss_uses_shorter_timeout_than_take_profit` 的前提被本次阈值调整推翻（它以 `take_profit_half` 作为“走 5 分钟全局阈值”的对照组），改名为 `test_d2_stop_loss_and_take_profit_use_shorter_timeout` 并扩展为四方对照：`stop_loss`/`take_profit_half`/`take_profit_full` 均 0.5 分钟触发，`add_position` 5 分钟不触发。
 - **变异验证**：将方向门控临时改为 `if False:` 后重跑，`d5e`/`d5h`/`d5i` 全部失败且报错均为 `Expected 'sell_stock' to not have been called. Called 1 times.`——既证明测试确实能捕获缺陷（而非陪跑），也**实证了原缺陷会真实下出反向卖单**；变异已还原并经 grep 确认无残留。

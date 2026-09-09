@@ -632,6 +632,7 @@ class GridTradingManager:
 
             recovered_count = 0
             stopped_count = 0
+            paused_count = 0
 
             for session_data in active_sessions:
                 # CRITICAL FIX: 将sqlite3.Row转换为字典,避免"'sqlite3.Row' object has no attribute 'get'"错误
@@ -778,8 +779,9 @@ class GridTradingManager:
                     logger.info(f"[GRID]   - 当前中心价: {session.current_center_price:.2f}元")
                     logger.info(f"[GRID]   - 当前市价: {current_price:.2f}元")
                     logger.info(f"[GRID]   - 累计交易: {session.trade_count}次(买{session.buy_count}/卖{session.sell_count})")
+                    logger.info(f"[GRID]   - 自动开关: {'自动' if session.enabled else '暂停(不产生新网格单)'}")
                     # 简化：不调用get_profit_ratio()避免递归日志调用
-                    logger.info(f"[GRID]   - 网格盈亏: 计算中...")
+                    logger.info(f"[GRID]   - 网格盈亏: 未计算(恢复期跳过)")
                     logger.info(f"[GRID]   - 追踪器状态: 已重置(安全模式)")
 
                     levels = session.get_grid_levels()
@@ -789,6 +791,8 @@ class GridTradingManager:
                     logger.info(f"[GRID]   - 剩余时长: {remaining_days}天")
 
                     recovered_count += 1
+                    if not session.enabled:
+                        paused_count += 1
 
                 except Exception as e:
                     logger.error(f"[GRID] 恢复会话{session_id}失败: {str(e)}, 自动停止会话")
@@ -798,7 +802,11 @@ class GridTradingManager:
                     except:
                         pass
 
-            logger.info(f"[GRID] 网格会话恢复完成: 恢复{recovered_count}个, 自动停止{stopped_count}个")
+            logger.info(
+                f"[GRID] 网格会话恢复完成: 恢复{recovered_count}个"
+                f"(自动{recovered_count - paused_count}个/暂停{paused_count}个), "
+                f"自动停止{stopped_count}个"
+            )
 
             return recovered_count
 

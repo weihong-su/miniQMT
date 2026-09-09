@@ -51,6 +51,19 @@ class TestRuntimeLogging(unittest.TestCase):
         self.assertNotIn("自动网格", status_line)
         self.assertEqual("   自动网格:开启 | 活跃网格会话数:2", grid_line)
 
+    def test_resource_line_reports_thread_count_and_memory(self):
+        line = main._format_resource_line()
+
+        self.assertIn(f"线程数:{threading.active_count()}", line)
+        self.assertRegex(line, r"内存:RSS \d+MB / VMS \d+MB")
+
+    def test_resource_line_degrades_when_memory_unavailable(self):
+        with patch("utils.memory_usage", return_value=None):
+            line = main._format_resource_line()
+
+        self.assertIn("线程数:", line)
+        self.assertIn("内存:获取失败", line)
+
     def test_active_grid_session_count_only_counts_enabled_active_sessions(self):
         grid_manager = types.SimpleNamespace(
             lock=threading.RLock(),
