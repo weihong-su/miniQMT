@@ -483,6 +483,13 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 | `LOG_FILE` | `"qmt_trading.log"` | 日志文件路径 |
 | `LOG_MAX_SIZE` | `10 MB` | 单个日志文件最大大小 |
 | `LOG_BACKUP_COUNT` | `5` | 日志备份数量 |
+| `LOG_THROTTLE_INTERVAL` | `300` | 持续性状态重复日志的节流窗口（秒），见 `logger.log_throttled` |
+| `SPINNER_INTERVAL` | `1.0` | 控制台旋转符号刷新间隔（秒），本进程写 stdout 最频繁的来源 |
+| `CONSOLE_LOG_RATE` | `20.0` | 控制台限速稳态速率（条/秒），设 `0` 关闭限速 |
+| `CONSOLE_LOG_BURST` | `300` | 控制台限速突发容量（条），须大于启动期单秒峰值（实测约 140） |
+
+> 后三项用于防止刷屏写爆终端进程内存反噬本进程，**只作用于控制台，文件日志始终完整**。
+> 背景与三层防御设计见 [无人值守运行 · 终端刷屏导致的进程级故障](unattended.md)。
 
 ---
 

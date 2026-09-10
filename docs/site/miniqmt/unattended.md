@@ -121,6 +121,70 @@ if not config.is_trade_time():
 - 持仓数量和总市值
 - 最近的交易活动
 - QMT 连接状态
+- **进程资源占用**：`线程数:18(OS 104) | 句柄:1037 | 内存:RSS 195MB / VMS 182MB`
+
+### 怎么读资源指标  [v3.9.1]
+
+| 现象 | 判读 |
+|------|------|
+| OS 线程数单调上升 | 原生线程泄漏（xtquant/QMT SDK 侧），最终以 `can't start new thread` 收场 |
+| 句柄数单调上升 | 句柄泄漏，表现为打开文件失败（`[Errno 22]`） |
+| VMS（私有提交）持续增长 | 真实内存泄漏 |
+| 仅 RSS 上升、VMS 平稳 | **不是泄漏**，是 Windows 工作集驻留，系统会自行 trim |
+
+- **看 OS 口径，不要看 Python 口径**：`threading.active_count()` 只覆盖 Python 层，
+  xtquant 的原生线程完全不可见。实测同一进程 Python 报 18、OS 实际 104，
+  差的 86 条正是最可能泄漏的部分。
+- **RSS 会骗人**：实测收盘后 RSS 从 195MB 跌到 31MB，而私有提交始终 182MB。
+  判断泄漏一律以 VMS 为准。
+
+---
+
+## 终端刷屏导致的进程级故障  [v3.9.1]
+
+这是一类**外部原因造成的自身死亡**，`thread_monitor` 完全兜不住（它只能重启线程，
+不能重启进程），务必了解。
+
+### 事故链（2026-09-09 实盘）
+
+```
+13:43  某股因摊薄成本导致止损价失真，剩余持仓又是 T+1 冻结(available=0)
+       → 形成持续 77 分钟、每轮轮询都命中的稳定状态，日志刷出约 3800 行
+       ＋ spinner 每 0.25 秒写一次 stdout（138 小时累计约 199 万次）
+15:24  Windows 事件 ID 2004：虚拟内存不足，WindowsTerminal.exe 占用 27.8GB
+16:24  同上，第三次
+16:25  miniQMT: RuntimeError: can't start new thread → 静默死亡 3 小时
+```
+
+**根因不在本项目**：Windows Terminal 在高频写入下会无限泄漏内存
+（[microsoft/terminal#8283](https://github.com/microsoft/terminal/issues/8283)
+记录了同型模式——每 10ms 回移光标打印，内存以 0.1MB/10s 增长；
+[#768](https://github.com/microsoft/terminal/issues/768) 指出持续刷屏的应用触发最激进的增长）。
+它吃满系统提交上限后，本进程连 1MB 线程栈都提交不到。
+
+### 三层防御
+
+| 层 | 手段 | 覆盖范围 | 配置 |
+|----|------|---------|------|
+| L1 | spinner 降频 | 写 stdout 的**最大单一来源** | `SPINNER_INTERVAL = 1.0` |
+| L2 | 按 key 节流日志 | **已知**的持续性状态刷屏 | `LOG_THROTTLE_INTERVAL = 300` |
+| L3 | 控制台令牌桶限速 | **未预见**的突发刷屏（无差别兜底） | `CONSOLE_LOG_RATE` / `CONSOLE_LOG_BURST` |
+
+**L3 只作用于控制台，文件日志始终完整** —— 诊断能力零损失。被抑制时会输出
+`[控制台限速] 已抑制 N 条控制台输出，完整日志见 ...`，不会让人误以为程序卡死。
+
+默认参数按实测流量选定：稳态日志仅 0.01~0.08 行/秒，启动瞬间峰值约 140 行/秒，
+因此 `CONSOLE_LOG_BURST = 300` 容得下启动峰值，`CONSOLE_LOG_RATE = 20` 只在
+异常刷屏时才会截断。设 `CONSOLE_LOG_RATE = 0` 可关闭限速。
+
+### 进一步降低风险（可选）
+
+- **换用 conhost**：`conhost.exe python main.py` 绕开 Windows Terminal，
+  从根本上避开其泄漏 bug。
+- **限制终端回滚缓冲**：Windows Terminal `settings.json` 的
+  `profiles.defaults.historySize`（默认 9001 行）。注意这只减缓不根治——
+  27.8GB 远超 9001 行文本的体量，泄漏与写入**次数**相关而非字节数。
+- **定期重启**：138 小时不重启已被这次事故证伪，建议每日盘后重启一次进程与终端。
 
 ---
 

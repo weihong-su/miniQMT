@@ -58,6 +58,16 @@ LOG_BACKUP_COUNT = 5  # 保留5个备份文件
 # 持续性状态的重复日志节流间隔(秒)：同一股票同一事件在窗口内只输出一次并累计抑制次数。
 # 见 logger.log_throttled；针对 T+1 冻结等每轮轮询都命中的状态，避免刷屏喂大终端缓冲。
 LOG_THROTTLE_INTERVAL = 300
+# 控制台旋转符号刷新间隔(秒)。这是本进程写 stdout 最频繁的来源——0.25 秒时
+# 138 小时累计约 199 万次写入，是同期日志行数的 58 倍。Windows Terminal 在高频
+# 写入下会无限泄漏内存(microsoft/terminal#8283)，2026-09-09 实测其占用 27.8GB
+# 打爆系统提交上限，反噬本进程 can't start new thread。
+SPINNER_INTERVAL = 1.0
+# 控制台输出限速(仅限控制台，文件日志始终完整)：令牌桶，稳态速率 + 突发容量。
+# 实测稳态日志仅 0.01~0.08 行/秒，启动瞬间峰值约 140 行/秒；因此 burst 需容纳
+# 启动峰值，rate 只用于截断异常刷屏（如意外死循环打日志）。
+CONSOLE_LOG_RATE = 20.0      # 稳态每秒放行条数
+CONSOLE_LOG_BURST = 300      # 突发容量(条)，须大于启动期单秒峰值
 XQM_LOG_FILE = os.path.join("logs", "xqm_manager.log")
 XQM_LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 XQM_LOG_BACKUP_COUNT = 5  # 保留5个备份文件

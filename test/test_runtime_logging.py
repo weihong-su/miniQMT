@@ -4,6 +4,7 @@
 覆盖进程生命周期身份串、心跳状态行与资源指标、活跃网格会话统计、
 日志文件切换、重复日志节流、以及最高价可见变化判断。
 """
+import io
 import logging
 import os
 import threading
@@ -202,6 +203,105 @@ class _ListHandler(logging.Handler):
 
     def emit(self, record):
         self.sink.append(record)
+
+
+class TestConsoleRateLimit(unittest.TestCase):
+    """控制台限速：无差别兜住未预见的突发刷屏，但绝不能削弱文件日志。"""
+
+    def _make_handler(self, rate, burst, stream):
+        handler = logger_module.SafeStreamHandler(stream)
+        handler._rate = rate
+        handler._burst = burst
+        handler._tokens = burst
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        return handler
+
+    def _make_logger(self, name, handlers):
+        log = logging.getLogger(name)
+        log.setLevel(logging.INFO)
+        log.handlers = list(handlers)
+        log.propagate = False
+        return log
+
+    def test_file_output_is_never_throttled(self):
+        """核心承诺：控制台被限速时，文件日志仍然一条不少。"""
+        console = io.StringIO()
+        file_records = []
+        log = self._make_logger("rate_file", [
+            self._make_handler(5.0, 10, console),
+            _ListHandler(file_records),
+        ])
+
+        for i in range(200):
+            log.info(f"line{i}")
+
+        console_lines = [l for l in console.getvalue().split("\n") if l.strip()]
+        self.assertEqual(len(file_records), 200)          # 文件侧完整
+        self.assertLess(len(console_lines), 200)          # 控制台被截断
+        self.assertGreaterEqual(len(console_lines), 10)   # 但突发额度已用满
+
+    def test_burst_capacity_absorbs_startup_peak(self):
+        """启动瞬间实测约 140 行/秒，默认 burst 必须容得下，否则会误伤启动日志。"""
+        console = io.StringIO()
+        log = self._make_logger("rate_burst", [
+            self._make_handler(config.CONSOLE_LOG_RATE, config.CONSOLE_LOG_BURST, console)
+        ])
+
+        for i in range(140):
+            log.info(f"startup{i}")
+
+        console_lines = [l for l in console.getvalue().split("\n") if l.strip()]
+        self.assertEqual(len(console_lines), 140)
+        self.assertNotIn("控制台限速", console.getvalue())
+
+    def test_suppressed_total_is_reported_after_refill(self):
+        console = io.StringIO()
+        # 补充速率取极小值并手动回填令牌，避免依赖 sleep——按真实速率补充时，
+        # 循环自身的耗时会让抑制条数随机波动，测试会 flaky
+        handler = self._make_handler(0.0001, 5, console)
+        log = self._make_logger("rate_report", [handler])
+
+        for i in range(25):
+            log.info("flood")
+        handler._tokens = 5
+        log.info("recovered")
+
+        text = console.getvalue()
+        self.assertIn("[控制台限速] 已抑制 20 条控制台输出", text)
+        self.assertIn("recovered", text)
+
+    def test_rate_zero_disables_throttling(self):
+        console = io.StringIO()
+        log = self._make_logger("rate_off", [self._make_handler(0, 1, console)])
+
+        for i in range(500):
+            log.info("x")
+
+        self.assertEqual(len([l for l in console.getvalue().split("\n") if l.strip()]), 500)
+
+
+class TestSpinnerInterval(unittest.TestCase):
+    def test_spinner_uses_configured_interval(self):
+        """spinner 是本进程写 stdout 最频繁的来源，频率直接决定终端泄漏速度。"""
+        self.assertEqual(config.SPINNER_INTERVAL, 1.0)
+
+        waits = []
+        stop = main._spinner_stop
+
+        class _Recorder:
+            def is_set(self_inner):
+                return len(waits) >= 3
+
+            def wait(self_inner, timeout):
+                waits.append(timeout)
+                return False
+
+        with patch.object(main, "_spinner_stop", _Recorder()), \
+             patch.object(main.sys, "stdout", io.StringIO()):
+            main._spinner_worker()
+
+        self.assertEqual(waits, [1.0, 1.0, 1.0])
+        self.assertIs(main._spinner_stop, stop)  # patch 已还原
 
 
 if __name__ == "__main__":

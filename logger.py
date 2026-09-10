@@ -129,19 +129,68 @@ _file_handler_lock = threading.RLock()
 
 # 控制台处理器 - 添加错误处理,避免程序退出时的I/O错误
 class SafeStreamHandler(logging.StreamHandler):
-    """安全的StreamHandler,捕获I/O错误
+    """安全的StreamHandler,捕获I/O错误并对控制台输出限速
 
-    主要解决两个问题:
+    主要解决三个问题:
     1. 程序退出时colorama关闭wrapped stdout导致的I/O错误
     2. 多线程环境下(如Flask Web服务器)的日志竞态条件
+    3. 异常刷屏写爆终端进程内存
+
+    第 3 点是 2026-09-09 事故的教训：Windows Terminal 在高频写入下会无限泄漏
+    内存(microsoft/terminal#8283 等)，实测其占用 27.8GB 打爆 24.8GB 系统提交
+    上限，反过来让本进程 can't start new thread 并静默死亡 3 小时。
+
+    限速采用令牌桶，且**只作用于控制台**——file_handler 不受影响，日志文件
+    始终完整，诊断能力零损失。这与 log_throttled() 是互补关系：后者按 key
+    压制已知的持续性状态，这里则无差别兜住任何未预见的突发刷屏源。
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rate = float(getattr(config, 'CONSOLE_LOG_RATE', 20.0))
+        self._burst = float(getattr(config, 'CONSOLE_LOG_BURST', 300))
+        self._tokens = self._burst
+        self._last_refill = time.time()
+        self._suppressed = 0
+        self._rate_lock = threading.Lock()
+
+    def _take_token(self):
+        """返回 (是否放行, 放行前累计被抑制的条数)。"""
+        if self._rate <= 0:
+            return True, 0
+        with self._rate_lock:
+            now = time.time()
+            self._tokens = min(
+                self._burst, self._tokens + (now - self._last_refill) * self._rate
+            )
+            self._last_refill = now
+            if self._tokens < 1:
+                self._suppressed += 1
+                return False, 0
+            self._tokens -= 1
+            suppressed, self._suppressed = self._suppressed, 0
+            return True, suppressed
+
     def emit(self, record):
         try:
+            allowed, suppressed = self._take_token()
+            if not allowed:
+                return
+
             # 写日志前清除 spinner 可能留在行首的旋转字符（仅 TTY）
             stream = self.stream
             if hasattr(stream, 'isatty') and stream.isatty():
                 stream.write('\r\033[K')
                 stream.flush()
+
+            if suppressed:
+                # 限速必须自曝，否则用户会误以为程序卡死。直接写 stream 而不是
+                # 走 logging，避免在 emit 内部再触发一次 emit 造成递归。
+                stream.write(
+                    f"[控制台限速] 已抑制 {suppressed} 条控制台输出，"
+                    f"完整日志见 {log_file}\n"
+                )
+
             super().emit(record)
         except (ValueError, OSError, AttributeError):
             # 忽略以下错误:

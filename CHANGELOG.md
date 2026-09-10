@@ -7,6 +7,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **终端刷屏可反噬进程致死，加三层防御**（2026-09-10，针对 Windows Terminal 自身缺陷的鲁棒性设计）：2026-09-09 的进程静默死亡已确认**根因不在本项目**——`WindowsTerminal.exe` 占用 **27.8GB** 打爆 24.8GB 系统提交上限（Windows 事件 ID 2004 连报三次），miniQMT 连 1MB 线程栈都提交不到，抛 `can't start new thread`。[microsoft/terminal#8283](https://github.com/microsoft/terminal/issues/8283) 记录了同型模式（每 10ms 回移光标打印 → 内存以 0.1MB/10s 增长，根因是 VT parser 的 ETW tracing vector 无限膨胀），[#768](https://github.com/microsoft/terminal/issues/768) 指出持续刷屏的应用触发最激进增长。**我们无法修复终端，只能控制喂给它的量**。
+  - **量化先于设计**：统计实际日志密度发现稳态仅 **0.01~0.08 行/秒**、启动瞬间峰值约 140 行/秒——**日志从来不是主因**。真正的大头是 [main.py](main.py) 的 spinner：每 0.25 秒写一次 stdout，138 小时累计约 **199 万次**，是同期日志行数的 **58 倍**。泄漏与写入**次数**相关而非字节数，这决定了优化必须打在 spinner 上。
+  - **L1 源头减量**：`SPINNER_INTERVAL = 1.0`（原硬编码 0.25 秒），写入次数直降 75%（199 万 → 50 万）。
+  - **L2 按 key 节流**：`log_throttled()` 压制**已知**的持续性状态刷屏（见上一条）。
+  - **L3 控制台令牌桶限速**：`SafeStreamHandler` 内置令牌桶，**无差别兜住任何未预见的突发刷屏源**——L2 只能覆盖预判到的点位，L3 不需要预判。参数按实测流量选定：`CONSOLE_LOG_BURST = 300` 容得下 140 行/秒的启动峰值不误伤，`CONSOLE_LOG_RATE = 20` 仅在异常刷屏时截断；设 `CONSOLE_LOG_RATE = 0` 可关闭。
+  - 🔑 **L3 只作用于控制台，`file_handler` 完全不受影响**——日志文件始终完整，诊断能力零损失。这是整个方案的核心约束：宁可让控制台变哑，也不能让排查失去依据。
+  - **限速必须自曝**：被抑制后恢复输出时打印 `[控制台限速] 已抑制 N 条控制台输出，完整日志见 <path>`，否则用户会误判程序卡死。该行直接写 stream 而非走 logging，避免在 `emit` 内部递归触发 `emit`。
+  - 运维层面的补充手段（换用 `conhost` 绕开 WT、限制 `historySize`、每日盘后重启）记入 [unattended.md](docs/site/miniqmt/unattended.md) 新增的「终端刷屏导致的进程级故障」一节，含资源指标判读表。
+
 - **持续性状态的日志刷屏，会喂大终端缓冲并反噬进程**（2026-09-10 定位，根因层修复）：2026-09-09 13:43 起 300879 因摊薄成本导致止损价失真（23.53 vs 现价 17.19），而剩余 800 股是当日买入的 T+1 冻结股（`available=0`），形成一个**持续 77 分钟、每轮轮询都命中的稳定状态**。三层代码各自无条件输出：监控线程每 3 秒打 1 行「触发固定止损」（1513 行），`validate_trading_signal` 每次阻断打 6 行 WARN+ERROR（283 组 ≈ 1700 行），`strategy` 再补 2 行（566 行）——**同一件事被打了约 3800 行**。
   - **这不只是噪音**：控制台输出持续灌进终端回滚缓冲，当日 15:24/15:54/16:24 Windows 连报三次 Event ID 2004「虚拟内存不足」，元凶 `WindowsTerminal.exe` 占用 **27.8GB** 打爆 24.8GB 系统提交上限；16:24:39 事件后 27 秒，miniQMT 自己成了受害者，抛 `can't start new thread` 并静默死亡 3 小时。刷屏是这条因果链的燃料。
   - 新增 `logger.log_throttled()` / `logger.reset_log_throttle()`：按 key（含股票代码与事件名）节流，首次立即输出，窗口内累计并在下次输出时附「期间重复 N 次未打印」。窗口由 `config.LOG_THROTTLE_INTERVAL`（默认 300 秒）控制。
@@ -50,6 +59,9 @@
 - `scripts/restore_line_endings.py`：还原被编辑器规范化的行尾分布。本仓库 HEAD 中多数文件为 **CRLF/LF 混合**行尾且 `core.autocrlf=false`，编辑器保存会把整个文件统一为纯 CRLF，导致 `git diff` 显示全文件重写（本次 `position_manager.py` 一度显示 2728 行改动、`web1.0/script.js` 489 行）。脚本以“去掉行尾后的内容”为基准做 `difflib` 比对，`equal` 块取 HEAD 原始行、改动块沿用上下文行尾，并带正文一致性断言防止误改代码。
 
 ### Tests
+- `test/test_runtime_logging.py` 新增 `TestConsoleRateLimit` 4 例 + `TestSpinnerInterval` 1 例：**控制台被限速时文件 handler 仍收到全部 200 条**（方案核心承诺，单独立例）、默认 `burst` 容得下 140 行/秒的启动峰值且不出现限速提示、抑制计数在恢复输出时如实汇总、`rate=0` 关闭限速；spinner 按 `config.SPINNER_INTERVAL` 取间隔且 patch 后正确还原。
+  - **变异验证**：将 `_take_token()` 改为永远放行后重跑，`test_file_output_is_never_throttled` 与 `test_suppressed_total_is_reported_after_refill` 双双失败，确认两例确实在检验限速而非陪跑；变异已还原。
+  - ⚠️ **修掉一个自己写出的 flaky**：抑制计数用例初版靠 `time.sleep(0.05)` 等令牌按真实速率补充，首次运行即随机失败（循环自身耗时会让补充量浮动）。改为手动回填 `_tokens`，去掉时序依赖后连跑 5 次全绿。
 - `test/test_runtime_logging.py` 新增 `TestLogThrottle` 5 例：1500 次同键调用只输出 1 行；窗口到期后输出带「期间重复 9 次未打印」；不同 key 互不影响；**`reset_log_throttle()` 后立即恢复输出且不带抑制计数**（对应状态翻转场景，是节流不掩盖真实变化的关键保证）；日志级别如实透传。
 - `test/test_runtime_logging.py` 新增 4 例覆盖心跳资源行：含实时 `threading.active_count()` 与 `RSS \d+MB / VMS \d+MB`；**OS 口径格式 `线程数:N(OS M) | 句柄:K` 且断言 `os_threads >= active_count()`**（每个 Python Thread 背后必有一条原生线程）；`process_resource_stats()` 返回 `None` 时降级为纯 Python 口径、不出现「OS」「句柄」字样；`memory_usage()` 返回 `None` 时降级为「内存:获取失败」而非抛异常——心跳线程绝不能因取指标失败而中断。
 - `test/test_trader_callback.py` 新增 5 例（`d5e`~`d5i`）：买入委托被拦截且不触发行情查询、显式 `order_side='SELL'` 正常重挂并校验 `strategy` 拼接、**历史 `signal_info` 缺 `order_side` 时按三种卖出信号类型兜底放行**、方向无法判定时保守放弃、以及从超时撤单到 `54=已撤` 回调的**端到端链路**断言全程无卖出委托。

@@ -191,14 +191,19 @@ def _format_resource_line():
 
 def _spinner_worker():
     """在终端同一行滚动显示 |/-\\ 旋转符号，表示程序正在运行。
-    直接写 stdout，不进入日志文件；logger 输出的完整行会自然覆盖该符号。"""
+    直接写 stdout，不进入日志文件；logger 输出的完整行会自然覆盖该符号。
+
+    刷新间隔取 config.SPINNER_INTERVAL：这是本进程写 stdout 最频繁的来源，
+    而 Windows Terminal 在高频写入下会无限泄漏内存，频率直接决定泄漏速度。
+    """
     chars = r'|/-\\'
+    interval = getattr(config, 'SPINNER_INTERVAL', 1.0)
     i = 0
     while not _spinner_stop.is_set():
         sys.stdout.write('\r' + chars[i % 4] + ' ')
         sys.stdout.flush()
         i += 1
-        _spinner_stop.wait(0.25)
+        _spinner_stop.wait(interval)
     sys.stdout.write('\r  \r')  # 退出时清除残留字符
     sys.stdout.flush()
 
