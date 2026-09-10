@@ -236,6 +236,58 @@ def get_logger(name=None):
         return child_logger
     return logger
 
+_throttle_state = {}
+_throttle_lock = threading.RLock()
+
+
+def log_throttled(target_logger, level, key, message, interval=None):
+    """对持续性状态的重复日志做节流：首次立即输出，之后按间隔输出并附抑制计数。
+
+    用于高频轮询里反复命中同一状态的场景——典型是 T+1 冻结导致 available=0，
+    监控线程每 3 秒、策略线程每 16 秒各命中一次，一个下午能刷出数千行同样的话。
+    刷屏本身不只是噪音：控制台输出会喂大终端的回滚缓冲，2026-09-09 就出现过
+    终端进程吃满系统提交内存、反过来让本进程 can't start new thread 的连锁故障。
+
+    参数:
+    target_logger: 目标 logger
+    level (int): logging 级别常量
+    key (str): 节流键，同键视为同一条持续状态（建议含股票代码与事件名）
+    message (str): 日志正文
+    interval (float): 节流间隔秒数，None 时取 config.LOG_THROTTLE_INTERVAL
+
+    返回:
+    bool: 本次是否真的输出了（调用方可据此决定要不要打印附属明细）
+    """
+    if interval is None:
+        interval = getattr(config, 'LOG_THROTTLE_INTERVAL', 300)
+
+    now = time.time()
+    with _throttle_lock:
+        last_time, suppressed = _throttle_state.get(key, (0.0, 0))
+        if last_time and (now - last_time) < interval:
+            _throttle_state[key] = (last_time, suppressed + 1)
+            return False
+        _throttle_state[key] = (now, 0)
+
+    if suppressed:
+        message = f"{message}（期间重复 {suppressed} 次未打印）"
+    target_logger.log(level, message)
+    return True
+
+
+def reset_log_throttle(key=None):
+    """清除节流记录，使下一次同键日志立即输出。
+
+    状态恢复（如委托成交、持仓同步完成）后调用，避免下一次真正的异常被抑制。
+    key 为 None 时清空全部。
+    """
+    with _throttle_lock:
+        if key is None:
+            _throttle_state.clear()
+        else:
+            _throttle_state.pop(key, None)
+
+
 def clean_old_logs(days=None):
     """清理指定天数前的日志文件"""
     if days is None:

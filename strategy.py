@@ -4,12 +4,13 @@
 """
 import time
 import threading
+import logging
 from datetime import datetime
 import pandas as pd
 import numpy as np
 
 import config
-from logger import get_logger
+from logger import get_logger, log_throttled, reset_log_throttle
 from data_manager import get_data_manager
 from indicator_calculator import get_indicator_calculator
 from position_manager import get_position_manager
@@ -79,7 +80,10 @@ class TradingStrategy:
             )
             if not is_valid:
                 if validation_status == "blocked":
-                    logger.warning(
+                    # 阻断是持续性状态（T+1 冻结、委托在途），每轮都会命中，按股票+信号节流
+                    log_throttled(
+                        logger, logging.WARNING,
+                        f"signal_blocked:{stock_code}:{signal_type}",
                         f"[信号阻断] {stock_code} {signal_type} 暂不执行，"
                         f"原因={validation_reason}，等待委托/持仓同步恢复后自动重试"
                     )
@@ -89,6 +93,8 @@ class TradingStrategy:
                     f"原因={validation_reason}"
                 )
                 return self.SIGNAL_EXECUTION_FAILED
+
+            reset_log_throttle(f"signal_blocked:{stock_code}:{signal_type}")
 
             if signal_type == 'stop_loss':
                 success = self._execute_stop_loss_signal(stock_code, signal_info)
@@ -716,7 +722,7 @@ class TradingStrategy:
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
                                     return  # 止盈执行成功后直接返回
                                 elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    logger.debug(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
@@ -760,7 +766,7 @@ class TradingStrategy:
                                     logger.warning(f"✅ {stock_code} 止损信号执行成功")
                                     return
                                 elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    logger.debug(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     logger.error(f"❌ {stock_code} 止损信号执行失败")
@@ -793,7 +799,7 @@ class TradingStrategy:
                                     logger.warning(f"✅ {stock_code} 止损信号执行成功，跳过其他策略")
                                     return  # 止损执行后直接返回
                                 elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    logger.debug(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     logger.error(f"❌ {stock_code} 止损信号执行失败")
@@ -834,7 +840,7 @@ class TradingStrategy:
                                     logger.info(f"{stock_code} {signal_type}信号执行成功")
                                     return
                                 elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
+                                    logger.debug(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
                                     return
                                 else:
                                     # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)

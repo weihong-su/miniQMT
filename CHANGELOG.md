@@ -7,6 +7,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **持续性状态的日志刷屏，会喂大终端缓冲并反噬进程**（2026-09-10 定位，根因层修复）：2026-09-09 13:43 起 300879 因摊薄成本导致止损价失真（23.53 vs 现价 17.19），而剩余 800 股是当日买入的 T+1 冻结股（`available=0`），形成一个**持续 77 分钟、每轮轮询都命中的稳定状态**。三层代码各自无条件输出：监控线程每 3 秒打 1 行「触发固定止损」（1513 行），`validate_trading_signal` 每次阻断打 6 行 WARN+ERROR（283 组 ≈ 1700 行），`strategy` 再补 2 行（566 行）——**同一件事被打了约 3800 行**。
+  - **这不只是噪音**：控制台输出持续灌进终端回滚缓冲，当日 15:24/15:54/16:24 Windows 连报三次 Event ID 2004「虚拟内存不足」，元凶 `WindowsTerminal.exe` 占用 **27.8GB** 打爆 24.8GB 系统提交上限；16:24:39 事件后 27 秒，miniQMT 自己成了受害者，抛 `can't start new thread` 并静默死亡 3 小时。刷屏是这条因果链的燃料。
+  - 新增 `logger.log_throttled()` / `logger.reset_log_throttle()`：按 key（含股票代码与事件名）节流，首次立即输出，窗口内累计并在下次输出时附「期间重复 N 次未打印」。窗口由 `config.LOG_THROTTLE_INTERVAL`（默认 300 秒）控制。
+  - **只改日志层，不动重试节奏**：信号仍每轮重新检测与尝试，`available` 一恢复即刻执行——交易行为零变化。曾考虑改为退避重试，但那会推迟状态恢复后的成交时机，收益不抵风险。
+  - **节流必须能被状态翻转打断**，否则会掩盖真实变化。三处 reset：价格回到止损位上方时清 `stop_loss_detect`（[position_manager.py](position_manager.py) 止损分支前），`validate_trading_signal` 通过时清 `pending_order_block`/`available_zero_block`，`execute_trading_signal_direct` 验证通过时清 `signal_blocked`。缺了这些，「阻断→恢复→再阻断」的第二次阻断会被上一轮窗口吞掉。
+  - 顺带把 6 行 WARN+ERROR 合并为 1 行且级别降为 WARNING——`available=0` 是 T+1 冻结的**预期状态**，不是 ERROR；原文案「拒绝新信号执行 / 建议人工确认」四行连打，实盘一天能刷出上千条假错误，淹没真正的 ERROR。
+  - 同口径覆盖 `_has_tracked_pending_order` / `_has_pending_orders` 两处「待委托拦截」——它们先于 `available=0` 分支执行，委托在途时刷屏的其实是这两处。
+  - 按同一场景估算：约 3800 行 → 约 20 行（77 分钟 / 5 分钟窗口 × 3 类事件 + 首次），且信息量不减（首次完整、周期汇总带抑制计数）。
+
 - **买入委托超时撤单后被反手卖出**（2026-09-02 日志审查发现，潜伏 P0，实盘未触发）：`PositionManager._reorder_after_cancel()` 全程**无委托方向判断**，无条件取买三价并调用 `sell_stock()`。而 `add_position` 补仓**买单**同样经 `track_order()` 纳入超时跟踪（`trading_executor.py` 买入分支，`signal_info` 已带 `order_side='BUY'`），一旦挂满 `PENDING_ORDER_TIMEOUT_MINUTES`(5 分钟) 未成交，撤单后即以买三价**反手卖出**同等数量。`signal_info` 中的 `order_side` 字段一直存在却从未被读取——设计上本打算区分方向，实现漏了。
   - 现在 `_reorder_after_cancel()` 入口加方向门控，且**置于取行情之前**（买入委托不再产生无谓的行情查询）。判定分三档：`order_side='SELL'` 放行；缺 `order_side` 但 `signal_type` 属 `stop_loss`/`take_profit_half`/`take_profit_full` 放行（**兼容历史 `signal_info`**——既有用例 `d5b`/`d5c` 传入的正是无该字段的字典，只按“非 SELL 即拒”会连正常止盈重挂一起拦掉）；其余一律放弃重挂并 `WARNING` 提示人工确认是否补单。
   - **保守策略而非按方向分派**：补仓买单挂不上本身就是需要人工判断的信号（补仓阈值触发时多为急跌行情），自动改价追买风险高于收益。
@@ -36,10 +45,13 @@
   - 新增独立函数 `main._format_resource_line()`，**未改动 `_format_heartbeat_status_lines()` 的二元组返回签名**——既有用例按 `status_line, grid_line = ...` 解包，加行会直接解包失败。
   - `utils.memory_usage()` 补 Win32 回退：**psutil 既未安装也不在 [utils/requirements.txt](utils/requirements.txt) 中**，原实现在缺失时只打一句 warning 返回 `None`，不补回退则该指标永远是「获取失败」。回退走 `kernel32.K32GetProcessMemoryInfo`，零新依赖，口径与 psutil 对齐（`WorkingSetSize`→rss、`PagefileUsage`→vms，实测两者差异 <0.5%）。**必须显式声明 `GetCurrentProcess.restype = wintypes.HANDLE`**——默认 `c_int` 会在 64 位下截断伪句柄 `-1`，第一版因此实测返回 `None`。psutil 若日后装上则优先使用。
   - ⚠️ **主判据是线程数而非 VMS**：Windows 的 `PagefileUsage` 是私有提交量，线程栈是保留而非提交，每条只贡献约 8KB，对 `can't start new thread` 的指示远不如线程数直接。
+  - **次日补充 OS 口径（关键修正）**：指标上线首日即暴露自身缺陷——心跳报 `线程数:18`，而同一进程 OS 实际有 **104** 条线程，差的 86 条是 xtquant / QMT SDK 创建的原生线程，`threading.active_count()` 完全看不见。**最可能泄漏的部分恰恰在 Python 视野之外**，原指标等于监控了错误的东西。新增 `utils.process_resource_stats()`（`CreateToolhelp32Snapshot` 遍历线程快照按 `th32OwnerProcessID` 过滤 + `GetProcessHandleCount`），心跳行改为 `线程数:18(OS 104) | 句柄:1037 | 内存:...`。句柄数一并纳入，因为耗尽时同样表现为打开文件失败——2026-09-09 故障现场那条 `[Errno 22] 打开 .mootdx/config.json 失败` 正是此类症状，缺这个数就无法与线程耗尽区分。单次采集实测 48ms（扫描约 3600 条系统线程），30 分钟一次可忽略。
+  - **首日结论：miniQMT 自身无泄漏，昨日崩溃是被系统级内存耗尽波及**。7 小时心跳显示 Python 线程 17→18（波动非趋势）、VMS 179→182MB（+0.4MB/h）；RSS 180→195MB 的上升是工作集假象——收盘后实测同一进程 RSS 从 195MB 跌至 31MB 而私有提交仍为 182MB，属 Windows 工作集 trim。对运行中进程在 16:47/16:52/16:55 三次采样，`OS线程=104、句柄=1037、私有=182MB` **三次完全相同**。真凶由 Windows 事件日志 Event ID 2004（Resource-Exhaustion-Detector）锁定：09-09 15:24/15:54/16:24 三次「虚拟内存不足」，元凶 `WindowsTerminal.exe(23852)` 占用 **29,827,301,376 字节（27.8GB）**，打爆 24.8GB 系统提交上限，**python 进程从未出现在元凶名单中**（仅 182MB）；16:24:39 该事件后 **27 秒**，miniQMT 即抛 `can't start new thread`。
 - `scripts/restore_line_endings.py`：还原被编辑器规范化的行尾分布。本仓库 HEAD 中多数文件为 **CRLF/LF 混合**行尾且 `core.autocrlf=false`，编辑器保存会把整个文件统一为纯 CRLF，导致 `git diff` 显示全文件重写（本次 `position_manager.py` 一度显示 2728 行改动、`web1.0/script.js` 489 行）。脚本以“去掉行尾后的内容”为基准做 `difflib` 比对，`equal` 块取 HEAD 原始行、改动块沿用上下文行尾，并带正文一致性断言防止误改代码。
 
 ### Tests
-- `test/test_runtime_logging.py` 新增 2 例：心跳资源行包含实时 `threading.active_count()` 且内存格式匹配 `RSS \d+MB / VMS \d+MB`；`memory_usage()` 返回 `None` 时降级为「内存:获取失败」而非抛异常——心跳线程绝不能因取指标失败而中断。
+- `test/test_runtime_logging.py` 新增 `TestLogThrottle` 5 例：1500 次同键调用只输出 1 行；窗口到期后输出带「期间重复 9 次未打印」；不同 key 互不影响；**`reset_log_throttle()` 后立即恢复输出且不带抑制计数**（对应状态翻转场景，是节流不掩盖真实变化的关键保证）；日志级别如实透传。
+- `test/test_runtime_logging.py` 新增 4 例覆盖心跳资源行：含实时 `threading.active_count()` 与 `RSS \d+MB / VMS \d+MB`；**OS 口径格式 `线程数:N(OS M) | 句柄:K` 且断言 `os_threads >= active_count()`**（每个 Python Thread 背后必有一条原生线程）；`process_resource_stats()` 返回 `None` 时降级为纯 Python 口径、不出现「OS」「句柄」字样；`memory_usage()` 返回 `None` 时降级为「内存:获取失败」而非抛异常——心跳线程绝不能因取指标失败而中断。
 - `test/test_trader_callback.py` 新增 5 例（`d5e`~`d5i`）：买入委托被拦截且不触发行情查询、显式 `order_side='SELL'` 正常重挂并校验 `strategy` 拼接、**历史 `signal_info` 缺 `order_side` 时按三种卖出信号类型兜底放行**、方向无法判定时保守放弃、以及从超时撤单到 `54=已撤` 回调的**端到端链路**断言全程无卖出委托。
 - 既有用例 `test_d2_stop_loss_uses_shorter_timeout_than_take_profit` 的前提被本次阈值调整推翻（它以 `take_profit_half` 作为“走 5 分钟全局阈值”的对照组），改名为 `test_d2_stop_loss_and_take_profit_use_shorter_timeout` 并扩展为四方对照：`stop_loss`/`take_profit_half`/`take_profit_full` 均 0.5 分钟触发，`add_position` 5 分钟不触发。
 - **变异验证**：将方向门控临时改为 `if False:` 后重跑，`d5e`/`d5h`/`d5i` 全部失败且报错均为 `Expected 'sell_stock' to not have been called. Called 1 times.`——既证明测试确实能捕获缺陷（而非陪跑），也**实证了原缺陷会真实下出反向卖单**；变异已还原并经 grep 确认无残留。

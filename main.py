@@ -159,24 +159,35 @@ def _format_heartbeat_status_lines(active_grid_session_count):
 
 
 def _format_resource_line():
-    """进程资源占用行：线程数与内存。
+    """进程资源占用行：线程数（Python + OS）、句柄数与内存。
 
     长跑进程线程/内存持续增长会以 RuntimeError: can't start new thread 收场，
-    且进程静默死亡后无任何线索，因此把这两个指标写进心跳便于事后归因。
+    且进程静默死亡后无任何线索，因此把这些指标写进心跳便于事后归因。
+
+    线程数同时给出两个口径：threading.active_count() 只覆盖 Python 层，
+    xtquant / QMT SDK 的原生线程只体现在 OS 口径里（实测 18 vs 104）。
+    句柄数用于识别句柄泄漏——耗尽时同样表现为打开文件失败。
     """
     thread_count = threading.active_count()
     try:
-        from utils import memory_usage
+        from utils import memory_usage, process_resource_stats
         mem = memory_usage()
+        proc = process_resource_stats()
     except Exception:
         mem = None
+        proc = None
+
+    if proc:
+        thread_str = f"线程数:{thread_count}(OS {proc['os_threads']}) | 句柄:{proc['handles']}"
+    else:
+        thread_str = f"线程数:{thread_count}"
 
     if mem:
         mem_str = f"内存:RSS {mem['rss_mb']:.0f}MB / VMS {mem['vms_mb']:.0f}MB"
     else:
         mem_str = "内存:获取失败"
 
-    return f"   线程数:{thread_count} | {mem_str}"
+    return f"   {thread_str} | {mem_str}"
 
 def _spinner_worker():
     """在终端同一行滚动显示 |/-\\ 旋转符号，表示程序正在运行。

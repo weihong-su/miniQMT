@@ -1,9 +1,10 @@
 """
 运行日志增强的轻量回归测试。
 
-覆盖进程生命周期身份串、心跳状态行、活跃网格会话统计、日志文件切换、
-以及最高价可见变化判断。
+覆盖进程生命周期身份串、心跳状态行与资源指标、活跃网格会话统计、
+日志文件切换、重复日志节流、以及最高价可见变化判断。
 """
+import logging
 import os
 import threading
 import types
@@ -20,6 +21,7 @@ config.LOG_FILE = "test/logs/test_runtime_logging.log"
 
 import logger as logger_module
 import main
+import utils
 from position_manager import _price_changed_at_display_precision
 
 
@@ -56,6 +58,26 @@ class TestRuntimeLogging(unittest.TestCase):
 
         self.assertIn(f"线程数:{threading.active_count()}", line)
         self.assertRegex(line, r"内存:RSS \d+MB / VMS \d+MB")
+
+    def test_resource_line_reports_os_thread_count_and_handles(self):
+        """OS 口径必须与 Python 口径同时出现：xtquant 的原生线程只在前者可见。"""
+        line = main._format_resource_line()
+
+        self.assertRegex(line, r"线程数:\d+\(OS \d+\) \| 句柄:\d+")
+
+        stats = utils.process_resource_stats()
+        self.assertIsNotNone(stats)
+        # OS 线程必然不少于 Python 线程：每个 Thread 对象背后都有一条原生线程
+        self.assertGreaterEqual(stats['os_threads'], threading.active_count())
+        self.assertGreater(stats['handles'], 0)
+
+    def test_resource_line_degrades_when_os_stats_unavailable(self):
+        with patch("utils.process_resource_stats", return_value=None):
+            line = main._format_resource_line()
+
+        self.assertRegex(line, r"线程数:\d+ \|")
+        self.assertNotIn("OS ", line)
+        self.assertNotIn("句柄", line)
 
     def test_resource_line_degrades_when_memory_unavailable(self):
         with patch("utils.memory_usage", return_value=None):
@@ -110,6 +132,76 @@ class TestRuntimeLogging(unittest.TestCase):
         self.assertFalse(_price_changed_at_display_precision(8.7891, 8.7901))
         self.assertTrue(_price_changed_at_display_precision(8.79, 8.80))
         self.assertTrue(_price_changed_at_display_precision(None, 8.79))
+
+
+class TestLogThrottle(unittest.TestCase):
+    """重复日志节流：持续性状态刷屏会喂大终端缓冲，2026-09-09 曾引发进程级故障。"""
+
+    def setUp(self):
+        logger_module.reset_log_throttle()
+        self.log = logger_module.get_logger("throttle_test")
+        self.records = []
+        self.log.addHandler(_ListHandler(self.records))
+        self.log.propagate = False
+
+    def tearDown(self):
+        self.log.handlers = []
+        self.log.propagate = True
+        logger_module.reset_log_throttle()
+
+    def test_repeated_state_logs_only_once_within_window(self):
+        for _ in range(1500):
+            logger_module.log_throttled(
+                self.log, logging.WARNING, "stop_loss_detect:300879",
+                "300879 触发固定止损", interval=300
+            )
+
+        self.assertEqual(len(self.records), 1)
+        self.assertEqual(self.records[0].getMessage(), "300879 触发固定止损")
+
+    def test_suppressed_count_is_reported_when_window_expires(self):
+        key = "available_zero_block:300879"
+        logger_module.log_throttled(self.log, logging.WARNING, key, "阻断", interval=0)
+        for _ in range(9):
+            logger_module.log_throttled(self.log, logging.WARNING, key, "阻断", interval=300)
+        # interval=0 让窗口立即到期，下一次应输出并带上抑制计数
+        logger_module.log_throttled(self.log, logging.WARNING, key, "阻断", interval=0)
+
+        self.assertEqual(len(self.records), 2)
+        self.assertIn("期间重复 9 次未打印", self.records[1].getMessage())
+
+    def test_different_keys_are_independent(self):
+        logger_module.log_throttled(self.log, logging.WARNING, "k:300879", "A", interval=300)
+        logger_module.log_throttled(self.log, logging.WARNING, "k:000001", "B", interval=300)
+
+        self.assertEqual(len(self.records), 2)
+
+    def test_reset_restores_immediate_output(self):
+        """状态翻转（价格回到止损位上方、委托成交）后必须能立刻再报，否则节流会掩盖真实变化。"""
+        key = "stop_loss_detect:300879"
+        logger_module.log_throttled(self.log, logging.WARNING, key, "触发", interval=300)
+        logger_module.log_throttled(self.log, logging.WARNING, key, "触发", interval=300)
+        self.assertEqual(len(self.records), 1)
+
+        logger_module.reset_log_throttle(key)
+        logger_module.log_throttled(self.log, logging.WARNING, key, "触发", interval=300)
+
+        self.assertEqual(len(self.records), 2)
+        self.assertNotIn("期间重复", self.records[1].getMessage())
+
+    def test_level_is_honoured(self):
+        logger_module.log_throttled(self.log, logging.ERROR, "lvl", "错误", interval=300)
+
+        self.assertEqual(self.records[0].levelno, logging.ERROR)
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, sink):
+        super().__init__()
+        self.sink = sink
+
+    def emit(self, record):
+        self.sink.append(record)
 
 
 if __name__ == "__main__":

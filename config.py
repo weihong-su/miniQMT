@@ -55,6 +55,9 @@ LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FILE = "qmt_trading.log"
 LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 5  # 保留5个备份文件
+# 持续性状态的重复日志节流间隔(秒)：同一股票同一事件在窗口内只输出一次并累计抑制次数。
+# 见 logger.log_throttled；针对 T+1 冻结等每轮轮询都命中的状态，避免刷屏喂大终端缓冲。
+LOG_THROTTLE_INTERVAL = 300
 XQM_LOG_FILE = os.path.join("logs", "xqm_manager.log")
 XQM_LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 XQM_LOG_BACKUP_COUNT = 5  # 保留5个备份文件

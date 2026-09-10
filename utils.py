@@ -475,6 +475,77 @@ def _memory_usage_windows():
     }
 
 
+def process_resource_stats():
+    """当前进程的 OS 级资源计数：真实线程数与句柄数（Windows）。
+
+    threading.active_count() 只统计 Python threading 模块创建的 Thread 对象，
+    看不到 xtquant / QMT SDK 等 C 扩展创建的原生线程——实测本系统两者
+    分别为 18 与 104，相差 86 条。诊断 can't start new thread 或句柄耗尽
+    必须看 OS 口径，Python 口径会漏掉真正在增长的那部分。
+
+    返回:
+    dict: {'os_threads': int, 'handles': int}，取不到时返回 None
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class _ThreadEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", ctypes.c_long),
+            ("tpDeltaPri", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    TH32CS_SNAPTHREAD = 0x00000004
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ThreadEntry32)]
+    kernel32.Thread32First.restype = wintypes.BOOL
+    kernel32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ThreadEntry32)]
+    kernel32.Thread32Next.restype = wintypes.BOOL
+    kernel32.GetProcessHandleCount.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)
+    ]
+    kernel32.GetProcessHandleCount.restype = wintypes.BOOL
+
+    handle_count = wintypes.DWORD()
+    if not kernel32.GetProcessHandleCount(
+        kernel32.GetCurrentProcess(), ctypes.byref(handle_count)
+    ):
+        return None
+
+    # 线程快照是全系统的，需按 OwnerProcessID 过滤。实测扫描约 3600 条耗时 70ms，
+    # 每 30 分钟一次的心跳可以接受。
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+    if snapshot == INVALID_HANDLE_VALUE:
+        return None
+
+    try:
+        pid = kernel32.GetCurrentProcessId()
+        entry = _ThreadEntry32()
+        entry.dwSize = ctypes.sizeof(_ThreadEntry32)
+        os_threads = 0
+        if kernel32.Thread32First(snapshot, ctypes.byref(entry)):
+            while True:
+                if entry.th32OwnerProcessID == pid:
+                    os_threads += 1
+                if not kernel32.Thread32Next(snapshot, ctypes.byref(entry)):
+                    break
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+    return {'os_threads': os_threads, 'handles': handle_count.value}
+
+
 def memory_usage():
     """
     获取当前进程的内存使用情况

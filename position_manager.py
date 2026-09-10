@@ -7,12 +7,13 @@ import sqlite3
 from datetime import datetime
 import time
 import threading
+import logging
 import concurrent.futures
 import sys
 import os
 import json
 import config
-from logger import get_logger
+from logger import get_logger, log_throttled, reset_log_throttle
 from data_manager import get_data_manager
 from easy_qmt_trader import easy_qmt_trader
 from timeout_utils import run_with_timeout
@@ -2579,6 +2580,10 @@ class PositionManager:
                     logger.debug(f"{stock_code} 止损价以最新参数重算: DB={stop_loss_price:.2f} -> 实时={safe_stop_loss_price:.2f}")
                 stop_loss_price = safe_stop_loss_price
 
+                if current_price > stop_loss_price:
+                    # 价格回到止损位上方：清除节流记录，使再次跌破时立即告警而非被窗口吞掉
+                    reset_log_throttle(f"stop_loss_detect:{stock_code}")
+
                 if current_price <= stop_loss_price:
                     # 🔑 最后验证：确保这是合理的止损
                     loss_ratio = (cost_price - current_price) / cost_price
@@ -2586,15 +2591,23 @@ class PositionManager:
 
                     # 允许一定的误差范围
                     if loss_ratio >= expected_loss_ratio * 0.5:  # 至少达到预期止损的50%
+                        # 监控线程每 MONITOR_LOOP_INTERVAL 秒重新检测一次，只要价格仍在
+                        # 止损位下方就会反复命中；信号能否执行由策略线程决定，此处只是检测。
+                        # 因此按股票节流，避免持仓被冻结时刷屏（2026-09-09 曾刷出 1513 行）。
                         if profit_triggered:
-                            logger.warning(
+                            log_throttled(
+                                logger, logging.WARNING,
+                                f"stop_loss_detect:{stock_code}",
                                 f"⚠️ {stock_code} 首次止盈后回落触发止损保护，当前价格: {current_price:.2f}, "
                                 f"止损价格: {stop_loss_price:.2f}"
                             )
                             reason = 'stop_loss_1'
                         else:
-                            logger.warning(
-                                f"{stock_code} 触发固定止损，当前价格: {current_price:.2f}, 止损价格: {stop_loss_price:.2f}"
+                            log_throttled(
+                                logger, logging.WARNING,
+                                f"stop_loss_detect:{stock_code}",
+                                f"{stock_code} 触发固定止损，当前价格: {current_price:.2f}, "
+                                f"止损价格: {stop_loss_price:.2f}"
                             )
                             reason = 'stop_loss_0'
 
@@ -2786,11 +2799,19 @@ class PositionManager:
 
             if not allow_skip_pending_check:
                 if self._has_tracked_pending_order(stock_code):
-                    logger.warning(f"[待委托拦截] {stock_code} 本地存在跟踪中的委托单，跳过本次信号执行")
+                    log_throttled(
+                        logger, logging.WARNING,
+                        f"pending_order_block:{stock_code}",
+                        f"[待委托拦截] {stock_code} 本地存在跟踪中的委托单，跳过本次信号执行"
+                    )
                     return _result(False, "blocked", "pending_order")
 
                 if self._has_pending_orders(stock_code):
-                    logger.warning(f"[待委托拦截] {stock_code} QMT存在活跃委托单，跳过本次信号执行")
+                    log_throttled(
+                        logger, logging.WARNING,
+                        f"pending_order_block:{stock_code}",
+                        f"[待委托拦截] {stock_code} QMT存在活跃委托单，跳过本次信号执行"
+                    )
                     return _result(False, "blocked", "pending_order")
 
                 # 检查是否有未成交委托单 (全仓止盈也纳入，除非显式允许跳过)
@@ -2801,21 +2822,26 @@ class PositionManager:
 
                     # 如果available=0但volume>0，可能有未成交委托单
                     if available == 0 and volume > 0:
-                        logger.warning(f"警告 {stock_code} 可用数量为0（总持仓{volume}），检查是否有未成交委托单...")
-
                         # 修复后的查询机制：使用标准化股票代码匹配
                         if self._has_pending_orders(stock_code):
-                            logger.warning(f"[待委托拦截] {stock_code} 存在未成交委托单，跳过本次信号执行（委托处理中，非错误）")
-                            logger.warning(f"   等待委托单成交或撤销后，信号将自动重试")
+                            log_throttled(
+                                logger, logging.WARNING,
+                                f"pending_order_block:{stock_code}",
+                                f"[待委托拦截] {stock_code} available=0（总持仓{volume}），"
+                                f"存在未成交委托单，跳过本次信号执行；成交或撤销后自动重试"
+                            )
                             return _result(False, "blocked", "pending_order")
                         else:
-                            logger.warning(f"警告 {stock_code} 未检测到活跃委托单，但available=0")
-                            logger.warning(f"   可能原因: 1)委托单刚成交 2)系统数据未同步 3)其他原因")
-                            # 采取保守策略：available=0时拒绝新信号，避免重复提交委托
-                            logger.error(f"错误 {stock_code} 可用数量为0（总持仓{volume}），拒绝新信号执行")
-                            logger.error(f"   原因：可能存在未成交委托单或数据同步延迟")
-                            logger.error(f"   建议：等待委托单处理完毕或手动确认持仓状态")
-                            logger.error(f"   修复说明：此为保守策略，避免在不确定情况下执行交易")
+                            # available=0 且查不到活跃委托：多为 T+1 冻结或持仓同步延迟。
+                            # 保守拒绝，避免重复提交委托；信号保留，条件恢复后自动重试。
+                            # 该状态每轮轮询都会命中，故按股票节流，只保留首次与周期汇总。
+                            log_throttled(
+                                logger, logging.WARNING,
+                                f"available_zero_block:{stock_code}",
+                                f"[信号阻断] {stock_code} available=0（总持仓{volume}）且无活跃委托，"
+                                f"判定为T+1冻结或持仓同步延迟，暂不执行；恢复后自动重试，"
+                                f"若持续出现请人工确认持仓状态"
+                            )
                             return _result(False, "blocked", "available_zero_sync_delay")
             else:
                 # 全仓止盈信号: 允许跳过活跃委托单检查（受配置控制）
@@ -2898,6 +2924,10 @@ class PositionManager:
 
                 logger.info(f"✅ {stock_code} 止盈信号验证通过，盈利 {profit_ratio:.2%}")
 
+            # 验证通过说明委托/持仓状态已恢复：清除阻断类节流记录，
+            # 使下一次真正的阻断能立即输出，而不是落进上一轮的抑制窗口
+            reset_log_throttle(f"pending_order_block:{stock_code}")
+            reset_log_throttle(f"available_zero_block:{stock_code}")
             return _result(True)
 
         except Exception as e:
