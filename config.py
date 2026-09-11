@@ -4,7 +4,7 @@
 """
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # ======================= .env fallback 加载 =======================
@@ -611,8 +611,8 @@ PREMARKET_HISTORY_RETENTION_DAYS = 365   # 盘前同步历史保留1年
 CONFIG_HISTORY_RETENTION_DAYS = 365      # 配置变更审计保留1年
 
 # ======================= 功能配置 =======================
-# 交易时间配置
-# DEBUG模式下使用24小时全周交易，方便测试
+# 可下单时间配置：实盘包含 09:25-09:30 早盘预挂和 11:30-13:00 午休预挂。
+# DEBUG模式下使用24小时全周交易，方便测试。
 if DEBUG:
     TRADE_TIME = {
         "morning_start": "00:00:00",
@@ -623,12 +623,21 @@ if DEBUG:
     }
 else:
     TRADE_TIME = {
-        "morning_start": "09:30:00",
+        "morning_start": "09:25:00",
         "morning_end": "13:00:00",
         "afternoon_start": "13:00:00",
         "afternoon_end": "15:00:00",
         "trade_days": [1, 2, 3, 4, 5]  # 周一至周五
     }
+
+# 连续竞价时间独立于预挂和调试开关，用于委托超时计时及严格市场时段判断。
+CONTINUOUS_TRADE_TIME = {
+    "morning_start": "09:30:00",
+    "morning_end": "11:30:00",
+    "afternoon_start": "13:00:00",
+    "afternoon_end": "15:00:00",
+    "trade_days": [1, 2, 3, 4, 5]
+}
 
 # ============ 新增: 盘前同步配置 ============
 PREMARKET_SYNC_TIME = {
@@ -664,28 +673,65 @@ GRID_POSITION_QUERY_TIMEOUT = 5.0  # 网格交易持仓查询超时(秒)
 HISTORY_DATA_DOWNLOAD_TIMEOUT = 5  # 启动时单只股票历史数据下载超时（秒），超时则跳过
 GRID_LOCK_ACQUIRE_TIMEOUT = 5.0   # 网格交易锁获取超时(秒)
 
-def is_market_hours():
+def _is_in_trade_schedule(now, schedule):
+    weekday = now.weekday() + 1
+    if weekday not in schedule["trade_days"]:
+        return False
+
+    current_time = now.strftime("%H:%M:%S")
+    return (schedule["morning_start"] <= current_time <= schedule["morning_end"]) or \
+           (schedule["afternoon_start"] <= current_time <= schedule["afternoon_end"])
+
+
+def is_continuous_trade_time(now=None):
+    """判断是否处于真实连续竞价时段，不受模拟或调试开关影响。"""
+    return _is_in_trade_schedule(now or datetime.now(), CONTINUOUS_TRADE_TIME)
+
+
+def is_market_hours(now=None):
     """按真实市场时钟判断是否交易时段，不受模拟/调试开关影响。
 
     用于需要严格遵循真实交易时段的场景（如 autobuy 定时筛选），区别于
     is_trade_time() 在模拟/调试模式下恒为 True 的旁路语义。
     """
-    now = datetime.now()
-    weekday = now.weekday() + 1  # 转换为1-7表示周一至周日
-
-    if weekday not in TRADE_TIME["trade_days"]:
-        return False
-
-    current_time = now.strftime("%H:%M:%S")
-    return (TRADE_TIME["morning_start"] <= current_time <= TRADE_TIME["morning_end"]) or \
-           (TRADE_TIME["afternoon_start"] <= current_time <= TRADE_TIME["afternoon_end"])
+    return is_continuous_trade_time(now)
 
 
-def is_trade_time():
-    """判断当前是否为交易时间（模拟/调试模式下恒为 True 以绕过时间限制）。"""
+def is_trade_time(now=None):
+    """判断当前是否允许交易和下单，包含早盘、午休预挂窗口。"""
     if DEBUG_SIMU_STOCK_DATA or ENABLE_SIMULATION_MODE:
         return True
-    return is_market_hours()
+    return _is_in_trade_schedule(now or datetime.now(), TRADE_TIME)
+
+
+def get_continuous_trading_seconds(start_time, end_time=None):
+    """计算两个时间点之间落在连续竞价窗口内的有效秒数。"""
+    end_time = end_time or datetime.now()
+    if end_time <= start_time:
+        return 0
+
+    total_seconds = 0.0
+    current_date = start_time.date()
+    end_date = end_time.date()
+    windows = (
+        (CONTINUOUS_TRADE_TIME["morning_start"], CONTINUOUS_TRADE_TIME["morning_end"]),
+        (CONTINUOUS_TRADE_TIME["afternoon_start"], CONTINUOUS_TRADE_TIME["afternoon_end"]),
+    )
+
+    while current_date <= end_date:
+        if current_date.weekday() + 1 in CONTINUOUS_TRADE_TIME["trade_days"]:
+            for window_start, window_end in windows:
+                start_clock = datetime.strptime(window_start, "%H:%M:%S").time()
+                end_clock = datetime.strptime(window_end, "%H:%M:%S").time()
+                window_start_at = datetime.combine(current_date, start_clock)
+                window_end_at = datetime.combine(current_date, end_clock)
+                overlap_start = max(start_time, window_start_at)
+                overlap_end = min(end_time, window_end_at)
+                if overlap_end > overlap_start:
+                    total_seconds += (overlap_end - overlap_start).total_seconds()
+        current_date += timedelta(days=1)
+
+    return total_seconds
 
 # ======================= 预设股票池 =======================
 # 可以在这里定义预设的股票池，也可以从外部文件加载

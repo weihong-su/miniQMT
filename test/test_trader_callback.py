@@ -546,6 +546,64 @@ class TestTraderCallback(TestBase):
             config.ENABLE_PENDING_ORDER_AUTO_CANCEL = old_flag
             config.ENABLE_SIMULATION_MODE = old_sim
 
+    def test_d2a_timeout_check_skipped_during_preorder_window(self):
+        """预挂窗口内即使自然时间已超时，也不应查询或撤销委托。"""
+        self.pm.track_order("301560.SZ", 1001, "stop_loss", {"volume": 600})
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_flag = config.ENABLE_PENDING_ORDER_AUTO_CANCEL
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = True
+            self.pm.last_order_check_time = 0
+            with self.pm.pending_orders_lock:
+                self.pm.pending_orders["301560"]["submit_time"] = (
+                    datetime.now() - timedelta(hours=1)
+                )
+
+            with patch("config.is_continuous_trade_time", return_value=False), \
+                 patch.object(self.pm, "_handle_timeout_order") as mock_handle:
+                self.pm.check_pending_orders_timeout()
+
+            mock_handle.assert_not_called()
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = old_flag
+
+    def test_d2b_timeout_check_uses_continuous_trading_seconds(self):
+        """进入连续竞价后，达到30个有效交易秒才进入超时处理。"""
+        self.pm.track_order("301560", 1001, "stop_loss", {"volume": 600})
+        old_sim = config.ENABLE_SIMULATION_MODE
+        old_flag = config.ENABLE_PENDING_ORDER_AUTO_CANCEL
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = True
+
+            with patch("config.is_continuous_trade_time", return_value=True), \
+                 patch("config.get_continuous_trading_seconds", return_value=29), \
+                 patch.object(self.pm, "_handle_timeout_order") as mock_handle:
+                self.pm.last_order_check_time = 0
+                self.pm.check_pending_orders_timeout()
+                mock_handle.assert_not_called()
+
+            with patch("config.is_continuous_trade_time", return_value=True), \
+                 patch("config.get_continuous_trading_seconds", return_value=30), \
+                 patch.object(self.pm, "_handle_timeout_order") as mock_handle:
+                self.pm.last_order_check_time = 0
+                self.pm.check_pending_orders_timeout()
+                mock_handle.assert_called_once()
+                self.assertEqual(mock_handle.call_args.args[0]["elapsed_minutes"], 0.5)
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+            config.ENABLE_PENDING_ORDER_AUTO_CANCEL = old_flag
+
+    def test_d2c_track_order_normalizes_stock_code_key(self):
+        """同一委托的裸代码与市场后缀代码只能生成一条跟踪记录。"""
+        self.pm.track_order("301560.SZ", 1001, "stop_loss", {"volume": 600})
+        self.pm.track_order("301560", 1001, "stop_loss", {"volume": 600})
+
+        self.assertEqual(list(self.pm.pending_orders), ["301560"])
+        self.assertEqual(self.pm.pending_orders["301560"]["stock_code"], "301560")
+
     def test_d2_stop_loss_and_take_profit_use_shorter_timeout(self):
         """止损与止盈委托均使用 30 秒超时阈值，其他信号仍使用全局阈值。"""
         old_sim = config.ENABLE_SIMULATION_MODE
@@ -569,7 +627,12 @@ class TestTraderCallback(TestBase):
                 for code in ("301560", "301561", "301562", "301563"):
                     self.pm.pending_orders[code]["submit_time"] = datetime.now() - timedelta(minutes=0.6)
 
-            with patch.object(self.pm, "_handle_timeout_order") as mock_handle:
+            with patch("config.is_continuous_trade_time", return_value=True), \
+                 patch(
+                     "config.get_continuous_trading_seconds",
+                     side_effect=lambda start, end: (end - start).total_seconds()
+                 ), \
+                 patch.object(self.pm, "_handle_timeout_order") as mock_handle:
                 self.pm.check_pending_orders_timeout()
 
             handled = {
@@ -733,7 +796,16 @@ class TestTraderCallback(TestBase):
         }
 
         mock_executor = MagicMock()
-        mock_executor.sell_stock.return_value = new_order_id
+        def submit_reordered_order(**kwargs):
+            self.pm.track_order(
+                kwargs["stock_code"],
+                new_order_id,
+                kwargs["signal_type"],
+                kwargs["signal_info"],
+            )
+            return new_order_id
+
+        mock_executor.sell_stock.side_effect = submit_reordered_order
 
         old_reorder = config.PENDING_ORDER_AUTO_REORDER
         try:
@@ -772,7 +844,16 @@ class TestTraderCallback(TestBase):
             "bid3": 43.95,
         }
         mock_executor = MagicMock()
-        mock_executor.sell_stock.return_value = new_order_id
+        def submit_reordered_order(**kwargs):
+            self.pm.track_order(
+                kwargs["stock_code"],
+                new_order_id,
+                kwargs["signal_type"],
+                kwargs["signal_info"],
+            )
+            return new_order_id
+
+        mock_executor.sell_stock.side_effect = submit_reordered_order
 
         with patch.object(self.pm, "_query_order_status", return_value=54), \
              patch("trading_executor.get_trading_executor", return_value=mock_executor):
@@ -1043,8 +1124,8 @@ class TestTraderCallback(TestBase):
 
         mock_executor.sell_stock.assert_not_called()
 
-    def test_e3_reorder_tracks_new_order_after_success(self):
-        """_reorder_after_cancel 挂单成功后应跟踪新委托单"""
+    def test_e3_reorder_does_not_track_order_twice(self):
+        """sell_stock 负责跟踪新委托，重挂层不得再次写入 pending_orders。"""
         stock_code = "301560"
         signal_info = {"volume": 600, "current_price": 44.08}
         new_order_id = 940572700
@@ -1056,15 +1137,15 @@ class TestTraderCallback(TestBase):
         mock_executor = MagicMock()
         mock_executor.sell_stock.return_value = {"order_id": new_order_id}
 
-        with patch("trading_executor.get_trading_executor", return_value=mock_executor):
+        with patch("trading_executor.get_trading_executor", return_value=mock_executor), \
+             patch.object(self.pm, "track_order") as mock_track:
             self.pm._reorder_after_cancel(stock_code, "take_profit_half", signal_info)
 
-        self.assertIn(stock_code, self.pm.pending_orders,
-                      "重新挂单成功后应跟踪新委托单")
-        self.assertEqual(self.pm.pending_orders[stock_code]["order_id"], new_order_id)
+        mock_executor.sell_stock.assert_called_once()
+        mock_track.assert_not_called()
 
-    def test_e3b_reorder_tracks_new_order_when_executor_returns_str(self):
-        """_reorder_after_cancel 兼容 sell_stock 返回 order_id 字符串"""
+    def test_e3b_reorder_string_result_does_not_track_order_twice(self):
+        """sell_stock 返回字符串委托号时，重挂层同样不得重复跟踪。"""
         stock_code = "301560"
         signal_info = {"volume": 600, "current_price": 44.08}
         new_order_id = "940572701"
@@ -1076,12 +1157,12 @@ class TestTraderCallback(TestBase):
         mock_executor = MagicMock()
         mock_executor.sell_stock.return_value = new_order_id
 
-        with patch("trading_executor.get_trading_executor", return_value=mock_executor):
+        with patch("trading_executor.get_trading_executor", return_value=mock_executor), \
+             patch.object(self.pm, "track_order") as mock_track:
             self.pm._reorder_after_cancel(stock_code, "take_profit_half", signal_info)
 
-        self.assertIn(stock_code, self.pm.pending_orders,
-                      "返回字符串时也应跟踪新委托单")
-        self.assertEqual(self.pm.pending_orders[stock_code]["order_id"], new_order_id)
+        mock_executor.sell_stock.assert_called_once()
+        mock_track.assert_not_called()
 
     def test_e4_reorder_aborts_when_no_quote(self):
         """无法获取行情时，_reorder_after_cancel 应放弃挂单"""

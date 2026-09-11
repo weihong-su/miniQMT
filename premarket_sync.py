@@ -120,8 +120,9 @@ class PreMarketSyncScheduler:
             )
             window_end = sync_time + timedelta(minutes=self.compensation_window)
 
-            # 额外守卫: 不在交易时间内触发补偿(避免补偿同步穿越9:30开盘)
-            if sync_time <= now <= window_end and now.weekday() < 5 and not config.is_trade_time():
+            # 额外守卫: 连续竞价开始前触发补偿，预挂窗口不应阻断盘前同步。
+            if (sync_time <= now <= window_end and now.weekday() < 5 and
+                    not config.is_continuous_trade_time()):
                 logger.warning(
                     f"检测到reset场景(计划时间{persisted_time.strftime('%H:%M')},"
                     f"当前{now.strftime('%H:%M')}),立即执行补偿同步"

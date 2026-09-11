@@ -5027,6 +5027,10 @@ class PositionManager:
         signal_info (dict): 信号详细信息
         """
         try:
+            stock_code = self._base_stock_code(stock_code)
+            if not stock_code:
+                logger.error("跟踪委托单失败: 股票代码为空")
+                return
             with self.pending_orders_lock:
                 self.pending_orders[stock_code] = {
                     'order_id': order_id,
@@ -5287,6 +5291,10 @@ class PositionManager:
             if config.ENABLE_SIMULATION_MODE:
                 return
 
+            # 预挂窗口允许提交订单，但休市期间冻结委托超时计时和撤挂处理。
+            if not config.is_continuous_trade_time():
+                return
+
             # 检查间隔控制
             current_time = time.time()
             if current_time - self.last_order_check_time < self.order_check_interval:
@@ -5297,17 +5305,22 @@ class PositionManager:
             # 检查每个待处理委托单
             timeout_orders = []
 
+            check_time = datetime.now()
             with self.pending_orders_lock:
                 for stock_code, order_info in list(self.pending_orders.items()):
                     submit_time = order_info['submit_time']
                     signal_type = order_info.get('signal_type')
                     timeout_minutes = self._get_pending_order_timeout_minutes(signal_type)
-                    elapsed_minutes = (datetime.now() - submit_time).total_seconds() / 60
+                    elapsed_minutes = config.get_continuous_trading_seconds(
+                        submit_time,
+                        check_time
+                    ) / 60
 
                     # 检查是否超时
                     if elapsed_minutes >= timeout_minutes:
                         timeout_info = dict(order_info)
                         timeout_info['timeout_minutes'] = timeout_minutes
+                        timeout_info['elapsed_minutes'] = elapsed_minutes
                         timeout_orders.append(timeout_info)
 
             # 处理超时委托单
@@ -5334,7 +5347,12 @@ class PositionManager:
                 'timeout_minutes',
                 self._get_pending_order_timeout_minutes(signal_type)
             )
-            elapsed = (datetime.now() - submit_time).total_seconds() / 60
+            elapsed = order_info.get('elapsed_minutes')
+            if elapsed is None:
+                elapsed = config.get_continuous_trading_seconds(
+                    submit_time,
+                    datetime.now()
+                ) / 60
             local_status = order_info.get('status')
 
             if local_status == 'cancel_requested':
@@ -5690,15 +5708,6 @@ class PositionManager:
 
             if result:
                 logger.info(f"✅ {stock_code} 重新挂单成功")
-                # 兼容返回 dict 或 order_id 字符串
-                new_order_id = None
-                if isinstance(result, dict):
-                    new_order_id = result.get('order_id')
-                else:
-                    new_order_id = result
-
-                if new_order_id:
-                    self.track_order(stock_code, new_order_id, signal_type, signal_info)
             else:
                 logger.error(f"❌ {stock_code} 重新挂单失败")
 

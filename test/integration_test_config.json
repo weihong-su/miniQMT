@@ -195,7 +195,8 @@
         "test.test_system_integration",
         "test.test_unattended_operation",
         "test.test_thread_monitoring",
-        "test.test_premarket_xttrader_reinit"
+        "test.test_premarket_xttrader_reinit",
+        "test.test_trade_time_windows"
       ],
       "priority": "critical"
     },
@@ -364,7 +365,8 @@
         "test.test_p1_fixes",
         "test.test_macd_signal_fixes",
         "test.test_executor_cancel_order",
-        "test.test_grid_pause_after_full_exit"
+        "test.test_grid_pause_after_full_exit",
+        "test.test_trade_time_windows"
       ],
       "priority": "critical"
     },
