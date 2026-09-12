@@ -16,6 +16,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import config
+import settlement_db
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -1037,7 +1038,9 @@ class GridTradingManager:
                         'traded_price': traded_price,
                         'trade_id': trade_id,
                     }
-                    if self.handle_deal_callback(synthetic_trade):
+                    if self.handle_deal_callback(
+                            synthetic_trade,
+                            time_source=settlement_db.TIME_SOURCE_RECONCILE):
                         replayed += 1
                 continue
 
@@ -2304,7 +2307,8 @@ class GridTradingManager:
                                                 price: float, volume: int, trade_id: str,
                                                 order_id: str = None,
                                                 order_updates: dict = None,
-                                                commission: float = None) -> bool:
+                                                commission: float = None,
+                                                deal_meta: dict = None) -> bool:
         """按真实成交回报落账，并在DB失败时回滚内存统计"""
         stock_code = session.stock_code
         price = float(price)
@@ -2420,7 +2424,8 @@ class GridTradingManager:
             volume=volume,
             amount=amount,
             trade_id=trade_id,
-            commission=commission
+            commission=commission,
+            deal_meta=deal_meta,
         )
 
         self._rebuild_grid(session, price)
@@ -2435,10 +2440,41 @@ class GridTradingManager:
         )
         return True
 
+    def _build_deal_meta_from_trade(self, trade, order_id, time_source: str = None) -> dict:
+        """从 XtTrade 提取成交时间元信息。
+
+        取不到 traded_time 就标 local_fallback 并让上层告警 ——
+        **绝不用 now() 冒充交易所成交时间**。
+        time_source 显式传入时以传入值为准（对账补记路径用）。
+        """
+        deal_time, deal_time_str = None, None
+        try:
+            raw = self._get_attr_or_key(trade, ('traded_time', '成交时间'))
+            deal_time, deal_time_str = settlement_db.parse_deal_time(raw)
+        except Exception as err:
+            logger.debug(f"[GRID] 提取 traded_time 失败（按 local_fallback 处理）: {err}")
+
+        if time_source is None:
+            time_source = (settlement_db.TIME_SOURCE_EXCHANGE if deal_time_str
+                           else settlement_db.TIME_SOURCE_LOCAL)
+        return {
+            'order_id': order_id,
+            'deal_time': deal_time,
+            'deal_time_str': deal_time_str,
+            'time_source': time_source,
+            'side_source': 'deal',
+        }
+
     def _save_confirmed_trade_record(self, stock_code: str, trade_time: str, trade_type: str,
                                      price: float, volume: int, amount: float, trade_id: str,
-                                     commission: float = None) -> None:
-        """实盘网格成交确认后，补写普通交易流水。"""
+                                     commission: float = None, deal_meta: dict = None) -> None:
+        """实盘网格成交确认后，补写普通交易流水。
+
+        deal_meta 携带成交回报专有元信息（deal_time/time_source/order_id）。
+        网格的 trade_time 来自 datetime.now()，不是交易所时间 ——
+        对账补记路径必须标 time_source='reconcile_backfill'，
+        否则会拿补记时刻冒充成交时刻（本轮改造要根治的正是这个问题）。
+        """
         if (getattr(config, 'ENABLE_SIMULATION_MODE', True)
                 or not getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)):
             return
@@ -2460,14 +2496,15 @@ class GridTradingManager:
                 amount=amount,
                 trade_id=trade_id,
                 commission=commission,
-                strategy=getattr(config, 'GRID_STRATEGY_NAME', 'grid')
+                strategy=getattr(config, 'GRID_STRATEGY_NAME', 'grid'),
+                deal_meta=deal_meta,
             )
             if not saved:
                 logger.warning(f"[GRID] confirmed trade_records写入失败: trade_id={trade_id}")
         except Exception as err:
             logger.warning(f"[GRID] confirmed trade_records写入异常: trade_id={trade_id}, err={err}")
 
-    def handle_deal_callback(self, trade) -> bool:
+    def handle_deal_callback(self, trade, time_source: str = None) -> bool:
         """实盘成交回调确认网格委托；只有真实成交后才更新网格统计和交易表
 
         部分成交阶段只累积填充量并更新 grid_orders 状态，不写 grid_trades/trade_records、不重建网格。
@@ -2586,7 +2623,9 @@ class GridTradingManager:
                     'filled_volume': total_volume,
                     'filled_amount': total_amount
                 },
-                commission=total_commission
+                commission=total_commission,
+                deal_meta=self._build_deal_meta_from_trade(trade, order_id,
+                                                           time_source=time_source),
             )
             if not success:
                 # DB 落账失败时回滚 pending 累积量（保留 pending 等待补偿确认重试）

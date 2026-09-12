@@ -191,15 +191,30 @@ miniqmt.bat                         # 打开交互式菜单
 python scripts/_launcher.py menu    # 等效命令
 ```
 
-**菜单功能一览**:
-| 分区 | 选项 | 功能 |
-|------|------|------|
-| 部署/环境 | [1]-[4] | 检查Python环境、安装依赖、校验配置、git pull |
-| 查看 | [5]-[6] | 查看账号配置、运行状态 |
-| 启动 | [7]-[9] | 启动所有/指定账号（实盘/模拟） |
-| 停止 | [a]-[c] | 优雅停止/强制停止 |
-| **XtQuantManager** | **[d]-[i]** | **启动/停止/状态/UI/重启/日志** |
-| **自动买入** | **[j]-[m]** | **启动/停止/状态/日志** |
+**菜单功能一览**（分页：首页放日常运行 + 三个二级页，一屏装得下）:
+
+| 页 | 选项 | 功能 |
+|----|------|------|
+| **首页** | [5]-[6] | 查看账号配置、运行状态 |
+| | [7]-[9] | 启动所有(实盘)/所有(模拟)/指定账号 |
+| | [a]-[c] | 优雅停止全部/指定、强制停止全部 |
+| | [1] | → **环境与部署**页 |
+| | [2] | → **服务管理**页 |
+| | [3] | → **数据与配置**页 |
+| 环境与部署 | [0]-[4] | 首次向导、检查环境、装依赖、校验配置、git pull |
+| 服务管理 | [d]-[i] | XtQuantManager 网关 启动/停止/状态/UI/重启/日志 |
+| | [j]-[m] | 自动买入 启动/停止/状态/日志 |
+| 数据与配置 | [n]-[p] | Tushare / 大QMT IPC / XtTrader 通道总控 |
+| | [r]-[u] | 交割单：迁移 / 历史回填 / 导入对账单 / 导出 |
+
+> 二级页内 **`[b]` 或直接回车返回主菜单**；`[q]` 在任何页都退出。
+> 各页按键不重叠（env 用 0-4 / 首页用 5-9,a-c / services 用 d-m / data 用 n-p,r-u），
+> 因此底层分派链是共用的，只在入口按页校验按键。
+> 首页底部显示账号运行摘要，执行过可能改变运行状态的操作后会重新采集（有缓存）。
+>
+> `[r][s][t]` 会改写 `trade_records`，内置**停机守卫**：仍有账号运行时直接拒绝执行，
+> 且强制先跑 dry-run 预演、需输入 `yes` 才正式执行。`[u]` 导出是只读，随时可跑。
+> 对应 CLI：`python scripts/_launcher.py settlement-{migrate,backfill,import,export}`
 
 ### 系统诊断工具
 ```bash
@@ -257,6 +272,8 @@ Web界面 → trading_executor → position_manager.simulate_buy/sell() → 内�
 ```
 config.py              # 集中配置管理(所有魔法数字都在这里)
 logger.py              # 统一日志管理
+db_migrate.py          # 数据库 schema 迁移(幂等补列/迁移前备份/测试库守卫/账号发现) ⭐
+settlement_db.py       # 交割单数据落库(持仓快照/每日净值/运行事件/成交统一写入口) ⭐
 main.py                # 系统启动入口和线程管理
 thread_monitor.py      # 线程健康监控与自愈（无人值守核心）⭐
 data_manager.py        # 历史数据获取(xtdata接口)
@@ -425,6 +442,71 @@ DYNAMIC_SIGNAL_MAX_AGE_SECONDS = 120     # 执行前信号最大年龄(秒)，�
   - Web 显示标签映射需**三处同步**：[web_server.py](web_server.py) `strategy_labels`（服务端下发 `strategy_label`，web2.0 Flask 直连模式优先取此值）、[web1.0/script.js](web1.0/script.js) `LOG_STRATEGY_LABELS`（只认原始 `strategy`）、[web2.0/src/components/OrderLog.vue](web2.0/src/components/OrderLog.vue) `strategyLabels`（网关模式兜底，因网关不下发 `strategy_label`）
   - 手动买卖：`M_real`=手买 / `M_simu`=模买 / `manual_real`=手卖 / `manual_simu`=模卖
   - `reorder_*` 由 `position_manager._reorder_after_cancel()` 以 `f"reorder_{signal_type}"` **动态拼接**产生（委托超时撤单后自动重挂）。新增卖出信号类型时，这三处标签表也要同步补 `reorder_` 前缀的键，否则前端会回退显示英文原始值
+
+## 交割单数据管道 ⭐
+
+归因所需的一切必须在**成交当下**落库，导出退化为纯 SELECT。相关模块见
+[db_migrate.py](db_migrate.py) 与 [settlement_db.py](settlement_db.py)。
+
+**新增表**（均为幂等 `CREATE TABLE IF NOT EXISTS`）:
+`position_snapshot`（每交易日 09:25 open / 15:05 close 全量持仓）、
+`account_equity_daily`（每日净值 + 恒等式校验 + 跳变告警）、
+`run_events`（结构化事件）、`trade_records_sim`（模拟成交独立表）。
+
+**trade_records 扩展列**: `account` / `deal_time` / `deal_time_str` / `time_source` /
+`order_id` / `fills` / `strategy_label` / `is_simulation` / `commission_source` /
+`row_status` 等 17 列。
+
+**核心约定**:
+- 成交写入统一走 `settlement_db.record_trade()`，用 `INSERT OR IGNORE` + 唯一索引
+  `ux_trade_records_deal` 做**原子**幂等。历史上一笔成交被写两遍，正是因为判重是
+  「先 SELECT 再 INSERT」且当时没有唯一索引
+- `time_source` 取值：`exchange` / `local_fallback` / `reconcile_backfill` / `broker`。
+  **取不到交易所成交时间时如实标 `local_fallback`，禁止用 `now()` 冒充**
+- 唯一索引必须写成 `(COALESCE(account,''), trade_id, stock_code, trade_time)`：
+  SQLite 唯一索引中 NULL 互不相等，历史行 `account` 全为 NULL 时索引会形同虚设
+- 网格路径写入的 `trade_id` 是 `str(order_id)` 而非成交号，`order_id` 跨股跨日复用，
+  所以索引**必须带 `stock_code`**
+- 模拟成交落 `trade_records_sim`，绝不与实盘同表
+
+**上线顺序（不可颠倒）**:
+```bash
+# 1. 停止 miniQMT，确认无残留 python 进程
+tasklist | findstr python
+# 2. 预演（只读，不会写库）
+python scripts/migrate_settlement.py --accounts all --dry-run
+# 3. 正式迁移（自动备份到 data/backup/migrations/）
+python scripts/migrate_settlement.py --accounts all
+# 4. 重启，确认日志出现「启动收盘快照线程」
+```
+⚠️ **迁移未跑就部署新代码**：`record_trade()` 会自动降级为旧列写入（成交不丢，
+但归因字段缺失）并在日志告警。反之，**占位流水未清理就建唯一索引会直接 IntegrityError**。
+
+**导出**:
+```bash
+python scripts/export_settlement.py --start 2026-09-14 --end 2026-10-10 --accounts all --out export/
+```
+只读、不依赖 `logs/*.log`；禁止在导出时剔除任何股票；`positions_begin` 无快照时
+**报错退出，不许用 0 填充**。合并规则 `merge_deals()` 是全项目单点实现（10 秒窗口、不跨日界）。
+
+**历史回填**（把改造前的存量行补齐归因字段）:
+```bash
+python scripts/backfill_trade_records.py --accounts all --dry-run   # 先看
+python scripts/backfill_trade_records.py --accounts all
+```
+`time_source` 一律标 `local_fallback` —— **绝不伪装 `exchange`**；手续费来源按证据判定
+（`amount×0.0003` 可证实是旧版写死的估算会被重算，来源不明的标 `unknown` 且不动）。
+
+**券商对账单导入**（历史成交时间的**唯一**来源 —— xttrader 没有历史成交查询接口）:
+```bash
+python scripts/import_broker_statement.py --dir "<对账单目录>" --dry-run
+python scripts/import_broker_statement.py --dir "<对账单目录>"
+```
+对账单为 **GBK** 编码。匹配按三级优先级：① 成交编号 == `trade_id`
+② 订单编号 == `trade_id` **且代码相同**（order_id 会跨股跨日复用，必须消歧）
+③ 代码+方向+价量相同且时间邻近（默认 60 秒）。
+回填 `time_source='broker'`；**对账单手续费为 0 时不覆盖本地估算**（0.00 通常表示该字段未导出）。
+`broker_deals` / `broker_orders` 留存原始对账数据供审计。
 
 ## 无人值守运行 ⭐
 
@@ -817,7 +899,7 @@ thread_monitor.get_status()
 | `p1_fixes` | high | 重连缓存刷新/QMT自恢复探测/信号保活与时效兜底/超时泄漏可观测 |
 | `fast` | critical | 快速验证子集（当前配置 43 个模块、1037 个用例） |
 
-**测试统计（当前配置）**: 35组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；最近一次（2026-08-29, v3.9.0）使用 Anaconda `python39` 执行 `--all-with-fast` 实测为 35组、130个模块、2622个用例，100% 通过；具体以本地运行报告为准。
+**测试统计（当前配置）**: 36组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；最近一次（2026-09-12, v3.9.1）使用 Anaconda `python39` 执行 `--all-with-fast` 实测为 36组、146个模块、3126个用例，100% 通过；具体以本地运行报告为准。
 
 ### 编写新测试的规范
 

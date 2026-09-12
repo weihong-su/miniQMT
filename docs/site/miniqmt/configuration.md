@@ -453,6 +453,35 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 
 ---
 
+## 交割单数据参数  [v3.9.1]
+
+归因所需的持仓快照与每日净值落库。完整说明见[交割单数据管道](settlement-export.md)。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_SETTLEMENT_SNAPSHOT` | `True` | 持仓快照与净值落库总开关 |
+| `SETTLEMENT_CLOSE_SNAPSHOT_TIME` | `"15:05:00"` | 收盘快照时间（开盘快照挂在盘前同步 09:25 步骤链末尾） |
+| `SETTLEMENT_SNAPSHOT_CHECK_INTERVAL` | `300` | 收盘任务轮询间隔（秒） |
+| `SETTLEMENT_SNAPSHOT_HEALTH_LOOKBACK` | `7` | 快照完整性回溯天数（只对真实交易日计缺失，避长假误报） |
+| `SETTLEMENT_ASSET_IDENTITY_TOLERANCE` | `1.0` | 资产恒等式 `total_asset = cash + frozen_cash + market_value` 的容差（元） |
+| `SETTLEMENT_ASSET_JUMP_RATIO` | `0.02` | 资产跳变告警阈值（相对值） |
+| `SETTLEMENT_ASSET_JUMP_ABSOLUTE` | `5000.0` | 资产跳变告警阈值（绝对值，元） |
+| `SETTLEMENT_COMMISSION_RATE` | `0.0003` | 佣金 0.03%（买卖双边） |
+| `SETTLEMENT_STAMP_DUTY_RATE` | `0.0005` | 印花税 0.05%（仅卖出方缴纳） |
+| `SETTLEMENT_TRANSFER_FEE_RATE` | `0.00001` | 过户费 0.001%（买卖双边） |
+
+!!! note "`snapshot_type` 只有 `open` / `close` 两种"
+    09:25 的 `open` 快照是当日持仓对账与日内盈亏的**唯一基准**；
+    15:05 的 `close` 为收盘净值。曾经的 `intraday`（心跳采样）已删除——
+    它把"QMT 未连接时的全零读数"引入了库里，且与 open/close 语义重叠。
+
+!!! warning "净值不做容错填充"
+    `total_asset <= 0` 或四项全零一律**拒写**并落 `run_events(asset_write_failed)`。
+    QMT 未连接时 `balance()` 返回整行 0，而资产恒等式**拦不住它**（`0 == 0+0+0` 恒成立）——
+    若放行，净值曲线会出现无意义的归零点。
+
+---
+
 ## 发布版本号
 
 发布版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`，web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符；发布新版本时只需要同步更新 `release_version.json` 和 `CHANGELOG.md`。

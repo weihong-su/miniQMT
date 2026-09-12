@@ -1493,6 +1493,7 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
+| v1.9 | 2026-09-12 | 同步 v3.9.1：新增**交割单数据管道**（`trade_records` 扩展 17 列 + 新增 position_snapshot / account_equity_daily / run_events / trade_records_sim / broker_deals / broker_orders 六张表；成交写入收敛为 `settlement_db.record_trade()` 单一入口；`time_source` 四态语义；券商对账单三级匹配导入；历史回填；导出脚本重写）；总控制台改**分页菜单**；修复 deal 唯一键丢单、全零净值落库、非交易日写收盘快照、模拟单误标实盘四项缺陷 |
 | v1.8 | 2026-08-29 | 同步 v3.9.0：修复网格超时委托撤单死代码路径（`TradingExecutor.cancel_order` 统一委托 `PositionManager._cancel_order`）、止损清仓后联动暂停同股网格会话、Web 手动买卖策略标签统一 |
 | v1.7 | 2026-08-17 | 同步 v3.8.9：Web `/api/*` 统一鉴权、`WEB_PUBLIC_MODE`、北交所 `.BJ` 代码归一、网关 Token 环境变量优先级和全仓止盈暂停同股网格会话 |
 | v1.6 | 2026-06-27 | 同步行情源健康评分（内存观察版、不落库、`/api/market/health`）与网格启动条件默认值：`GRID_REQUIRE_PROFIT_TRIGGERED=False` |

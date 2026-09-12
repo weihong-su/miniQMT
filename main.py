@@ -469,6 +469,26 @@ def start_database_maintenance_thread():
         db_maintenance_thread.start()
         threads.append(("db_maintenance_thread", lambda: None))
 
+def start_settlement_snapshot_thread(position_manager):
+    """启动收盘快照线程（持仓 + 净值）。
+
+    与 db_maintenance 同为"每日定时轮询"范式：过了点就补、当天只跑一次，
+    因此进程收盘后才启动也能补录当天快照。
+    """
+    if not getattr(config, 'ENABLE_SETTLEMENT_SNAPSHOT', True):
+        logger.info("收盘快照线程未启用")
+        return
+
+    logger.info("启动收盘快照线程")
+    import settlement_db
+    settlement_db.ensure_schema()
+    snapshot_thread = threading.Thread(
+        target=lambda: settlement_db.schedule_close_snapshot(position_manager, stop_event))
+    snapshot_thread.daemon = True
+    snapshot_thread.start()
+    threads.append(("settlement_snapshot_thread", lambda: None))
+
+
 def start_web_server_thread(position_manager):
     """启动Web服务器线程
 
@@ -636,6 +656,7 @@ def main():
         start_strategy_thread(trading_strategy)
         start_log_cleanup_thread()
         start_database_maintenance_thread()
+        start_settlement_snapshot_thread(position_manager)
 
         # ============ 新增: 启动盘前同步调度器 ============
         from premarket_sync import start_premarket_sync_scheduler

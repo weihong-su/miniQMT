@@ -49,6 +49,68 @@
 
 实盘网格在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时，委托阶段不会写入本表；只有收到真实成交回报并完成网格账本落账后，才补写 `strategy = grid` 的普通成交流水。
 
+### 归因扩展字段（v3.9.1 新增 17 列）
+
+v3.9.1 起本表改为「**成交当下写死归因所需的一切**」，导出退化为纯 SELECT。
+新增列如下（完整语义见[交割单数据管道](settlement-export.md)）：
+
+| 字段 | 说明 |
+|------|------|
+| `account` | 账号标识，迁移时按库路径回填 |
+| `deal_time` / `deal_time_str` | **交易所成交时间**（Unix 秒 + 可读串）。取不到时留空 |
+| `time_source` | 成交时间来源：`exchange` / `local_fallback` / `reconcile_backfill` / `broker` |
+| `recorded_at` | 落库时刻（**不是成交时刻**，不要拿它当成交时间） |
+| `order_id` | 委托编号。网格路径写的 `trade_id` 本就是它 |
+| `fill_ids` / `fills` | 原始成交编号（分号分隔）/ 合并笔数；库里存原始 deal 粒度，`fills` 恒为 1 |
+| `strategy_code` / `strategy_label` | 策略内部标识 / 中文枚举标签（落库时写死） |
+| `is_simulation` | 是否模拟成交 |
+| `commission_source` / `commission_rate` | 手续费来源（`broker`/`estimated`/`unknown`）与实际费率 |
+| `side_source` | 买卖方向来源 |
+| `row_status` / `duplicate_of` | `active` / `superseded` + 指向保留行的 id |
+| `trade_id_source` | `traded_id`(20 位成交编号) / `order_id`(9-10 位) / `placeholder` |
+
+!!! warning "trade_id 不是全局唯一成交编号"
+    本表 `trade_id` 混存三种语义：`ORDER_` 前缀（占位流水，已归档）、
+    9-10 位短数字（**网格路径写入的 `str(order_id)`**，跨标的复用）、
+    20 位长数字（真实成交编号）。因此唯一键必须包含 `stock_code`/`trade_type`/价量，
+    不能只按 `(account, trade_id)`。
+
+---
+
+## 交割单相关表 ⭐（v3.9.1 新增）
+
+| 表 | 主键 | 用途 |
+|----|------|------|
+| `position_snapshot` | `(account, snapshot_date, code, snapshot_type)` | 每交易日 09:25(`open`) / 15:05(`close`) 全量持仓快照 |
+| `account_equity_daily` | `(account, date, snapshot_type)` | 每日净值 + 资产恒等式校验 + 跳变标记 |
+| `run_events` | 自增 | 结构化运行事件（对账失配、落库失败、快照缺失等） |
+| `trade_records_sim` | 自增 | **模拟成交独立表**，与实盘物理隔离 |
+| `broker_deals` / `broker_orders` | 自增 | 券商对账单原始成交 / 委托 |
+
+!!! warning "positions 表不能当历史用"
+    `positions` 是「**当前**持仓」，会被持续覆盖写。对账基准只能取 `position_snapshot`。
+
+### account_equity_daily 字段
+
+| 字段 | 说明 |
+|------|------|
+| `total_asset` / `market_value` / `cash` / `frozen_cash` | QMT `XtAsset` 的原始字段。**没有 `available` 列**——它与 `cash` 是同一个数 |
+| `deposit` / `withdraw` / `cum_deposit` / `deposit_source` | 出入金。QMT **无任何出入金接口**，默认 NULL，只能由对账单导入或人工填报 |
+| `daily_pnl` / `unexplained_delta` | 派生：`close − open`（未扣出入金）；超过阈值时标 `unexplained_delta` 供人工判断 |
+| `source` | `qmt_api` / `simulation`（如实填写，不抹来源痕迹） |
+
+**写入前校验**：`total_asset <= 0` 或四项全零一律拒写并落
+`run_events(asset_write_failed, reason=invalid_asset_reading)`。
+QMT 未连接时 `balance()` 返回整行 0，而**资产恒等式拦不住它**（`0 == 0+0+0` 恒成立）。
+
+### run_events.event_type 枚举
+
+`startup` / `shutdown` / `qmt_disconnect` / `qmt_reconnect` / `deal_received` /
+`deal_persist_failed` / `deal_key_collision` / `reconcile_backfill` /
+`position_mismatch` / `position_snapshot_written` / `snapshot_write_failed` /
+`snapshot_missing_streak` / `asset_write_failed` / `asset_identity_mismatch` /
+`asset_jump` / `stop_loss_triggered` / `grid_order_skipped`
+
 ---
 
 ## 网格交易表

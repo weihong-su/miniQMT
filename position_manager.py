@@ -13,6 +13,7 @@ import sys
 import os
 import json
 import config
+import settlement_db
 from logger import get_logger, log_throttled, reset_log_throttle
 from data_manager import get_data_manager
 from easy_qmt_trader import easy_qmt_trader
@@ -4020,23 +4021,39 @@ class PositionManager:
             return False
 
     def _save_simulated_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, strategy='simu'):
-        """保存模拟交易记录到数据库"""
+        """保存模拟交易记录。
+
+        统一走 settlement_db.record_trade() 落到 trade_records_sim ——
+        模拟单与实盘同表是归因污染的高危来源，必须物理隔离。
+        """
         try:
             # 获取股票名称
             stock_name = self.data_manager.get_stock_name(stock_code)
             commission = amount * 0.0013 if trade_type == 'SELL' else amount * 0.0003  # 模拟手续费
-            
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT INTO trade_records 
-                (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy))
-            
-            self.conn.commit()
+
+            result = settlement_db.record_trade({
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'trade_time': trade_time,
+                'trade_type': trade_type,
+                'price': price,
+                'volume': volume,
+                'amount': amount,
+                'trade_id': trade_id,
+                'commission': commission,
+                'commission_source': 'estimated',
+                'commission_rate': '0.0013' if trade_type == 'SELL' else '0.0003',
+                'strategy': strategy,
+                'is_simulation': True,
+                'time_source': settlement_db.TIME_SOURCE_LOCAL,
+            }, conn=self.conn)
+
+            if result in ('failed',):
+                logger.error(f"[模拟交易] 交易记录写入失败: {stock_code} {trade_type} {volume}")
+                return False
             logger.info(f"[模拟交易] 保存交易记录: {stock_code}({stock_name}) {trade_type} 价格:{price:.2f} 数量:{volume} 策略:{strategy}")
             return True
-        
+
         except Exception as e:
             logger.error(f"保存模拟交易记录时出错: {str(e)}")
             self.conn.rollback()

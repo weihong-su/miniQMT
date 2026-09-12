@@ -12,6 +12,7 @@ from xtquant import xttrader as xtt
 
 import config
 import Methods
+import settlement_db
 from logger import get_logger
 from data_manager import get_data_manager
 from position_manager import get_position_manager
@@ -744,10 +745,17 @@ class TradingExecutor:
             default=0.0
         )
 
+        # 交易所成交时间。XtTrade.traded_time 是 Unix 秒，但编码不止一种；
+        # 解析不出来时 deal_time 留空、time_source 标 local_fallback，
+        # **绝不拿 now() 冒充成交时间**（这是上一轮交割单最致命的问题）。
+        raw_deal_time = self._field_any(
+            deal_info, ['traded_time', 'm_strTradeTime', '成交时间'])
+        deal_time, deal_time_str = settlement_db.parse_deal_time(raw_deal_time)
+
         return {
             'order_id': order_id,
             'stock_code': stock_code,
-            'trade_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'trade_time': deal_time_str or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'trade_type': trade_type,
             'price': price,
             'volume': volume,
@@ -755,6 +763,14 @@ class TradingExecutor:
             'trade_id': str(trade_id),
             'commission': commission,
             'strategy': strategy,
+            # 扩展元信息，交给统一 helper 落库
+            'deal_time': deal_time,
+            'deal_time_str': deal_time_str,
+            'time_source': (settlement_db.TIME_SOURCE_EXCHANGE if deal_time_str
+                            else settlement_db.TIME_SOURCE_LOCAL),
+            'fills': 1,
+            'fill_ids': str(trade_id),
+            'side_source': 'deal',
         }
 
     def record_live_deal_after_confirmation(self, deal_info, fallback_order_info=None):
@@ -790,7 +806,16 @@ class TradingExecutor:
                 trade_id=record['trade_id'],
                 commission=record['commission'],
                 strategy=record['strategy'],
-                allow_qmt_name_lookup=False
+                allow_qmt_name_lookup=False,
+                deal_meta={
+                    'order_id': record.get('order_id'),
+                    'deal_time': record.get('deal_time'),
+                    'deal_time_str': record.get('deal_time_str'),
+                    'time_source': record.get('time_source'),
+                    'fills': record.get('fills', 1),
+                    'fill_ids': record.get('fill_ids'),
+                    'side_source': record.get('side_source', 'deal'),
+                }
             )
         except Exception as e:
             logger.error(f"成交确认后写交易流水失败: {e}")
@@ -962,8 +987,15 @@ class TradingExecutor:
                 pass
             return 0
 
-    def _save_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy='default', allow_qmt_name_lookup=True):
-        """保存交易记录到数据库"""
+    def _save_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy='default', allow_qmt_name_lookup=True, deal_meta=None):
+        """保存交易记录到数据库。
+
+        实际写入统一走 settlement_db.record_trade()（INSERT OR IGNORE + 唯一索引），
+        本方法只负责股票名补全、字段归一化与日志。
+
+        deal_meta 携带成交回报专有的元信息（deal_time / time_source / order_id 等），
+        由 _build_trade_record_from_deal 产出；下单占位等无成交回报的路径不传。
+        """
         try:
             trade_time = self._normalize_trade_record_time(trade_time)
             record_lock = getattr(self, '_trade_record_lock', None)
@@ -986,6 +1018,7 @@ class TradingExecutor:
                     identity_params = self._trade_record_identity_params(
                         stock_code, trade_time, trade_type, price, volume, amount, trade_id
                     )
+                    # 唯一索引建立前，这道 SELECT 判重是唯一防线，保留
                     if self._trade_record_exists(
                             trade_id, stock_code, trade_time, trade_type, price, volume, amount):
                         logger.info(
@@ -996,36 +1029,35 @@ class TradingExecutor:
 
                 logger.info(f"保存交易记录: {stock_code}({stock_name}) {trade_type} 价:{price:.2f} 量:{volume} 金额:{amount:.2f} 策略:{strategy}")
 
-                cursor = self.conn.cursor()
-                if identity_params is not None:
-                    cursor.execute(f"""
-                        INSERT INTO trade_records
-                        (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy)
-                        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM trade_records
-                            WHERE {self._trade_record_identity_where()}
-                        )
-                    """, (
-                        stock_code, stock_name, trade_time, trade_type, price, volume,
-                        amount, str(trade_id), commission, strategy,
-                        *identity_params
-                    ))
-                    if cursor.rowcount == 0:
-                        logger.info(
-                            f"交易记录已存在，跳过重复写入: trade_id={trade_id}, "
-                            f"stock={stock_code}, type={trade_type}, volume={volume}, price={price:.2f}"
-                        )
-                        self.conn.commit()
-                        return True
-                else:
-                    cursor.execute("""
-                        INSERT INTO trade_records
-                        (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy))
+                record = {
+                    'stock_code': stock_code,
+                    'stock_name': stock_name,
+                    'trade_time': trade_time,
+                    'trade_type': trade_type,
+                    'price': price,
+                    'volume': volume,
+                    'amount': amount,
+                    'trade_id': str(trade_id) if trade_id is not None else None,
+                    'commission': commission,
+                    'strategy': strategy,
+                }
+                if deal_meta:
+                    record.update(deal_meta)
 
-                self.conn.commit()
+                result = settlement_db.record_trade(record, conn=self.conn)
+
+                if result == 'duplicate':
+                    logger.info(
+                        f"交易记录已存在，跳过重复写入: trade_id={trade_id}, "
+                        f"stock={stock_code}, type={trade_type}, volume={volume}, price={price:.2f}"
+                    )
+                    return True
+                # legacy_inserted：迁移未执行时的降级写入，同样算成功
+                # inserted_collision_suffixed：键冲突但内容不同，已强制写入（防丢单）
+                if result not in ('inserted', 'legacy_inserted',
+                                  'inserted_collision_suffixed'):
+                    return False
+
                 logger.info(f"保存交易记录成功: {stock_code}({stock_name}), {trade_type}, 价: {price:.2f}, 量: {volume}, 策略: {strategy}")
                 return True
 

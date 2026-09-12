@@ -194,20 +194,20 @@ def perform_premarket_sync():
 
     try:
         # 步骤1: 同步持久化配置
-        logger.info("[1/9] 配置同步")
+        logger.info("[1/10] 配置同步")
         config_manager = get_config_manager()
         count = config_manager.apply_configs_to_runtime()
         results['configs_synced'] = count
         logger.info(f"✓ 配置{count}项")
 
         # 步骤2: 同步特殊开关
-        logger.info("[2/9] 开关同步")
+        logger.info("[2/10] 开关同步")
         switch_count = sync_special_switches()
         results['switches_synced'] = switch_count
         logger.info(f"✓ 开关{switch_count}个")
 
         # 步骤3: 重新初始化xtquant行情接口 (可配置)
-        logger.info("[3/9] xtdata重连")
+        logger.info("[3/10] xtdata重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTDATA:
             xtdata_result = reinit_xtquant_data()
             results['xtdata_reconnected'] = xtdata_result
@@ -221,7 +221,7 @@ def perform_premarket_sync():
             results['xtdata_reconnected'] = None
 
         # 步骤4: 重新初始化xtquant交易接口 (可配置)
-        logger.info("[4/9] xttrader重连")
+        logger.info("[4/10] xttrader重连")
         if config.ENABLE_PREMARKET_XTQUANT_REINIT and config.PREMARKET_REINIT_XTTRADER:
             xttrader_result = reinit_xtquant_trader()
             results['xttrader_reconnected'] = xttrader_result
@@ -235,14 +235,14 @@ def perform_premarket_sync():
             results['xttrader_reconnected'] = None
 
         # 步骤5: 验证xtquant连接状态
-        logger.info("[5/9] 验证连接")
+        logger.info("[5/10] 验证连接")
         connection_status = verify_xtquant_connections()
         results['connection_status'] = connection_status
         logger.info(f"✓ xtdata:{connection_status.get('xtdata', '未知')}")
         logger.info(f"✓ xttrader:{connection_status.get('xttrader', '未知')}")
 
         # 步骤6: 同步持仓数据(仅模拟模式)
-        logger.info("[6/9] 持仓同步")
+        logger.info("[6/10] 持仓同步")
         if config.ENABLE_SIMULATION_MODE:
             from position_manager import get_position_manager
             position_manager = get_position_manager()
@@ -263,7 +263,7 @@ def perform_premarket_sync():
                 results['positions_synced'] = False
 
         # 步骤7: 网格交易初始化
-        logger.info("[7/9] 网格交易初始化")
+        logger.info("[7/10] 网格交易初始化")
         if config.ENABLE_GRID_TRADING:
             try:
                 from position_manager import get_position_manager
@@ -292,7 +292,7 @@ def perform_premarket_sync():
             results['grid_sessions_loaded'] = None
 
         # 步骤8: 触发Web数据全量刷新 (可配置)
-        logger.info("[8/9] Web刷新")
+        logger.info("[8/10] Web刷新")
         if config.ENABLE_WEB_REFRESH_AFTER_REINIT:
             refresh_result = trigger_web_data_refresh(results)
             results['web_refresh'] = refresh_result
@@ -304,8 +304,37 @@ def perform_premarket_sync():
             logger.info("○ 跳过Web(已禁用)")
             results['web_refresh'] = None
 
-        # 步骤9: 记录同步历史
-        logger.info("[9/9] 记录历史")
+        # 步骤9: 开盘持仓与净值快照
+        # 必须排在持仓同步(步骤6)之后：此时 xtdata/xttrader 刚重连完成、
+        # 持仓已从 QMT 刷新，快照取到的才是当日开盘的真实状态。
+        # 这份 open 快照是当日持仓对账与日内盈亏的唯一基准 ——
+        # positions 表会被覆盖写，不能用它回溯。
+        logger.info("[9/10] 开盘快照")
+        if getattr(config, 'ENABLE_SETTLEMENT_SNAPSHOT', True):
+            try:
+                import settlement_db
+                from position_manager import get_position_manager
+
+                settlement_db.ensure_schema()
+                snapshot_pm = get_position_manager()
+                snap_rows, snap_equity_ok = settlement_db.take_snapshot(
+                    snapshot_pm, settlement_db.SNAPSHOT_OPEN)
+                results['snapshot_positions'] = snap_rows
+                results['snapshot_equity_ok'] = snap_equity_ok
+                if snap_rows < 0 or not snap_equity_ok:
+                    results['errors'].append(
+                        f"开盘快照不完整(持仓={snap_rows}, 净值={snap_equity_ok})")
+                logger.info(f"✓ 开盘快照: 持仓{snap_rows}只, "
+                            f"净值{'成功' if snap_equity_ok else '失败'}")
+            except Exception as e:
+                logger.error(f"✗ 开盘快照失败: {str(e)}")
+                results['errors'].append(f"开盘快照失败: {str(e)}")
+        else:
+            logger.info("○ 跳过快照(已禁用)")
+            results['snapshot_positions'] = None
+
+        # 步骤10: 记录同步历史
+        logger.info("[10/10] 记录历史")
         execution_time = int((time.time() - start_time) * 1000)
         results['execution_time_ms'] = execution_time
         record_sync_history(results)

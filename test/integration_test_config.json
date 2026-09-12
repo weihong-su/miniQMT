@@ -212,7 +212,8 @@
       "name": "总控制台部署辅助测试",
       "description": "验证 scripts/_launcher.py 的环境检查 / 配置校验函数",
       "modules": [
-        "test.test_launcher_deployment"
+        "test.test_launcher_deployment",
+        "test.test_launcher_menu_pages"
       ],
       "priority": "high"
     },
@@ -366,7 +367,14 @@
         "test.test_macd_signal_fixes",
         "test.test_executor_cancel_order",
         "test.test_grid_pause_after_full_exit",
-        "test.test_trade_time_windows"
+        "test.test_trade_time_windows",
+        "test.test_settlement_db",
+        "test.test_grid_deal_time_source",
+        "test.test_export_settlement",
+        "test.test_broker_import",
+        "test.test_backfill_trade_records",
+        "test.test_data_pipeline_e2e",
+        "test.test_launcher_menu_pages"
       ],
       "priority": "critical"
     },
@@ -377,6 +385,19 @@
         "test.test_p1_fixes"
       ],
       "priority": "high"
+    },
+    "settlement_export": {
+      "name": "交割单数据落库与导出测试",
+      "description": "交割单数据落库与导出：快照/净值/run_events/成交统一入口/模拟隔离/券商对账单导入与匹配/历史回填/导出与合并规则/全链路端到端",
+      "priority": "critical",
+      "modules": [
+        "test.test_settlement_db",
+        "test.test_grid_deal_time_source",
+        "test.test_export_settlement",
+        "test.test_broker_import",
+        "test.test_backfill_trade_records",
+        "test.test_data_pipeline_e2e"
+      ]
     }
   },
   "reporting": {

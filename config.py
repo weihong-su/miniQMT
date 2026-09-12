@@ -652,6 +652,30 @@ PREMARKET_REINIT_XTDATA = True          # 是否重新初始化xtdata行情接�
 PREMARKET_REINIT_XTTRADER = True        # 是否重新初始化xttrader交易接口
 ENABLE_WEB_REFRESH_AFTER_REINIT = True  # 接口初始化成功后是否触发Web数据刷新
 
+# ============ 交割单数据落库配置 ============
+# 归因所需的持仓快照与每日净值。positions 表是"当前持仓"会被覆盖写，
+# 不能当历史用；对账基准只能取 position_snapshot。
+ENABLE_SETTLEMENT_SNAPSHOT = True       # 持仓快照与净值落库总开关
+# 09:25 开盘快照挂在盘前同步步骤链末尾（复用 PREMARKET_SYNC_TIME，不另设时间）
+SETTLEMENT_CLOSE_SNAPSHOT_TIME = "15:05:00"  # 收盘快照时间（收盘后5分钟，等待结算数据稳定）
+SETTLEMENT_SNAPSHOT_CHECK_INTERVAL = 300     # 收盘任务轮询间隔（秒）
+SETTLEMENT_SNAPSHOT_HEALTH_LOOKBACK = 7      # 快照完整性回溯天数
+# snapshot_type 固定为 open(09:25)/close(15:05) 两种，不再有 intraday。
+# 恒等式 total_asset = cash + frozen_cash + market_value 的容差（元）。
+# 差额说明账户含非股票资产项（逆回购/理财/未交收资金），归因时必须排除。
+SETTLEMENT_ASSET_IDENTITY_TOLERANCE = 1.0
+# 资产跳变告警阈值：超过 max(总资产*比例, 绝对值) 即告警。
+# QMT 无任何出入金查询接口，跳变无法区分盈亏与银证转账，只能标记待人工判断。
+SETTLEMENT_ASSET_JUMP_RATIO = 0.02
+SETTLEMENT_ASSET_JUMP_ABSOLUTE = 5000.0
+
+# 手续费估算费率（现行 A 股税费，用于数据库无真实手续费时的回填）。
+# QMT 的 XtTrade 结构体没有手续费字段，成交回报路径拿不到真实值，
+# 只能按费率估算并标 commission_source='estimated'，导入券商对账单后改 'broker'。
+SETTLEMENT_COMMISSION_RATE = 0.0003     # 佣金 0.03%（买卖双边）
+SETTLEMENT_STAMP_DUTY_RATE = 0.0005     # 印花税 0.05%（仅卖出方缴纳）
+SETTLEMENT_TRANSFER_FEE_RATE = 0.00001  # 过户费 0.001%（买卖双边）
+
 # ============ xtquant接口鲁棒性配置 ============
 XTQUANT_RECONNECT_INTERVAL = 30   # xtquant重连冷却间隔(秒)，防止重连风暴
                                    # 改为30秒：QMT重启约需60秒，30秒冷却可在1-2分钟内完成恢复

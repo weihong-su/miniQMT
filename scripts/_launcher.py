@@ -2,7 +2,7 @@
 miniQMT 总控制台后端（被 miniqmt.bat 调用）。
 
 子命令:
-  menu                       交互式菜单（默认入口）
+  menu                       交互式菜单（分页：首页=日常运行，[1]/[2]/[3] 进二级页）
   list                       列出 account_config.json 中所有账号
   status                     查看每个账号的进程运行状态
   start [--accounts a,b] [--simulation]   启动账号（默认全部）
@@ -20,6 +20,10 @@ miniQMT 总控制台后端（被 miniqmt.bat 调用）。
   autobuy-stop               停止自动买入服务
   autobuy-status             查看自动买入服务状态
   autobuy-log                查看自动买入服务日志
+  settlement-migrate         交割单数据库迁移（建新表 + 扩展 trade_records）※需先停机
+  settlement-backfill        历史回填（account/标签/时间来源/手续费）※需先停机
+  settlement-import          导入券商对账单，回填真实成交时间 ※需先停机
+  settlement-export          导出标准交割单（只读）
 
 进程跟踪:
   main.py 启动时自己把 PID 写到 data_<account_id>/pid.txt；
@@ -35,6 +39,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 _BUILTIN_PRINT = builtins.print
@@ -1623,6 +1628,223 @@ def cmd_autobuy_logs(_args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 交割单数据管道（迁移 / 历史回填 / 券商对账单导入 / 导出）
+# ---------------------------------------------------------------------------
+BROKER_DIR_PREF = PROJECT_ROOT / "data" / ".broker_stmt_dir"
+
+
+def _settlement_running_accounts() -> list[str]:
+    """返回当前仍在运行的账号 ID 列表。
+
+    迁移 / 回填 / 导入都会改写 trade_records，运行中的 miniQMT 会与之抢
+    WAL 写锁，且正在发生的成交可能落在半迁移状态上。必须先停机。
+    """
+    try:
+        accounts = load_accounts()
+    except SystemExit:
+        return []
+    all_ids = [a["account_id"] for a in accounts]
+    running = []
+    for acc in accounts:
+        pid, source = _resolve_account_process(acc["account_id"], all_ids,
+                                               cleanup_stale=False)
+        if pid is not None and (source == "pid" or source.startswith("port:")):
+            running.append(acc["account_id"])
+    return running
+
+
+def _require_accounts_stopped(action: str) -> bool:
+    """写库类操作的前置检查。返回 True 表示可以继续。"""
+    running = _settlement_running_accounts()
+    if not running:
+        return True
+    print(f"  [拒绝] {action} 会改写 trade_records，必须先停止所有账号。")
+    print(f"  仍在运行: {', '.join(running)}")
+    print("  请先用菜单 [a] 停止所有账号，再回来执行本操作。")
+    return False
+
+
+def _run_settlement_script(script_name: str, args: list[str]) -> int:
+    """运行 scripts/ 下的数据管道脚本，输出直接透传给终端。"""
+    script = PROJECT_ROOT / "scripts" / script_name
+    if not script.exists():
+        print(f"  [错误] 脚本不存在: {script}")
+        return 2
+    cmd = [sys.executable, str(script)] + args
+    print(f"  $ {' '.join(cmd[1:])}")
+    print("-" * 64)
+    try:
+        return subprocess.run(cmd, cwd=str(PROJECT_ROOT)).returncode
+    except KeyboardInterrupt:
+        print("\n  已中断")
+        return 130
+    except Exception as e:
+        print(f"  [错误] 执行失败: {e}")
+        return 2
+
+
+def _settlement_ask(prompt: str, default: str = "") -> str:
+    try:
+        value = input(prompt).strip()
+    except (KeyboardInterrupt, EOFError):
+        return default
+    return value or default
+
+
+def _run_with_dry_run(title: str, script_name: str, args: list[str]) -> int:
+    """先 dry-run 预演，用户确认后再实际执行。
+
+    这几个脚本都会改历史数据，预演是默认动作而不是可选项。
+    """
+    print(f"  —— {title}：先执行 dry-run 预演 ——")
+    print()
+    rc = _run_settlement_script(script_name, args + ["--dry-run"])
+    print("-" * 64)
+    if rc != 0:
+        print(f"  预演返回非零退出码 ({rc})，已中止，未做任何写入。")
+        return rc
+    print()
+    answer = _settlement_ask("  预演结果确认无误？输入 yes 正式执行（其它任意键取消）: ")
+    if answer.lower() != "yes":
+        print("  已取消，未做任何写入。")
+        return 0
+    print()
+    print(f"  —— {title}：正式执行 ——")
+    print()
+    return _run_settlement_script(script_name, args)
+
+
+def cmd_settlement_migrate(_args) -> int:
+    """交割单 schema 迁移：建新表 + 扩展 trade_records + 清理占位流水 + 建唯一索引。"""
+    print("=" * 64)
+    print("  交割单数据库迁移")
+    print("=" * 64)
+    print("  将执行：")
+    print("    1. 新建 position_snapshot / account_equity_daily / run_events /")
+    print("       trade_records_sim / broker_deals / broker_orders")
+    print("    2. trade_records 补齐 17 个归因字段（幂等，已存在的列跳过）")
+    print("    3. 回填 account、归档 ORDER_ 占位假成交、标记重复成交行")
+    print("    4. 建立唯一索引 ux_trade_records_deal（成交级幂等的基础）")
+    print()
+    print("  迁移前会自动备份到 data/backup/migrations/。")
+    print()
+    if not _require_accounts_stopped("数据库迁移"):
+        return 1
+    return _run_with_dry_run("数据库迁移", "migrate_settlement.py",
+                             ["--accounts", "all"])
+
+
+def cmd_settlement_backfill(_args) -> int:
+    """历史回填：补齐改造前存量行的归因字段。"""
+    print("=" * 64)
+    print("  trade_records 历史回填")
+    print("=" * 64)
+    print("  将补齐：account / strategy_label / time_source /")
+    print("          commission + commission_source / fills / trade_id_source")
+    print()
+    print("  口径说明：")
+    print("    · time_source 一律标 local_fallback —— 历史 trade_time 是本地")
+    print("      入库时刻，绝不伪装成交易所成交时间")
+    print("    · 手续费按证据判定：可证实是旧版 amount×0.0003 的会用现行税费")
+    print("      重算并标 estimated；来源不明的原样保留并标 unknown")
+    print("    · 已由券商对账单回填（commission_source=broker）的行不会被覆盖")
+    print()
+    print("  幂等：可重复执行，不会增删行。")
+    print()
+    if not _require_accounts_stopped("历史回填"):
+        return 1
+    return _run_with_dry_run("历史回填", "backfill_trade_records.py",
+                             ["--accounts", "all"])
+
+
+def _load_broker_dir_pref() -> str:
+    try:
+        if BROKER_DIR_PREF.exists():
+            return BROKER_DIR_PREF.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _save_broker_dir_pref(path: str) -> None:
+    try:
+        BROKER_DIR_PREF.parent.mkdir(parents=True, exist_ok=True)
+        BROKER_DIR_PREF.write_text(path, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def cmd_settlement_import(_args) -> int:
+    """导入券商对账单，回填真实成交时间与手续费。"""
+    print("=" * 64)
+    print("  券商对账单导入")
+    print("=" * 64)
+    print("  这是历史成交时间的唯一来源 —— QMT 的 xttrader 没有历史成交查询")
+    print("  接口（query_stock_trades 只返回当日）。")
+    print()
+    print("  目录内应包含 QMT 导出的 <账号>_<序号>_deals.csv 等文件（GBK 编码）。")
+    print("  匹配优先级：成交编号 → 订单编号+代码 → 代码/方向/价量+时间邻近。")
+    print()
+
+    default_dir = _load_broker_dir_pref()
+    hint = f"（回车使用上次：{default_dir}）" if default_dir else ""
+    stmt_dir = _settlement_ask(f"  对账单目录{hint}: ", default_dir)
+    if not stmt_dir:
+        print("  未提供目录，已取消。")
+        return 0
+    stmt_dir = stmt_dir.strip('"').strip("'")
+    if not Path(stmt_dir).is_dir():
+        print(f"  [错误] 目录不存在: {stmt_dir}")
+        return 2
+    _save_broker_dir_pref(stmt_dir)
+    print()
+
+    if not _require_accounts_stopped("对账单导入"):
+        return 1
+    return _run_with_dry_run("对账单导入", "import_broker_statement.py",
+                             ["--dir", stmt_dir, "--accounts", "all"])
+
+
+def cmd_settlement_export(_args) -> int:
+    """导出标准交割单（只读，不改任何数据）。"""
+    print("=" * 64)
+    print("  导出标准交割单")
+    print("=" * 64)
+    print("  只读操作，不会修改数据库，账号运行中也可以执行。")
+    print()
+    print("  输出：trading_events_<起>_<止>.csv（14 列）、positions_begin.csv、")
+    print("        positions_end.csv、account_daily.csv、cash_flows.csv、")
+    print("        export_report.txt（含逐只股数闭合自检）")
+    print()
+    print("  注意：期初持仓取自 position_snapshot；若区间起点之前没有快照，")
+    print("        脚本会报错退出（退出码 2），不会用 0 填充伪造期初空仓。")
+    print()
+
+    today = datetime.now()
+    default_start = today.replace(day=1).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    start = _settlement_ask(f"  起始日期 YYYY-MM-DD（回车={default_start}）: ",
+                            default_start)
+    end = _settlement_ask(f"  结束日期 YYYY-MM-DD（回车={default_end}）: ",
+                          default_end)
+    out_dir = _settlement_ask("  输出目录（回车=export）: ", "export")
+    print()
+
+    rc = _run_settlement_script(
+        "export_settlement.py",
+        ["--start", start, "--end", end, "--accounts", "all", "--out", out_dir])
+    print("-" * 64)
+    if rc == 2:
+        print("  导出已完成文件写出，但**期初快照缺失**（退出码 2）。")
+        print("  持仓快照自改造上线后每交易日 09:25 / 15:05 各写一次，")
+        print("  请等待至少一个交易日，或缩小区间到已有快照之后。")
+    elif rc == 0:
+        print(f"  导出完成。请查看 {out_dir}/export_report.txt 中的自检结果，")
+        print("  特别是「逐只股数闭合」一节。")
+    return rc
+
+
+# ---------------------------------------------------------------------------
 # Tushare 数据源配置
 # ---------------------------------------------------------------------------
 def _read_env_key(key: str) -> str:
@@ -1859,6 +2081,34 @@ def _get_rpc_display_info():
     return transport, host, port, db, pwd, allow_order
 
 
+def _collect_runtime_status() -> list:
+    """主菜单底部的账号运行摘要，每账号一行。
+
+    要通过 pid 文件/端口探测进程，比读配置慢，所以调用方应缓存结果，
+    只在执行过可能改变运行状态的操作后重新采集。
+    """
+    try:
+        accounts = load_accounts()
+    except SystemExit:
+        return ["  账号状态: [无法读取 account_config.json或无账号配置]"]
+    if not accounts:
+        return ["  账号状态: 无已配置账号"]
+
+    all_ids = [a["account_id"] for a in accounts]
+    base_port = _flask_base_port()
+    running = 0
+    rows = []
+    for i, acc in enumerate(accounts):
+        acc_id = acc["account_id"]
+        pid, source = _resolve_account_process(acc_id, all_ids, cleanup_stale=False)
+        alive = pid is not None and (source == "pid" or source.startswith("port:"))
+        if alive:
+            running += 1
+        rows.append(f"   {'● 运行中' if alive else '○ 未运行'}  {acc_id:<12}"
+                    f":{base_port + i:<6} {acc.get('qmt_path', '')}")
+    return [f"  账号状态: {running}/{len(accounts)} 运行中"] + rows
+
+
 def _print_xttrader_status():
     """在主菜单底部打印当前 xttrader 通道简述。"""
     mode = _read_xttrader_status()
@@ -2072,70 +2322,139 @@ def cmd_menu(_args) -> int:
 
         pause_return()
 
+    # 分页菜单：首页只放日常运行，其余折叠进二级页，一屏装得下。
+    # 各页按键天然不重叠（env 用 0-4 / 首页用 5-9,a-c / services 用 d-m /
+    # data 用 n-p,r-u），因此下面的分派链无需按页改写，只在入口做按键校验。
+    PAGE_TITLES = {
+        "env": "环境与部署",
+        "services": "服务管理",
+        "data": "数据与配置",
+    }
+    page = "main"
+    last_status = None       # 缓存运行状态，避免每次回首页都重新扫进程
+
     while True:
         os.system("cls" if sys.platform == "win32" else "clear")
         print(SEPARATOR)
-        print("                  miniQMT 总控制台")
+        if page == "main":
+            print("                  miniQMT 总控制台")
+        else:
+            print(f"                  miniQMT 总控制台 · {PAGE_TITLES[page]}")
         print(SEPARATOR)
         print(f"  工作目录 : {PROJECT_ROOT}")
         print(f"  Python   : {sys.executable}")
         print(DASH)
-        print("  [首次部署 / 环境]")
-        print("   [0] 首次部署向导（新电脑推荐先运行）")
-        print("   [1] 检查 Python 环境与核心依赖")
-        print("   [2] 安装/更新 Python 依赖 (pip install -r utils/requirements.txt)")
-        print("   [3] 检查配置文件 (account_config.json, qmt_path)")
-        print("   [4] 拉取最新代码 (git pull)")
-        print()
-        print("  [日常运行 - 查看]")
-        print("   [5] 查看所有账号配置")
-        print("   [6] 查看运行状态")
-        print()
-        print("  [日常运行 - 启动]")
-        print("   [7] 启动所有账号 (实盘，启动时选择 web1.0/web2.0)")
-        print("   [8] 启动所有账号 (模拟，启动时选择 web1.0/web2.0)")
-        print("   [9] 启动指定账号 (选择实盘/模拟 + web1.0/web2.0)")
-        print(f"        web1.0 = Flask :{_flask_base_port()} 起, 仅本机访问 (配置/监控用)")
-        print(f"        web2.0 = xtquant_manager :{_xqm_port()}, 全网卡 (只读监控)")
-        print("                 Flask 仍会启动(仅本机)供网关读取运行时开关")
-        print()
-        print("  [日常运行 - 停止]")
-        print("   [a] 停止所有账号 (优雅, 30s 超时)")
-        print("   [b] 停止指定账号 (优雅)")
-        print("   [c] 强制停止所有账号 (立即 taskkill)")
-        print()
-        print("  [XtQuantManager 网关]")
-        print("   [d] 启动 xtquant_manager 服务")
-        print("   [e] 停止 xtquant_manager 服务")
-        print("   [f] 查看 xtquant_manager 状态")
-        print("   [g] 打开 web2.0 UI")
-        print("   [h] 重启 xtquant_manager 服务")
-        print("   [i] 查看 xtquant_manager 实时日志")
-        print()
-        print("  [自动买入服务 miniqmt_autobuy]")
-        print("   [j] 启动自动买入服务")
-        print("   [k] 停止自动买入服务")
-        print("   [l] 查看自动买入状态")
-        print("   [m] 查看自动买入日志")
-        print()
-        print("  [数据源 & 交易通道配置]")
-        print("   [n] Tushare Pro 数据源配置")
-        print("   [o] 大QMT IPC Trader 配置")
-        print("   [p] XtTrader 通道总控 (miniQMT \ IPC-Trader \ RPC-Trader)")
+
+        if page == "main":
+            # 日常运行是一屏内最常点的部分，压成三行；其余折叠进二级页
+            print("  [日常运行]")
+            print("    查看: [5] 账号配置      [6] 运行状态")
+            print("    启动: [7] 全部(实盘)    [8] 全部(模拟)    [9] 指定账号")
+            print("    停止: [a] 全部(优雅)    [b] 指定账号      [c] 强制全部")
+            print("          (启动时可再选 web1.0 / web2.0)")
+            print()
+            print("  [更多功能]")
+            print("   [1] 环境与部署  —  首次向导 / 检查环境 / 装依赖 / 校验配置 / git pull")
+            print("   [2] 服务管理    —  XtQuantManager 网关 / 自动买入服务")
+            print("   [3] 数据与配置  —  Tushare / IPC / XtTrader 通道 / 交割单数据")
+            print()
+            if last_status is None:
+                last_status = _collect_runtime_status()
+            for line in last_status:
+                print(line)
+
+        elif page == "env":
+            print("  [首次部署 / 环境]")
+            print("   [0] 首次部署向导（新电脑推荐先运行）")
+            print("   [1] 检查 Python 环境与核心依赖")
+            print("   [2] 安装/更新 Python 依赖 (pip install -r utils/requirements.txt)")
+            print("   [3] 检查配置文件 (account_config.json, qmt_path)")
+            print("   [4] 拉取最新代码 (git pull)")
+
+        elif page == "services":
+            print("  [XtQuantManager 网关]")
+            print("   [d] 启动 xtquant_manager 服务")
+            print("   [e] 停止 xtquant_manager 服务")
+            print("   [f] 查看 xtquant_manager 状态")
+            print("   [g] 打开 web2.0 UI")
+            print("   [h] 重启 xtquant_manager 服务")
+            print("   [i] 查看 xtquant_manager 实时日志")
+            print()
+            print("  [自动买入服务 miniqmt_autobuy]")
+            print("   [j] 启动自动买入服务")
+            print("   [k] 停止自动买入服务")
+            print("   [l] 查看自动买入状态")
+            print("   [m] 查看自动买入日志")
+
+        elif page == "data":
+            print("  [数据源 & 交易通道配置]")
+            print("   [n] Tushare Pro 数据源配置")
+            print("   [o] 大QMT IPC Trader 配置")
+            print("   [p] XtTrader 通道总控 (miniQMT \\ IPC-Trader \\ RPC-Trader)")
+            print()
+            print("  [交割单数据 (归因/对账)]")
+            print("   [r] 数据库迁移 (建新表 + 扩展 trade_records)   ※需先停机")
+            print("   [s] 历史回填 (补齐 account/标签/时间来源/手续费)  ※需先停机")
+            print("   [t] 导入券商对账单 (回填真实成交时间)          ※需先停机")
+            print("   [u] 导出标准交割单 (只读，随时可跑)")
+
         print()
         _print_xttrader_status()
         print(DASH)
-        print("   [q] 退出")
+        if page == "main":
+            print("   [q] 退出")
+            prompt = "请选择 [5-9, a-c, 1-3, q]: "
+        else:
+            print(f"   [b] 返回主菜单        [q] 退出")
+            prompt = "请选择 (回车=返回主菜单): "
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-q]: ").lower()
+        choice = ask(prompt).lower()
 
         if choice == "q":
             print("\n再见!")
             return 0
 
+        # ---- 分页导航与按键校验（原分派链保持不动）----
+        if page != "main" and choice in ("b", ""):
+            page = "main"
+            continue
+
+        if page == "main":
+            if choice == "1":
+                page = "env"
+                continue
+            if choice == "2":
+                page = "services"
+                continue
+            if choice == "3":
+                page = "data"
+                continue
+            if choice not in tuple("56789abc"):
+                print(f"\n[警告] 无效选择: {choice!r}")
+                time.sleep(1)
+                continue
+        elif page == "env":
+            if choice not in tuple("01234"):
+                print(f"\n[警告] 无效选择: {choice!r}")
+                time.sleep(1)
+                continue
+        elif page == "services":
+            if choice not in tuple("defghijklm"):
+                print(f"\n[警告] 无效选择: {choice!r}")
+                time.sleep(1)
+                continue
+        elif page == "data":
+            if choice not in tuple("noprstu"):
+                print(f"\n[警告] 无效选择: {choice!r}")
+                time.sleep(1)
+                continue
+
+        # 运行状态可能因上面的操作而变化，回首页时重新采集
+        last_status = None
+
         # ---- 部署 / 环境 ----
-        elif choice == "0":
+        if choice == "0":
             print()
             cmd_setup_wizard(None)
             pause_return()
@@ -2304,6 +2623,27 @@ def cmd_menu(_args) -> int:
             cmd_xttrader_config(None)
             pause_return()
 
+        # ---- 交割单数据管道 ----
+        elif choice == "r":
+            print()
+            cmd_settlement_migrate(None)
+            pause_return()
+
+        elif choice == "s":
+            print()
+            cmd_settlement_backfill(None)
+            pause_return()
+
+        elif choice == "t":
+            print()
+            cmd_settlement_import(None)
+            pause_return()
+
+        elif choice == "u":
+            print()
+            cmd_settlement_export(None)
+            pause_return()
+
         else:
             print(f"\n[警告] 无效选择: {choice!r}")
             time.sleep(1)
@@ -2369,6 +2709,11 @@ def main() -> int:
     sub.add_parser("autobuy-log")
     sub.add_parser("autobuy-logs")
 
+    sub.add_parser("settlement-migrate")
+    sub.add_parser("settlement-backfill")
+    sub.add_parser("settlement-import")
+    sub.add_parser("settlement-export")
+
     args = parser.parse_args()
     return {
         "list":          cmd_list,
@@ -2391,6 +2736,10 @@ def main() -> int:
         "autobuy-status": cmd_autobuy_status,
         "autobuy-log":    cmd_autobuy_logs,
         "autobuy-logs":   cmd_autobuy_logs,
+        "settlement-migrate":  cmd_settlement_migrate,
+        "settlement-backfill": cmd_settlement_backfill,
+        "settlement-import":   cmd_settlement_import,
+        "settlement-export":   cmd_settlement_export,
     }[args.cmd](args)
 
 

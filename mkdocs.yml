@@ -104,6 +104,7 @@ nav:
     - Web API: miniqmt/web-api.md
     - 无人值守运行: miniqmt/unattended.md
     - 数据库表结构: miniqmt/database.md
+    - 交割单数据管道: miniqmt/settlement-export.md
     - 测试框架: miniqmt/testing.md
     - 常见问题: miniqmt/faq.md
 

@@ -119,3 +119,6 @@ test/smoke_*.py
 
 # test_trader_callback 用 easy_qmt_trader(path="dummy") 产生的 QMT 队列副产物
 dummy/
+
+# 交割单导出产物（含账号级财务数据，绝不入库）
+export/

@@ -6,7 +6,62 @@
 
 ## [Unreleased]
 
+## [3.9.1] - 2026-09-12
+
+> 本版本以**交割单数据管道**为主线：把归因所需的一切（交易所成交时间、真实手续费来源、
+成交编号语义、持仓快照、每日净值）改为**在成交当下落库**，导出退化为纯 SELECT；
+同时收录 v3.9.0 后主干上的终端刷屏三层防御与买入委托超时撤单反向卖出修复。
+发布前经用户复核并按 P0/P1/P2 清单逐条整改，其中 **P0-1 的 deal 唯一键**在整改过程中
+又暴露出一个**自己引入的丢单缺陷**（见 Fixed 首条）——该条是本次发布最值得记录的部分。
+
 ### Fixed
+- **【本次发布最值得记录】deal 唯一键整改中引入的静默丢单缺陷**（2026-09-12 自测发现，未进生产）：
+  按复核要求重写唯一键时，我用 `COALESCE(deal_time, recorded_at, 0)` 做时间分量兜底——
+  **`recorded_at` 是落库时刻，不是成交属性**。后果是同一秒落库的两笔**不同**成交会撞键，
+  被 `INSERT OR IGNORE` 静默丢弃。更隐蔽的是：由于反查冲突行时用的是 `trade_time`
+  而索引用的是 `recorded_at`，两者对不上导致**连冲突检测本身都失效**，
+  直接落进"判为重复"分支。实测复现：写入 `volume=100` 后，写入同键但 `volume=200`
+  的另一笔，返回 `duplicate`，第二笔**凭空消失**。
+  - 修复分两层：① 时间兜底改用**成交自身的属性** `trade_time`；② `rowcount=0`
+    **不再直接判重复**，而是比对冲突行——内容相同才算重复投递，内容不同则落
+    `run_events(deal_key_collision)` 并**强制写入**（trade_id 加后缀，原编号保留在 `fill_ids`）。
+    实测：重复投递被拒，价量/方向不同的三笔全部保留，4 行不多不少。
+  - **该缺陷恰好复刻了复核担心的场景**，也印证了"加唯一索引只是兜底，防丢单必须靠比对"。
+
+- **全零净值被当作有效数据落库**（2026-09-12 上线后实测，P0）：QMT 未连接时 `balance()`
+  返回整行 0，被以 `source='qmt_api'` 写入 `account_equity_daily`。**资产恒等式校验拦不住它**
+  ——`0 == 0+0+0` 恒成立，校验"通过"且无任何告警。更糟的是它**每 30 分钟复发一次**：
+  18:49 收盘快照写一条、19:19 心跳采样又写一条。现 `total_asset <= 0` 或四项全零一律拒写，
+  落 `run_events(asset_write_failed, reason=invalid_asset_reading)`。
+  已删除库中残留行（先备份到 `data/backup/migrations/`）。
+
+- **非交易日仍写收盘快照**（2026-09-12 上线后实测）：门控写作 `trading or not confident`。
+  周六 9/12 判定为 `(False, False)`——非交易日但"不确信"（当天 K 线未入库），
+  结果 `not confident` 放行。该降级本意是"当天 K 线没入库时别漏写"，却把周末一并放过。
+  现抽成纯函数 `should_run_close_snapshot()` 并**显式排除周末**，8 个用例覆盖各种日期组合。
+
+- **模拟成交被标成实盘、且与实盘同表**（2026-09-12 复核发现）：迁移给 `is_simulation` 加了
+  `DEFAULT 0`，而回填脚本**从未回填该列**，历史模拟单因此全部标成实盘。这违反"模拟单不得
+  与实盘同表"的硬性要求——下游只要按 `is_simulation` 过滤，模拟成交就会混进实盘归因。
+  现补 `backfill_is_simulation()`，并新增 `relocate_simulated_rows()` **物理迁移**到
+  `trade_records_sim`（只改标志不够，行留在实盘表里任何不过滤的查询照样会算进去）。
+  实测 25106531 库 15 行 → 12 行 + 3 行入独立表。
+
+- **导出脚本在未迁移库上崩溃**（`Incorrect number of bindings supplied`）：`load_trades()`
+  在 `account` 列不存在时不加 WHERE 条件，却照样往 `params` 塞参数。**该缺陷只在未迁移的
+  库上触发**——此前全部测试都跑在已迁移库上，恰好避开。已补 `TestUnmigratedDatabase`
+  三个回归用例覆盖原始 schema。同类问题还有 `commission_source` 段落：区间内无成交时打印
+  "尚未扩展（列不存在）"，把"没有数据"误报成"没迁移"，**把阅读报告的人（包括我）
+  误导过一次**，现分开表述。
+
+- **`--dry-run` 实际写了库**：`CREATE TABLE` / `ALTER TABLE` 在 SQLite 里是**隐式提交的
+  DDL**，靠末尾 `rollback()` 撤不回来。当时 `--dry-run` 把 3 张表建到了 3 个生产库上。
+  现改为在 `tempfile` 副本上真跑，并加回归测试锁死该行为。
+
+- **`_rebuild_table` 会裸 DROP 生产表**（既有缺陷，本次加守卫）：`data_manager.py` 每次启动
+  `PRAGMA quick_check` 失败即对 `trade_records` / `positions` 执行"内存 fetchall → DROP →
+  重建"，无备份、无人工确认；`grid_database.py` 另有一处会丢全部历史网格成交。
+  加了 `assert_test_db()` 守卫，生产库改为告警引导 `.recover`。
 - **终端刷屏可反噬进程致死，加三层防御**（2026-09-10，针对 Windows Terminal 自身缺陷的鲁棒性设计）：2026-09-09 的进程静默死亡已确认**根因不在本项目**——`WindowsTerminal.exe` 占用 **27.8GB** 打爆 24.8GB 系统提交上限（Windows 事件 ID 2004 连报三次），miniQMT 连 1MB 线程栈都提交不到，抛 `can't start new thread`。[microsoft/terminal#8283](https://github.com/microsoft/terminal/issues/8283) 记录了同型模式（每 10ms 回移光标打印 → 内存以 0.1MB/10s 增长，根因是 VT parser 的 ETW tracing vector 无限膨胀），[#768](https://github.com/microsoft/terminal/issues/768) 指出持续刷屏的应用触发最激进增长。**我们无法修复终端，只能控制喂给它的量**。
   - **量化先于设计**：统计实际日志密度发现稳态仅 **0.01~0.08 行/秒**、启动瞬间峰值约 140 行/秒——**日志从来不是主因**。真正的大头是 [main.py](main.py) 的 spinner：每 0.25 秒写一次 stdout，138 小时累计约 **199 万次**，是同期日志行数的 **58 倍**。泄漏与写入**次数**相关而非字节数，这决定了优化必须打在 spinner 上。
   - **L1 源头减量**：`SPINNER_INTERVAL = 1.0`（原硬编码 0.25 秒），写入次数直降 75%（199 万 → 50 万）。
@@ -44,12 +99,76 @@
   - `PositionManager._record_external_trade_after_callback()` 的补账日志硬编码 `strategy=external`，而该值只是 `order_info` 的**兜底**：`_build_trade_record_from_deal()` 的策略优先级为 `order_cache > fallback_order_info > ...`，本机委托一律命中下单缓存。又因买入委托不进 `pending_orders`（那里只跟踪卖出超时），**手动买入必然走此分支**——001288 实测日志报 `strategy=external`，落库却是正确的 `M_real` 且无重复流水，日志与事实相反，易被误判为记账错误。改为说明「落库策略以下单缓存为准，缺失时才记为 external」，docstring 同步修正（原文「非本机发单」不准确）。前缀 `[外部成交]` 与方法名保持不变，避免牵连另外两处调用点。
 
 ### Changed
+- **`snapshot_type` 收敛为 `open`(09:25) / `close`(15:05) 两种**，删除 `intraday`：
+  它既把"QMT 未连接时的全零读数"引入了库里，又与 open/close 语义重叠，徒增噪声。
+  心跳采样入口同步移除。
+- **账号标识脱敏且跨交付稳定**：导出报告与 CSV 使用 `账户A(***5132)` 形式
+  （按账号 ID 排序编号，同一账号在任何一次导出里都得到同一标签），报告附映射表。
+- **交割单 CSV 追加 3 个诊断列**：`time_source` / `order_id` / `row_status`。前 14 列契约
+  不变、顺序不变，诊断列追加在后（按列名读取，多列不影响既有分析），便于逐月自查
+  哪些时间是真实成交时间。
+- **`positions_end` 优先取区间内快照**，不再用会被覆盖的 `positions` 表当前值；必须限定
+  `snapshot_date >= start`——否则区间开始之前的快照会被当成期末，期初与期末是同一份数据，
+  闭合判定必然失败。
+- 导出报告新增：实际首末成交（文件名同步改用实际区间）、`trade_id` 唯一性检查
+  （分长度统计 + 重复组 + 跨标的重复组）、`commission_source` 实打实分布、
+  券商对账单未匹配清单与按可操作性分类的原因、已处置重复行清单，以及
+  `changelog_since_last_export.txt`（逐行列新增/修改/删除 + 字段 + 旧值→新值）。
 - **止盈委托超时阈值由 5 分钟收紧至 30 秒**，与止损对齐：新增 `TAKE_PROFIT_PENDING_ORDER_TIMEOUT_MINUTES = 0.5`，覆盖 `take_profit_half` / `take_profit_full`；`stop_loss`(0.5) 与其他信号(`add_position` 等，仍走 5 分钟兜底) 阈值不变。
   - **动机是 2026-09-02 实盘实测滑点约 455 元**：09:58 603757 触发回撤止盈，以对手价算出 72.56 后按限价提交——`price_type=5` 的语义是“下单前算出买三价、再按**限价**挂”，并非交易所市价单，因此价格一走开即成空转挂单；5.2 分钟后超时撤单，重挂时买三价已跌至 71.48，成交于 71.65，单价差 0.91 元 × 500 股。
   - 止盈与止损同属“信号已触发、要求确定性离场”，此前却用了 **10 倍于止损**的容忍窗口（网格为 90 秒）。
   - ⚠️ **实际生效粒度为 30~60 秒**：超时检查由 `PositionManager.order_check_interval`（硬编码 30 秒）轮询驱动，止损的 0.5 分钟一直同样受此限制，两者行为一致。相比原先的 300~330 秒仍改善约 6 倍。
 
 ### Added
+- **交割单数据管道**（归因/对账基础设施，本次发布主体）：此前导出交割单只能"抢救式重建"，
+  暴露出三个硬伤——`trade_time` 全是本地 `datetime.now()`（280 条无一条来自 QMT）、
+  `commission` 无真实值、51 只股票中 38 只"卖出多于买入"无法配对。根因是归因字段
+  **从未在成交当下写入**，事后无从恢复。
+  - **`trade_records` 扩展 17 列**：`account` / `deal_time` / `deal_time_str` / `recorded_at` /
+    `time_source` / `order_id` / `fill_ids` / `fills` / `strategy_code` / `strategy_label` /
+    `is_simulation` / `commission_source` / `commission_rate` / `side_source` /
+    `row_status` / `duplicate_of` / `trade_id_source`。迁移只用 `ALTER TABLE ADD COLUMN`
+    逐列探测（`commission` 建表时已存在，规格里那条 ALTER 会直接报 duplicate column）。
+  - **新增 6 张表**：`position_snapshot`（每交易日 09:25/15:05 全量持仓）、
+    `account_equity_daily`（每日净值 + 恒等式校验）、`run_events`（结构化事件）、
+    `trade_records_sim`（模拟成交独立表）、`broker_deals` / `broker_orders`（对账单原始数据）。
+    `positions` 是"当前持仓"会被覆盖写、**不能当历史用**，这是对账基准必须独立成表的根本原因。
+  - **成交写入收敛为单一 helper `settlement_db.record_trade()`**：原先 8 处各自 INSERT，
+    现统一走这一入口，用 `INSERT OR IGNORE` + 唯一索引做**原子**幂等。
+  - **`time_source` 四态语义**：`exchange`（QMT 成交回报自带 `traded_time`）/
+    `local_fallback`（取不到，如实标注）/ `reconcile_backfill` / `broker`（对账单回填）。
+    取不到交易所时间时**绝不用 `now()` 冒充**——那正是上一轮交割单最致命的问题。
+    `XtTrade.traded_time` 实测有三种编码（epoch 秒/毫秒、`yyyymmddHHMMSS`、`HHMMSS`），
+    解析不出即标 `local_fallback` 并告警。
+  - **券商对账单导入**（`broker_import.py` + `scripts/import_broker_statement.py`）：
+    QMT 的 xttrader **没有任何历史成交查询接口**（`query_stock_trades` 只返回当日），
+    对账单是历史成交时间的**唯一**来源。三级匹配：成交编号 → 订单编号+代码 → 价量+时间邻近。
+    实测 2026-09-11 的对账单 **13/13 全部命中**（11 笔成交编号精确、2 笔订单号带代码消歧），
+    并修正了 id=797 本地记录的 2 秒误差（`13:00:02` → 真实成交 `13:00:00`）。
+  - **历史回填**（`scripts/backfill_trade_records.py`）：`time_source` 一律标 `local_fallback`
+    （**绝不伪装 `exchange`**）；手续费按证据判定——可证实等于旧代码 `amount×0.0003` 的
+    用现行税费重算并标 `estimated`，来源不明的保留原值标 `unknown`；映射不到的
+    `strategy_label` 写 `UNKNOWN` 而非留空。幂等，可重复执行。
+  - **导出脚本重写**（`scripts/export_settlement.py`）：只读、不依赖 `logs/*.log`
+    （日志会滚动，不是数据源）；`merge_deals()` 合并规则**单点实现**（10 秒窗口、不跨日界）；
+    **禁止剔除任何股票**，不平的逐只列明原因。`positions_begin` 无快照时**写 `BLOCKER`
+    行并以退出码 2 报错**，绝不用 0 填充——否则会把"缺数据"伪装成"期初空仓"，
+    正是上一轮 162 笔买入缺口被掩盖的原因。
+  - **交易日历用 `stock_daily_data` 反推**：仓库原本只按周一至周五判断
+    （`utils.get_trading_days` 注释直认"忽略了节假日"），长假会产生 5~9 个连续误报。
+
+- **总控制台分页菜单**（`miniqmt.bat` → `scripts/_launcher.py menu`）：原先 8 个分区共 27 项
+  一屏装不下。现首页只保留**日常运行**（查看/启动/停止，按键 5-9/a-c **一个没动**），
+  其余折叠为 `[1] 环境与部署` / `[2] 服务管理` / `[3] 数据与配置` 三个二级页。
+  二级页内 `[b]` 或**回车**返回，`[q]` 任何页都可退出，标题栏显示当前页名。
+  首页底部新增账号运行摘要（有缓存，仅在可能改变状态的操作后重新采集）。
+  - 实现上有个关键点：各页按键**天然不重叠**（env 用 0-4 / 首页用 5-9,a-c /
+    services 用 d-m / data 用 n-p,r-u），因此**原有分派链一行未改**，只在入口加
+    「首页 1/2/3 改判导航」+「按页校验按键」两道守卫，改动面最小。
+  - 顺带修正：以前在任何页面输入非法键只会静默重绘，现在会提示。
+  - 交割单四项操作落在 `[3] 数据与配置` 页，其中 `[r][s][t]` 会改写 `trade_records`，
+    菜单内置**停机守卫**（有账号运行则拒绝执行），且强制先跑 dry-run 预演、
+    需输入 `yes` 才正式执行。
 - **系统心跳新增线程数与内存指标**（2026-09-09 日志审查后补，纯可观测性）：当日 16:25 主进程在连续运行 **138 小时**后抛 `RuntimeError: can't start new thread`（`data_manager.get_latest_xtdata` 提交线程池任务时），随后 3 小时**无任何日志、心跳全停**，直到 19:20 手工重启——属进程级静默死亡，`thread_monitor` 对此无能为力（它只能重启线程，不能重启进程）。事后排查发现**没有任何指标可用于归因**：`timeout_utils` 的泄漏计数本运行周期仅告警 5 次，[data_manager.py](data_manager.py) 的 9 处 `ThreadPoolExecutor` 均已 `shutdown(wait=False)`，无法区分线程泄漏与内存耗尽。现在心跳每 30 分钟输出一行 `线程数:N | 内存:RSS xxxMB / VMS xxxMB`，两条曲线足以分辨故障类型（线程数单调上升=线程泄漏；线程数平稳而 RSS/VMS 增长=内存泄漏）。
   - 新增独立函数 `main._format_resource_line()`，**未改动 `_format_heartbeat_status_lines()` 的二元组返回签名**——既有用例按 `status_line, grid_line = ...` 解包，加行会直接解包失败。
   - `utils.memory_usage()` 补 Win32 回退：**psutil 既未安装也不在 [utils/requirements.txt](utils/requirements.txt) 中**，原实现在缺失时只打一句 warning 返回 `None`，不补回退则该指标永远是「获取失败」。回退走 `kernel32.K32GetProcessMemoryInfo`，零新依赖，口径与 psutil 对齐（`WorkingSetSize`→rss、`PagefileUsage`→vms，实测两者差异 <0.5%）。**必须显式声明 `GetCurrentProcess.restype = wintypes.HANDLE`**——默认 `c_int` 会在 64 位下截断伪句柄 `-1`，第一版因此实测返回 `None`。psutil 若日后装上则优先使用。
@@ -59,6 +178,19 @@
 - `scripts/restore_line_endings.py`：还原被编辑器规范化的行尾分布。本仓库 HEAD 中多数文件为 **CRLF/LF 混合**行尾且 `core.autocrlf=false`，编辑器保存会把整个文件统一为纯 CRLF，导致 `git diff` 显示全文件重写（本次 `position_manager.py` 一度显示 2728 行改动、`web1.0/script.js` 489 行）。脚本以“去掉行尾后的内容”为基准做 `difflib` 比对，`equal` 块取 HEAD 原始行、改动块沿用上下文行尾，并带正文一致性断言防止误改代码。
 
 ### Tests
+- 新增 7 个测试模块（均注册进 `fast` 快速子集与对应测试组）：
+  `test_settlement_db`（快照/净值/run_events/交易日历/成交统一入口/模拟隔离/deal 键防丢单）、
+  `test_grid_deal_time_source`（网格 `time_source` 透传）、
+  `test_export_settlement`（合并规则/14 列契约/缺快照报错/幂等 sha256/changelog diff）、
+  `test_broker_import`（GBK 解析/三级匹配/回填决策）、
+  `test_backfill_trade_records`（手续费来源判定/幂等/不伪装 exchange/模拟单迁移）、
+  `test_data_pipeline_e2e`（**Mock 全链路**：成交→落库→快照→对账单导入→导出，逐只股数闭合=0）、
+  `test_launcher_menu_pages`（**管道喂输入跑真实子进程**验证分页菜单渲染与导航路由）。
+- 发布验证：2026-09-12 使用 `python39` 执行 `test/run_integration_regression_tests.py
+  --all-with-fast` 完整回归，**36 组、146 模块、3126 用例，3126 通过，0 失败，0 错误，
+  0 跳过，成功率 100%**。
+- 明确边界：`test_data_pipeline_e2e` 用 Mock 数据，**不能作为实盘验收证据**——它能证明
+  解析/落库/回填/导出/合并各环节正确，证明不了 QMT 真的提供了 `traded_time`。
 - `test/test_runtime_logging.py` 新增 `TestConsoleRateLimit` 4 例 + `TestSpinnerInterval` 1 例：**控制台被限速时文件 handler 仍收到全部 200 条**（方案核心承诺，单独立例）、默认 `burst` 容得下 140 行/秒的启动峰值且不出现限速提示、抑制计数在恢复输出时如实汇总、`rate=0` 关闭限速；spinner 按 `config.SPINNER_INTERVAL` 取间隔且 patch 后正确还原。
   - **变异验证**：将 `_take_token()` 改为永远放行后重跑，`test_file_output_is_never_throttled` 与 `test_suppressed_total_is_reported_after_refill` 双双失败，确认两例确实在检验限速而非陪跑；变异已还原。
   - ⚠️ **修掉一个自己写出的 flaky**：抑制计数用例初版靠 `time.sleep(0.05)` 等令牌按真实速率补充，首次运行即随机失败（循环自身耗时会让补充量浮动）。改为手动回填 `_tokens`，去掉时序依赖后连跑 5 次全绿。
@@ -73,6 +205,15 @@
 - 完整回归：2026-09-03 使用 `python39` 环境执行 `test/run_integration_regression_tests.py --all-with-fast`，**35 组、2638 用例，2638 通过，0 失败，0 错误，0 跳过，成功率 100%**。
 
 ### Docs
+- **新增 `docs/site/miniqmt/settlement-export.md`**：交割单数据管道完整说明
+  （设计动机、表结构、`time_source` 语义、对账单导入、历史回填、导出与自检、上线顺序、已知边界）。
+- `docs/site/miniqmt/database.md`：新增 6 张表的结构与用途，`trade_records` 补 17 个扩展列。
+- `docs/site/miniqmt/testing.md`：更新回归统计至 36 组 / 146 模块 / 3126 用例。
+- `docs/site/miniqmt/configuration.md`：新增 `SETTLEMENT_*` 配置组，说明快照类型已收敛为两种。
+- `docs/site/miniqmt/web-frontend.md`：新增总控制台分页菜单说明。
+- `README.md` / `QUICK_START.md` / `CLAUDE.md` / `ARCHITECTURE.md`：同步版本号、测试统计与新增模块。
+- 新增 `ACCEPTANCE.md`：逐条记录验收项状态、复核问题处置（P0/P1/P2），以及两次
+  "上线后实测发现自身缺陷"的完整经过与修复依据。
 - `CLAUDE.md`：`trade_records.strategy` 取值清单补全（原清单漏 `add_position` 与三个 `reorder_*`），并写明 `reorder_*` 由 `_reorder_after_cancel()` 动态拼接产生——新增卖出信号类型时，三处标签表需同步补 `reorder_` 前缀的键，否则前端会回退显示英文原始值。
 - `docs/site/miniqmt/configuration.md`：补 `TAKE_PROFIT_PENDING_ORDER_TIMEOUT_MINUTES`；修正 `PENDING_ORDER_TIMEOUT_MINUTES` 的描述——它不再是“普通止盈委托超时阈值”，而是 `add_position` 等未单列阈值信号的兜底值。
 
@@ -687,7 +828,8 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.0...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.1...HEAD
+[3.9.1]: https://github.com/weihong-su/miniQMT/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/weihong-su/miniQMT/compare/v3.8.9...v3.9.0
 [3.8.9]: https://github.com/weihong-su/miniQMT/compare/v3.8.8...v3.8.9
 [3.8.8]: https://github.com/weihong-su/miniQMT/compare/v3.8.7...v3.8.8
