@@ -58,6 +58,7 @@ pip install -r utils/requirements.txt
 5. **双层存储同步**: 修改内存数据库后必须调用 `_increment_data_version()`
 6. **线程注册规范**: 注册线程监控时必须使用 `lambda` 获取线程对象(见下文)
 7. **Git操作**: 除非用户明确要求,不要主动执行git提交和分支操作
+8. **行尾规范**: 仓库统一 LF，`.bat`/`.cmd`/`.ps1` 为 CRLF，由 [.gitattributes](.gitattributes) 锁定。批量改文件时用 `open(p, newline='')` 读写以保留行尾，**不要让编辑器整体规范化**——否则 `git diff` 会显示全文件重写、淹没真实改动
 
 ## 快速开始
 

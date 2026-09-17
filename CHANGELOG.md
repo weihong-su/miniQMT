@@ -53,6 +53,18 @@
   关键字参数名保持不变（`trade_id=trade_id` → `trade_id=order_id`），**行为零变化**；
   `handle_deal_callback` 因同作用域内并存两种语义，本次未改名。
 
+- **统一仓库行尾为 LF，并新增 `.gitattributes` 锁定规则**：此前仓库是 CRLF/LF 混合
+  （421 纯 LF / 47 纯 CRLF / 21 个文件内部混合），`core.autocrlf=false`。任何编辑器或
+  工具一旦把某个文件整体规范化，`git diff` 就会显示全文件重写、淹没真实改动 ——
+  这个坑在日常改动中反复踩到。
+
+  本次把 67 个文件转为 LF、4 个 `.bat` 归一为 CRLF（`cmd.exe` 解析 LF 行尾的批处理在
+  `goto`/label 等场景有已知问题，故 `.gitattributes` 显式保留 CRLF）。
+  `xtquant/` 等 vendored 目录与二进制文件不动。
+
+  该提交是**纯行尾变更**：`git diff --ignore-all-space` 为空，68 个文件
+  43111 增 / 43111 删完全对称，286 个 `.py` 文件语法校验全部通过。
+
 > 本次只改日志文案与语义错误的局部变量名，**未改动任何交易逻辑**。
 > 全量集成回归测试通过。日志术语规范已写入 [CLAUDE.md](CLAUDE.md) 开发规范一节。
 

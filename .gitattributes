@@ -1,0 +1,33 @@
+# 仓库行尾规范：统一为 LF，Windows 批处理除外
+#
+# 背景：此前仓库是 CRLF/LF 混合（421 纯LF / 47 纯CRLF / 21 混合），
+# core.autocrlf=false。编辑器或工具一旦把某个文件整体规范化，git diff
+# 就会显示全文件重写，淹没真实改动。此文件锁死规则，防止复发。
+#
+# .bat/.cmd 保持 CRLF：cmd.exe 解析 LF 行尾的批处理在 goto/label 等场景
+# 有已知问题，改动可能让 miniqmt.bat 控制台异常。
+
+* text=auto eol=lf
+
+# Windows 批处理必须保持 CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制文件不做任何行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.xlsx  binary
+*.xls   binary
+*.db    binary
+*.pyd   binary
+*.dll   binary
+*.so    binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
