@@ -6,6 +6,56 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **交易日志 ID 术语统一**（2026-09-17）：同一笔交易里同一个值曾被标成 4 种不同的 key
+  （`订单号=` / `委托号:` / `order_id=` / `trade_id=`，实测值均为 `403701761`），
+  排查实盘问题时无法确定哪个是哪个。本次按 QMT 官方
+  [xtquant/xttype.py](xtquant/xttype.py) 的字段定义收敛为五个互斥术语：
+
+  | 变量 | 统一为 | 统一前的叫法 |
+  |------|-------|------------|
+  | `seq` | `请求序号=` | 请求序号 / `seq=` |
+  | `order_id` | **`委托号=`** | 订单号 / 委托号 / 订单编号 / `order_id=` / `trade_id=` |
+  | `order_sysid` | `柜台编号=` | **系统订单号**（与「订单号」撞车） |
+  | `traded_id` | `成交编号=` | — |
+  | `trade_records.trade_id` | `流水号=` | `trade_id=` |
+
+  其中 `order_sysid` 的旧名「系统订单号」与 `order_id` 的「订单号」只差两字却是完全不同的
+  东西，两者在同一行日志里并排出现过（`订单号=403701761` 与 `系统订单号=8429`）。
+
+  网格路径下 11 处 `trade_id=` 按语义做了分流：下单路径 6 处实为委托号（根因是
+  `grid_trading_manager.handle_deal_callback` 写库时用的就是 `trade_id=str(order_id)`），
+  落库路径 3 处标 `流水号=`，成交回调内 2 处是真成交号标 `成交编号=`。
+
+- **交易日志可读性优化**：
+  - 去掉 155 条 info/warning/error 日志正文里的内部函数名前缀
+    （`[GRID] execute_grid_trade:` 这类），`debug` 级保留以便排障；
+    顺带修正了 `grid_trading_manager.py` 中一处前缀与所在函数不符的错误
+  - `[GRID]` → `[网格]`、`[GRID-DB]` → `[网格库]`、`[GRID-STRATEGY]` → `[网格-策略]`
+  - 交易方向的 4 种写法（`signal_type=SELL` / `side=SELL` / `trade_type=SELL` /
+    `confirmed SELL`）统一为 `方向=卖出`
+  - 委托状态码中文化：`委托状态=50` → `委托状态=已报(50)`
+  - **价格标注语义**：同一笔交易里的三个不同价格（滑点后委托价 68.96 / 记录价 68.97 /
+    成交价 69.09）此前都只标注为「价格」，现分别标为
+    `委托价=` / `成交价=` / `触发价=` / `档位价=` / `均价=`
+  - 每笔网格交易都会打印的 `signal={整个dict}`（单行 300+ 字符，含
+    `callback_ratio: 0.003461704889658083` 这类未格式化浮点）瘦身为 5 个关键字段
+
+- **新增共用常量**（[config.py](config.py)）：`ORDER_STATUS_LABELS`（委托状态码→中文）与
+  `TRADE_SIDE_LABELS`（BUY/SELL→中文）。前者此前在
+  [trading_executor.py](trading_executor.py) 中重复定义了两份完全相同的字典。
+
+- **局部变量重命名**：`grid_trading_manager.py` 的 `_execute_grid_buy` /
+  `_execute_grid_sell` / `execute_grid_trade` / `_reorder_grid_order_after_cancel` /
+  `_mark_order_accepted_unlocked` 五个作用域内，名为 `trade_id` 但实际存放委托号的局部变量
+  改名为 `order_id`（共 37 处，按 AST 函数边界精确定位）。
+  关键字参数名保持不变（`trade_id=trade_id` → `trade_id=order_id`），**行为零变化**；
+  `handle_deal_callback` 因同作用域内并存两种语义，本次未改名。
+
+> 本次只改日志文案与语义错误的局部变量名，**未改动任何交易逻辑**。
+> 全量集成回归测试通过。日志术语规范已写入 [CLAUDE.md](CLAUDE.md) 开发规范一节。
+
 ## [3.9.2] - 2026-09-14
 
 > 本版本是一次**故障驱动**的修复：v3.9.1 上线后实盘出现持续 `database is locked`，

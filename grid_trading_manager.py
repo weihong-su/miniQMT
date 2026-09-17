@@ -80,13 +80,13 @@ class GridSession:
         """
         # max_investment为0说明配置异常，返回0.0
         if self.max_investment <= 0:
-            logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+            logger.debug(f"[网格] get_profit_ratio: stock_code={self.stock_code}, "
                         f"session_id={self.id}, max_investment={self.max_investment}, 返回0.0")
             return 0.0
 
         # 无任何交易时返回0.0（中性状态）
         if self.total_buy_amount == 0 and self.total_sell_amount == 0:
-            logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+            logger.debug(f"[网格] get_profit_ratio: stock_code={self.stock_code}, "
                         f"session_id={self.id}, 无交易记录, 返回0.0")
             return 0.0
 
@@ -96,7 +96,7 @@ class GridSession:
         # 盈亏率 = 网格累计利润 / 最大投入额度
         ratio = grid_profit / self.max_investment
 
-        logger.debug(f"[GRID] get_profit_ratio: stock_code={self.stock_code}, "
+        logger.debug(f"[网格] get_profit_ratio: stock_code={self.stock_code}, "
                     f"session_id={self.id}, sell={self.total_sell_amount:.2f}, "
                     f"buy={self.total_buy_amount:.2f}, grid_profit={grid_profit:.2f}, "
                     f"max_investment={self.max_investment:.2f}, ratio={ratio*100:.2f}%")
@@ -125,7 +125,7 @@ class GridSession:
             grid_profit = self.total_sell_amount - self.total_buy_amount
             ratio = grid_profit / position_market_value
             logger.debug(
-                f"[GRID] get_profit_ratio_by_market_value: stock_code={self.stock_code}, "
+                f"[网格] get_profit_ratio_by_market_value: stock_code={self.stock_code}, "
                 f"grid_profit={grid_profit:.2f}, volume={position_volume:.0f}, "
                 f"price={current_price:.2f}, market_value={position_market_value:.2f}, "
                 f"ratio={ratio*100:.2f}%"
@@ -133,7 +133,7 @@ class GridSession:
             return ratio
         # 降级：无有效持仓数据，回退到 max_investment 分母
         logger.debug(
-            f"[GRID] get_profit_ratio_by_market_value: 无有效持仓(volume={position_volume}, "
+            f"[网格] get_profit_ratio_by_market_value: 无有效持仓(volume={position_volume}, "
             f"price={current_price:.2f}), 降级为get_profit_ratio()"
         )
         return self.get_profit_ratio()
@@ -162,12 +162,12 @@ class GridSession:
             true_pnl = realized + unrealized
             if self.max_investment <= 0:
                 logger.debug(
-                    f"[GRID] get_true_pnl_ratio: max_investment=0, return 0.0"
+                    f"[网格] get_true_pnl_ratio: max_investment=0, return 0.0"
                 )
                 return 0.0
             ratio = true_pnl / self.max_investment
             logger.debug(
-                f"[GRID] get_true_pnl_ratio: stock_code={self.stock_code}, "
+                f"[网格] get_true_pnl_ratio: stock_code={self.stock_code}, "
                 f"realized={realized:.2f}, unrealized={unrealized:.2f}, "
                 f"true_pnl={true_pnl:.2f}, open_vol={open_volume}, "
                 f"price={current_price:.2f}, ratio={ratio*100:.2f}%"
@@ -175,7 +175,7 @@ class GridSession:
             return ratio
         # Fallback: old session without volume tracking
         logger.debug(
-            f"[GRID] get_true_pnl_ratio: no volume data, "
+            f"[网格] get_true_pnl_ratio: no volume data, "
             f"fallback to get_profit_ratio_by_market_value"
         )
         return self.get_profit_ratio_by_market_value(position_volume, current_price)
@@ -192,11 +192,11 @@ class GridSession:
     def get_deviation_ratio(self) -> float:
         """计算当前偏离度"""
         if self.center_price == 0 or self.current_center_price == 0:
-            logger.debug(f"[GRID] get_deviation_ratio: stock_code={self.stock_code}, session_id={self.id}, "
+            logger.debug(f"[网格] get_deviation_ratio: stock_code={self.stock_code}, session_id={self.id}, "
                         f"center_price={self.center_price}, current_center={self.current_center_price}, 返回0.0")
             return 0.0
         deviation = abs(self.current_center_price - self.center_price) / self.center_price
-        logger.debug(f"[GRID] get_deviation_ratio: stock_code={self.stock_code}, session_id={self.id}, "
+        logger.debug(f"[网格] get_deviation_ratio: stock_code={self.stock_code}, session_id={self.id}, "
                     f"center={self.center_price:.2f}, current={self.current_center_price:.2f}, deviation={deviation*100:.2f}%")
         return deviation
 
@@ -208,7 +208,7 @@ class GridSession:
             'center': center,
             'upper': center * (1 + self.price_interval)
         }
-        logger.debug(f"[GRID] get_grid_levels: stock_code={self.stock_code}, session_id={self.id}, "
+        logger.debug(f"[网格] get_grid_levels: stock_code={self.stock_code}, session_id={self.id}, "
                     f"center={center:.2f}, interval={self.price_interval*100:.1f}%, "
                     f"lower={levels['lower']:.2f}, upper={levels['upper']:.2f}")
         return levels
@@ -228,7 +228,7 @@ class PriceTracker:
     def update_price(self, new_price: float):
         """更新价格并追踪峰谷值"""
         self.last_price = new_price
-        logger.debug(f"[GRID] PriceTracker.update_price: session_id={self.session_id}, new_price={new_price:.2f}, "
+        logger.debug(f"[网格] PriceTracker.update_price: session_id={self.session_id}, new_price={new_price:.2f}, "
                     f"waiting_callback={self.waiting_callback}, direction={self.direction}")
 
         if self.waiting_callback:
@@ -236,15 +236,15 @@ class PriceTracker:
             old_valley = self.valley_price
             if self.direction == 'rising' and new_price > self.peak_price:
                 self.peak_price = new_price
-                logger.debug(f"[GRID] PriceTracker: 更新峰值 {old_peak:.2f} -> {new_price:.2f}")
+                logger.debug(f"[网格] PriceTracker: 更新峰值 {old_peak:.2f} -> {new_price:.2f}")
             elif self.direction == 'falling' and new_price < self.valley_price:
                 self.valley_price = new_price
-                logger.debug(f"[GRID] PriceTracker: 更新谷值 {old_valley:.2f} -> {new_price:.2f}")
+                logger.debug(f"[网格] PriceTracker: 更新谷值 {old_valley:.2f} -> {new_price:.2f}")
 
     def check_callback(self, callback_ratio: float) -> Optional[str]:
         """检查是否触发回调,返回信号类型"""
         if not self.waiting_callback:
-            logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, 未等待回调, 返回None")
+            logger.debug(f"[网格] PriceTracker.check_callback: session_id={self.session_id}, 未等待回调, 返回None")
             return None
 
         # 浮点数容差:仅用于补偿浮点计算误差
@@ -255,36 +255,36 @@ class PriceTracker:
 
         if self.direction == 'rising':
             if self.peak_price == 0:
-                logger.warning(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, peak_price=0, 返回None")
+                logger.warning(f"[网格] session_id={self.session_id}, peak_price=0, 返回None")
                 return None
             ratio = (self.peak_price - self.last_price) / self.peak_price
-            logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, direction=rising, "
+            logger.debug(f"[网格] PriceTracker.check_callback: session_id={self.session_id}, direction=rising, "
                         f"peak={self.peak_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.4f}%, "
                         f"threshold={callback_ratio*100:.2f}%")
             # 使用容差比较：ratio >= callback_ratio - FLOAT_TOLERANCE
             if ratio >= (callback_ratio - FLOAT_TOLERANCE):
-                logger.debug(f"[GRID] PriceTracker.check_callback: 触发SELL信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
+                logger.debug(f"[网格] PriceTracker.check_callback: 触发SELL信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
                 return 'SELL'
 
         elif self.direction == 'falling':
             if self.valley_price == 0:
-                logger.warning(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, valley_price=0, 返回None")
+                logger.warning(f"[网格] session_id={self.session_id}, valley_price=0, 返回None")
                 return None
             ratio = (self.last_price - self.valley_price) / self.valley_price
-            logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, direction=falling, "
+            logger.debug(f"[网格] PriceTracker.check_callback: session_id={self.session_id}, direction=falling, "
                         f"valley={self.valley_price:.2f}, last={self.last_price:.2f}, ratio={ratio*100:.4f}%, "
                         f"threshold={callback_ratio*100:.2f}%")
             # 使用容差比较：ratio >= callback_ratio - FLOAT_TOLERANCE
             if ratio >= (callback_ratio - FLOAT_TOLERANCE):
-                logger.debug(f"[GRID] PriceTracker.check_callback: 触发BUY信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
+                logger.debug(f"[网格] PriceTracker.check_callback: 触发BUY信号 (ratio={ratio:.6f}, threshold-tolerance={callback_ratio - FLOAT_TOLERANCE:.6f})")
                 return 'BUY'
 
-        logger.debug(f"[GRID] PriceTracker.check_callback: session_id={self.session_id}, 未触发信号")
+        logger.debug(f"[网格] PriceTracker.check_callback: session_id={self.session_id}, 未触发信号")
         return None
 
     def reset(self, price: float):
         """重置追踪器"""
-        logger.debug(f"[GRID] PriceTracker.reset: session_id={self.session_id}, price={price:.2f}, "
+        logger.debug(f"[网格] PriceTracker.reset: session_id={self.session_id}, price={price:.2f}, "
                     f"重置前: direction={self.direction}, crossed_level={self.crossed_level}, waiting_callback={self.waiting_callback}")
         self.last_price = price
         self.peak_price = price
@@ -341,7 +341,7 @@ class GridTradingManager:
         if count < 2:
             stock_code = self._session_field(session, 'stock_code', '')
             logger.warning(
-                f"[GRID] _check_exit_conditions: {stock_code} 首次检测到持仓为空，"
+                f"[网格] {stock_code} 首次检测到持仓为空，"
                 "等待下轮确认后再退出"
             )
             return False
@@ -459,12 +459,12 @@ class GridTradingManager:
         self.last_order_reconcile_time = 0.0
 
         # 初始化:从数据库加载活跃会话
-        logger.info(f"[GRID] GridTradingManager.__init__: 初始化网格交易管理器")
+        logger.info(f"[网格] 初始化网格交易管理器")
         loaded_count = self._load_active_sessions()
         pending_count = self._load_open_grid_orders()
-        logger.info(f"[GRID] GridTradingManager.__init__: 初始化完成, 已加载 {loaded_count} 个活跃会话")
+        logger.info(f"[网格] 初始化完成, 已加载 {loaded_count} 个活跃会话")
         if pending_count:
-            logger.warning(f"[GRID] GridTradingManager.__init__: 恢复 {pending_count} 个未完成网格委托，等待成交/撤废单回报")
+            logger.warning(f"[网格] 恢复 {pending_count} 个未完成网格委托，等待成交/撤废单回报")
 
     def get_pnl_snapshot(self, session, current_price: float = None,
                          position_snapshot=None, ledger_summary: dict = None) -> dict:
@@ -517,7 +517,7 @@ class GridTradingManager:
             try:
                 ledger_summary = self.db.get_grid_ledger_summary(session_id, mark_price)
             except Exception as ledger_err:
-                logger.warning(f"[GRID] get_pnl_snapshot: 账本盈亏汇总失败，降级旧口径: {ledger_err}")
+                logger.warning(f"[网格] 账本盈亏汇总失败，降级旧口径: {ledger_err}")
 
         if ledger_summary and ledger_summary.get('has_ledger'):
             total_pnl = self._safe_float(ledger_summary.get('true_pnl'), 0.0)
@@ -606,11 +606,11 @@ class GridTradingManager:
 
     def _load_active_sessions(self):
         """系统启动时从数据库加载活跃会话(保守恢复策略)"""
-        logger.info("[GRID] 系统重启 - 开始恢复网格交易会话")
+        logger.info("[网格] 系统重启 - 开始恢复网格交易会话")
 
         try:
             active_sessions = self.db.get_active_grid_sessions()
-            logger.info(f"[GRID] 从数据库查询到 {len(active_sessions)} 个活跃会话")
+            logger.info(f"[网格] 从数据库查询到 {len(active_sessions)} 个活跃会话")
 
             # 详细日志：打印所有查询到的会话
             for idx, s in enumerate(active_sessions):
@@ -622,12 +622,12 @@ class GridTradingManager:
                         end_time_dt = datetime.fromisoformat(end_time_str)
                         end_time_display = end_time_dt.strftime('%Y-%m-%d %H:%M:%S')
                     except (ValueError, TypeError) as fmt_err:
-                        logger.debug(f"[GRID] 时间格式化失败: {fmt_err}")
+                        logger.debug(f"[网格] 时间格式化失败: {fmt_err}")
                         end_time_display = end_time_str
                 else:
                     end_time_display = 'N/A'
 
-                logger.info(f"[GRID] 会话#{idx+1}: id={s_dict.get('id')}, "
+                logger.info(f"[网格] 会话#{idx+1}: id={s_dict.get('id')}, "
                            f"stock={s_dict.get('stock_code')}, "
                            f"end_time={end_time_display}")
 
@@ -641,7 +641,7 @@ class GridTradingManager:
                 stock_code = session_dict['stock_code']
                 stock_code_key = self._normalize_code(stock_code)  # 用于 sessions 字典的统一 key
                 session_id = session_dict['id']
-                logger.info(f"[GRID] >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}, key={stock_code_key}")
+                logger.info(f"[网格] >>> 开始处理会话 session_id={session_id}, stock_code={stock_code}, key={stock_code_key}")
 
                 try:
                     # 1. 检查会话是否已过期
@@ -654,7 +654,7 @@ class GridTradingManager:
                         # 如果内存里已有该会话，做最小清理避免Web仍显示active
                         existing = self.sessions.get(stock_code_key)
                         if existing and existing.status == 'active':
-                            logger.info(f"[GRID] 会话{session_id}({stock_code})已过期，清理内存会话")
+                            logger.info(f"[网格] 会话{session_id}({stock_code})已过期，清理内存会话")
                             # 仅做最小清理：从内存移除并触发版本更新
                             try:
                                 del self.sessions[stock_code_key]
@@ -671,7 +671,7 @@ class GridTradingManager:
                             except Exception:
                                 pass
 
-                        logger.info(f"[GRID] 会话{session_id}({stock_code})已过期,自动停止")
+                        logger.info(f"[网格] 会话{session_id}({stock_code})已过期,自动停止")
                         stopped_count += 1
                         continue
 
@@ -681,10 +681,10 @@ class GridTradingManager:
                     position = None
                     # BUG FIX: 使用session_dict.get()而不是session_data.get()
                     current_price = session_dict.get('current_center_price', session_dict['center_price'])
-                    logger.debug(f"[GRID] 跳过持仓检查以避免阻塞, 使用数据库价格: {current_price:.2f}")
+                    logger.debug(f"[网格] 跳过持仓检查以避免阻塞, 使用数据库价格: {current_price:.2f}")
 
                     # 3. 恢复GridSession对象
-                    logger.debug(f"[GRID] 恢复会话对象 session_id={session_id}")
+                    logger.debug(f"[网格] 恢复会话对象 session_id={session_id}")
                     session = GridSession(
                         id=session_dict['id'],
                         stock_code=session_dict['stock_code'],
@@ -723,12 +723,12 @@ class GridTradingManager:
                             )
                             if abs(rebuilt_investment - session.current_investment) > 0.01:
                                 logger.warning(
-                                    f"[GRID] 账本重建修正资金占用 session_id={session_id} "
+                                    f"[网格] 账本重建修正资金占用 session_id={session_id} "
                                     f"{session.current_investment:.2f} -> {rebuilt_investment:.2f}"
                                 )
                             session.current_investment = rebuilt_investment
                         except Exception as ledger_err:
-                            logger.warning(f"[GRID] 重启恢复时账本重建失败，保留原账本: {ledger_err}")
+                            logger.warning(f"[网格] 重启恢复时账本重建失败，保留原账本: {ledger_err}")
 
                     # ── V2 修复：DB 加载时校验 current_investment ───────────────────────────
                     # 场景：上次运行中买入成功但 DB 写入 current_investment 失败（磁盘/网络异常），
@@ -736,7 +736,7 @@ class GridTradingManager:
                     # 保守策略：current_investment > max_investment 时，强制修正并写回 DB。
                     if session.max_investment > 0 and session.current_investment > session.max_investment:
                         logger.warning(
-                            f"[GRID] DB 一致性修正 session_id={session_id} "
+                            f"[网格] DB 一致性修正 session_id={session_id} "
                             f"({session_dict['stock_code']}): "
                             f"current_investment({session.current_investment:.2f}) > "
                             f"max_investment({session.max_investment:.2f}), 修正为 max_investment"
@@ -747,7 +747,7 @@ class GridTradingManager:
                                 'current_investment': session.max_investment
                             })
                         except Exception as db_err:
-                            logger.warning(f"[GRID] DB 修正写回失败(可忽略，下次重启再修正): {db_err}")
+                            logger.warning(f"[网格] DB 修正写回失败(可忽略，下次重启再修正): {db_err}")
                     self.sessions[stock_code_key] = session
                     self._position_cleared_confirmations.pop(stock_code_key, None)
                     # 使用数据库中保存的价格,避免在启动时调用position_manager
@@ -755,7 +755,7 @@ class GridTradingManager:
                         current_price = position.get('current_price')
                     else:
                         current_price = session.current_center_price
-                    logger.debug(f"[GRID] 创建PriceTracker session_id={session_id}, current_price={current_price:.2f}")
+                    logger.debug(f"[网格] 创建PriceTracker session_id={session_id}, current_price={current_price:.2f}")
                     self.trackers[session_id] = PriceTracker(
                         session_id=session_id,
                         last_price=current_price,
@@ -769,34 +769,34 @@ class GridTradingManager:
                     # 5. 清除档位冷却
                     cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
                     if cooldown_keys:
-                        logger.debug(f"[GRID] 清除 {len(cooldown_keys)} 个档位冷却记录")
+                        logger.debug(f"[网格] 清除 {len(cooldown_keys)} 个档位冷却记录")
                     for key in cooldown_keys:
                         del self.level_cooldowns[key]
 
                     # 6. 记录恢复信息（简化版，避免调用get_profit_ratio导致阻塞）
-                    logger.info(f"[GRID] 恢复会话: {stock_code}")
-                    logger.info(f"[GRID]   - 会话ID: {session_id}")
-                    logger.info(f"[GRID]   - 原始中心价: {session.center_price:.2f}元(锁定)")
-                    logger.info(f"[GRID]   - 当前中心价: {session.current_center_price:.2f}元")
-                    logger.info(f"[GRID]   - 当前市价: {current_price:.2f}元")
-                    logger.info(f"[GRID]   - 累计交易: {session.trade_count}次(买{session.buy_count}/卖{session.sell_count})")
-                    logger.info(f"[GRID]   - 自动开关: {'自动' if session.enabled else '暂停(不产生新网格单)'}")
+                    logger.info(f"[网格] 恢复会话: {stock_code}")
+                    logger.info(f"[网格]   - 会话ID: {session_id}")
+                    logger.info(f"[网格]   - 原始中心价: {session.center_price:.2f}元(锁定)")
+                    logger.info(f"[网格]   - 当前中心价: {session.current_center_price:.2f}元")
+                    logger.info(f"[网格]   - 当前市价: {current_price:.2f}元")
+                    logger.info(f"[网格]   - 累计交易: {session.trade_count}次(买{session.buy_count}/卖{session.sell_count})")
+                    logger.info(f"[网格]   - 自动开关: {'自动' if session.enabled else '暂停(不产生新网格单)'}")
                     # 简化：不调用get_profit_ratio()避免递归日志调用
-                    logger.info(f"[GRID]   - 网格盈亏: 未计算(恢复期跳过)")
-                    logger.info(f"[GRID]   - 追踪器状态: 已重置(安全模式)")
+                    logger.info(f"[网格]   - 网格盈亏: 未计算(恢复期跳过)")
+                    logger.info(f"[网格]   - 追踪器状态: 已重置(安全模式)")
 
                     levels = session.get_grid_levels()
-                    logger.info(f"[GRID]   - 网格档位: {levels['lower']:.2f} / {levels['center']:.2f} / {levels['upper']:.2f}")
+                    logger.info(f"[网格]   - 网格档位: {levels['lower']:.2f} / {levels['center']:.2f} / {levels['upper']:.2f}")
 
                     remaining_days = (end_time - datetime.now()).days
-                    logger.info(f"[GRID]   - 剩余时长: {remaining_days}天")
+                    logger.info(f"[网格]   - 剩余时长: {remaining_days}天")
 
                     recovered_count += 1
                     if not session.enabled:
                         paused_count += 1
 
                 except Exception as e:
-                    logger.error(f"[GRID] 恢复会话{session_id}失败: {str(e)}, 自动停止会话")
+                    logger.error(f"[网格] 恢复会话{session_id}失败: {str(e)}, 自动停止会话")
                     try:
                         self.db.stop_grid_session(session_id, 'init_error')
                         stopped_count += 1
@@ -804,7 +804,7 @@ class GridTradingManager:
                         pass
 
             logger.info(
-                f"[GRID] 网格会话恢复完成: 恢复{recovered_count}个"
+                f"[网格] 网格会话恢复完成: 恢复{recovered_count}个"
                 f"(自动{recovered_count - paused_count}个/暂停{paused_count}个), "
                 f"自动停止{stopped_count}个"
             )
@@ -812,7 +812,7 @@ class GridTradingManager:
             return recovered_count
 
         except Exception as e:
-            logger.error(f"[GRID] 加载活跃会话失败: {str(e)}")
+            logger.error(f"[网格] 加载活跃会话失败: {str(e)}")
             return 0
 
     def _load_open_grid_orders(self) -> int:
@@ -823,7 +823,7 @@ class GridTradingManager:
         try:
             open_orders = self.db.get_open_grid_orders()
         except Exception as e:
-            logger.warning(f"[GRID] 恢复未完成网格委托失败: {e}")
+            logger.warning(f"[网格] 恢复未完成网格委托失败: {e}")
             return 0
 
         recovered = 0
@@ -843,7 +843,7 @@ class GridTradingManager:
                 except Exception:
                     pass
                 logger.warning(
-                    f"[GRID] 未完成委托无法恢复，已标记orphaned order_id={order.get('order_id')}, "
+                    f"[网格] 未完成委托无法恢复，已标记orphaned 委托号={order.get('order_id')}, "
                     f"session_id={session_id}, stock_code={stock_code}"
                 )
                 continue
@@ -902,14 +902,14 @@ class GridTradingManager:
                     continue
                 try:
                     records = self._coerce_records(method())
-                    logger.info(f"[GRID] {reason}: 通过 {type(target).__name__}.{method_name} 查询委托 {len(records)} 条")
+                    logger.info(f"[网格] {reason}: 通过 {type(target).__name__}.{method_name} 查询委托 {len(records)} 条")
                     return records
                 except TypeError:
                     continue
                 except Exception as e:
-                    logger.warning(f"[GRID] {reason}: 查询券商委托失败 {method_name}: {e}")
+                    logger.warning(f"[网格] {reason}: 查询券商委托失败 {method_name}: {e}")
                     return []
-        logger.debug(f"[GRID] {reason}: 未找到券商委托查询接口")
+        logger.debug(f"[网格] {reason}: 未找到券商委托查询接口")
         return []
 
     def _query_broker_trades_for_reconcile(self, reason: str = "启动对账") -> list:
@@ -927,14 +927,14 @@ class GridTradingManager:
                     continue
                 try:
                     records = self._coerce_records(method())
-                    logger.info(f"[GRID] {reason}: 通过 {type(target).__name__}.{method_name} 查询成交 {len(records)} 条")
+                    logger.info(f"[网格] {reason}: 通过 {type(target).__name__}.{method_name} 查询成交 {len(records)} 条")
                     return records
                 except TypeError:
                     continue
                 except Exception as e:
-                    logger.warning(f"[GRID] {reason}: 查询券商成交失败 {method_name}: {e}")
+                    logger.warning(f"[网格] {reason}: 查询券商成交失败 {method_name}: {e}")
                     return []
-        logger.debug(f"[GRID] {reason}: 未找到券商成交查询接口")
+        logger.debug(f"[网格] {reason}: 未找到券商成交查询接口")
         return []
 
     def _pending_age_seconds(self, pending: dict, now: datetime) -> float:
@@ -973,7 +973,7 @@ class GridTradingManager:
         if not force and now - self.last_order_reconcile_time < interval:
             return None
         if not self.reconcile_lock.acquire(blocking=False):
-            logger.debug(f"[GRID] {reason}: 上一次对账仍在进行，跳过本轮")
+            logger.debug(f"[网格] {reason}: 上一次对账仍在进行，跳过本轮")
             return None
 
         try:
@@ -992,7 +992,7 @@ class GridTradingManager:
         if not order_ids:
             return result
 
-        logger.info(f"[GRID] {reason}: 开始处理 {len(order_ids)} 个未完成网格委托")
+        logger.info(f"[网格] {reason}: 开始处理 {len(order_ids)} 个未完成网格委托")
         broker_trades = self._query_broker_trades_for_reconcile(reason=reason)
         broker_orders = self._query_broker_orders_for_reconcile(reason=reason)
 
@@ -1050,7 +1050,7 @@ class GridTradingManager:
         with self.lock:
             remaining = len(self.pending_grid_orders)
         logger.info(
-            f"[GRID] {reason}完成: 成交补记={replayed}, 终态关闭={closed}, "
+            f"[网格] {reason}完成: 成交补记={replayed}, 终态关闭={closed}, "
             f"剩余pending={remaining}"
         )
         timeout_result = self._handle_timed_out_grid_orders(order_ids, broker_orders, reason=reason)
@@ -1131,7 +1131,7 @@ class GridTradingManager:
                     )
                     if warn_after > 0 and wait_seconds >= warn_after:
                         logger.warning(
-                            f"[GRID] {reason}: 撤单请求等待终态超时 order_id={order_id}, "
+                            f"[网格] {reason}: 撤单请求等待终态超时 委托号={order_id}, "
                             f"已等待{wait_seconds:.0f}秒，请关注券商委托状态"
                         )
                         pending['cancel_requested_at'] = now.isoformat()
@@ -1141,8 +1141,8 @@ class GridTradingManager:
                 if filled_volume > 0:
                     result['timeout_skipped_partial'] += 1
                     logger.warning(
-                        f"[GRID] {reason}: 网格委托已有部分成交，跳过自动撤单重挂 "
-                        f"order_id={order_id}, filled={filled_volume}/{pending.get('requested_volume')}"
+                        f"[网格] {reason}: 网格委托已有部分成交，跳过自动撤单重挂 "
+                        f"委托号={order_id}, filled={filled_volume}/{pending.get('requested_volume')}"
                     )
                     continue
 
@@ -1153,8 +1153,8 @@ class GridTradingManager:
                 broker_order = broker_order_by_id.get(str(order_id))
                 if broker_order is None:
                     logger.warning(
-                        f"[GRID] {reason}: 网格委托超时但未查询到券商委托，保留pending "
-                        f"order_id={order_id}, age={age_seconds:.0f}s"
+                        f"[网格] {reason}: 网格委托超时但未查询到券商委托，保留pending "
+                        f"委托号={order_id}, age={age_seconds:.0f}s"
                     )
                     continue
 
@@ -1163,8 +1163,8 @@ class GridTradingManager:
                 if broker_filled_volume > filled_volume:
                     result['timeout_skipped_partial'] += 1
                     logger.warning(
-                        f"[GRID] {reason}: 券商委托显示已有部分成交，跳过自动撤单重挂 "
-                        f"order_id={order_id}, broker_filled={broker_filled_volume}, "
+                        f"[网格] {reason}: 券商委托显示已有部分成交，跳过自动撤单重挂 "
+                        f"委托号={order_id}, broker_filled={broker_filled_volume}, "
                         f"local_filled={filled_volume}"
                     )
                     continue
@@ -1180,8 +1180,8 @@ class GridTradingManager:
 
         for order_id, pending_snapshot, broker_status, age_seconds in cancel_candidates:
             logger.warning(
-                f"[GRID] {reason}: 网格委托超时未成交，准备撤单 "
-                f"order_id={order_id}, side={pending_snapshot.get('side')}, "
+                f"[网格] {reason}: 网格委托超时未成交，准备撤单 "
+                f"委托号={order_id}, side={pending_snapshot.get('side')}, "
                 f"age={age_seconds:.0f}s, broker_status={broker_status}"
             )
             cancel_ok = self._cancel_grid_order(order_id)
@@ -1195,7 +1195,7 @@ class GridTradingManager:
                     )
                     result['timeout_cancel_requested'] += 1
                     logger.info(
-                        f"[GRID] {reason}: 网格委托撤单请求已提交 order_id={order_id}, "
+                        f"[网格] {reason}: 网格委托撤单请求已提交 委托号={order_id}, "
                         f"等待54=已撤后再决定是否重挂"
                     )
                 else:
@@ -1207,7 +1207,7 @@ class GridTradingManager:
                         })
                     result['timeout_cancel_failed'] += 1
                     logger.error(
-                        f"[GRID] {reason}: 网格委托超时撤单失败 order_id={order_id}，"
+                        f"[网格] {reason}: 网格委托超时撤单失败 委托号={order_id}，"
                         f"保留pending并等待人工确认"
                     )
 
@@ -1220,15 +1220,15 @@ class GridTradingManager:
         阶段2（锁内）：停止旧session、创建数据库记录、创建内存对象
         阶段3（锁外）：触发数据版本更新、打印成功日志
         """
-        logger.info(f"[GRID] start_grid_session: ========== 开始启动会话 ==========")
-        logger.info(f"[GRID] start_grid_session: stock_code={stock_code}")
-        logger.debug(f"[GRID] start_grid_session: user_config={user_config}")
+        logger.info(f"[网格] ========== 开始启动会话 ==========")
+        logger.info(f"[网格] stock_code={stock_code}")
+        logger.debug(f"[网格] start_grid_session: user_config={user_config}")
         # 统一 sessions 字典 key（去除交易所后缀）
         stock_code_key = self._normalize_code(stock_code)
-        logger.info(f"[GRID] start_grid_session: stock_code_key={stock_code_key}")
+        logger.info(f"[网格] stock_code_key={stock_code_key}")
 
         # ========== 阶段1: 锁外操作 - 获取持仓数据并验证 ==========
-        logger.info(f"[GRID] start_grid_session: [阶段1] 获取持仓数据（锁外）...")
+        logger.info(f"[网格] [阶段1] 获取持仓数据（锁外）...")
 
         # 使用ThreadPoolExecutor + 5秒超时避免阻塞
         position = None
@@ -1237,23 +1237,23 @@ class GridTradingManager:
                 future = executor.submit(self.position_manager.get_position, stock_code)
                 position = future.result(timeout=config.GRID_POSITION_QUERY_TIMEOUT)
             except TimeoutError:
-                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓超时({config.GRID_POSITION_QUERY_TIMEOUT}秒)，拒绝启动")
+                logger.error(f"[网格] [阶段1] 获取持仓超时({config.GRID_POSITION_QUERY_TIMEOUT}秒)，拒绝启动")
                 raise RuntimeError(f"获取{stock_code}持仓信息超时，请稍后重试")
             except Exception as e:
-                logger.error(f"[GRID] start_grid_session: [阶段1] 获取持仓失败: {str(e)}")
+                logger.error(f"[网格] [阶段1] 获取持仓失败: {str(e)}")
                 raise
 
         # 验证持仓条件
         if not position:
-            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}无持仓, 拒绝启动")
+            logger.warning(f"[网格] [阶段1] {stock_code}无持仓, 拒绝启动")
             raise ValueError(f"{stock_code}无持仓，无法启动网格交易")
 
         # 检查是否要求已触发止盈（可配置）
         if config.GRID_REQUIRE_PROFIT_TRIGGERED and not position.get('profit_triggered'):
-            logger.warning(f"[GRID] start_grid_session: [阶段1] {stock_code}未触发止盈, 拒绝启动 (GRID_REQUIRE_PROFIT_TRIGGERED=True)")
+            logger.warning(f"[网格] [阶段1] {stock_code}未触发止盈, 拒绝启动 (GRID_REQUIRE_PROFIT_TRIGGERED=True)")
             raise ValueError(f"{stock_code}未触发止盈（未触发首次止盈），无法启动网格交易")
 
-        logger.debug(f"[GRID] start_grid_session: [阶段1] 前置条件验证通过, volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
+        logger.debug(f"[网格] start_grid_session: [阶段1] 前置条件验证通过, volume={position.get('volume')}, profit_triggered={position.get('profit_triggered')}")
 
         # 确定中心价格
         user_center_price = user_config.get('center_price')
@@ -1261,12 +1261,12 @@ class GridTradingManager:
 
         if user_center_price and user_center_price > 0:
             center_price = user_center_price
-            logger.info(f"[GRID] start_grid_session: [阶段1] 使用用户自定义中心价格: {center_price:.2f}")
+            logger.info(f"[网格] [阶段1] 使用用户自定义中心价格: {center_price:.2f}")
         elif highest_price > 0:
             center_price = highest_price
-            logger.info(f"[GRID] start_grid_session: [阶段1] 使用历史最高价作为中心价格: {center_price:.2f}")
+            logger.info(f"[网格] [阶段1] 使用历史最高价作为中心价格: {center_price:.2f}")
         else:
-            logger.warning(f"[GRID] start_grid_session: [阶段1] 缺少有效的中心价格, 拒绝启动")
+            logger.warning(f"[网格] [阶段1] 缺少有效的中心价格, 拒绝启动")
             raise ValueError(f"{stock_code}缺少有效的中心价格")
 
         # 预构建会话数据
@@ -1284,7 +1284,7 @@ class GridTradingManager:
             fixed_volume = (int(holding_volume * _position_ratio) // 100) * 100
             if fixed_volume < 100:
                 fixed_volume = 100
-            logger.info(f"[GRID] start_grid_session: [阶段1] 固定股数模式未指定股数, "
+            logger.info(f"[网格] [阶段1] 固定股数模式未指定股数, "
                         f"按持仓{holding_volume}×{_position_ratio*100:.0f}%兜底={fixed_volume}股")
 
         session_data = {
@@ -1304,16 +1304,16 @@ class GridTradingManager:
             'risk_level': user_config.get('risk_level', 'moderate'),
             'template_name': user_config.get('template_name')
         }
-        logger.info(f"[GRID] start_grid_session: [阶段1] 完成，预构建会话数据完成")
+        logger.info(f"[网格] [阶段1] 完成，预构建会话数据完成")
 
         # ========== 阶段2: 锁内操作 - 停止旧session、创建记录 ==========
-        logger.info(f"[GRID] start_grid_session: [阶段2] 尝试获取锁...")
+        logger.info(f"[网格] [阶段2] 尝试获取锁...")
         lock_acquired = self.lock.acquire(timeout=config.GRID_LOCK_ACQUIRE_TIMEOUT)
         if not lock_acquired:
-            logger.error(f"[GRID] start_grid_session: [阶段2] 获取锁超时({config.GRID_LOCK_ACQUIRE_TIMEOUT}秒)! 拒绝启动")
+            logger.error(f"[网格] [阶段2] 获取锁超时({config.GRID_LOCK_ACQUIRE_TIMEOUT}秒)! 拒绝启动")
             raise RuntimeError(f"网格交易启动失败：系统繁忙，请稍后重试")
 
-        logger.info(f"[GRID] start_grid_session: [阶段2] 成功获取锁，开始处理...")
+        logger.info(f"[网格] [阶段2] 成功获取锁，开始处理...")
         session = None
         try:
             # 检查并停止旧session
@@ -1322,7 +1322,7 @@ class GridTradingManager:
 
             # 创建数据库记录
             session_id = self.db.create_grid_session(session_data)
-            logger.debug(f"[GRID] start_grid_session: [阶段2] 数据库创建成功, session_id={session_id}")
+            logger.debug(f"[网格] start_grid_session: [阶段2] 数据库创建成功, session_id={session_id}")
 
             # 创建内存对象
             session = GridSession(
@@ -1346,7 +1346,7 @@ class GridTradingManager:
             )
             self.sessions[stock_code_key] = session
             self._position_cleared_confirmations.pop(stock_code_key, None)
-            logger.debug(f"[GRID] start_grid_session: [阶段2] 内存会话对象创建完成")
+            logger.debug(f"[网格] start_grid_session: [阶段2] 内存会话对象创建完成")
 
             # 创建PriceTracker
             self.trackers[session_id] = PriceTracker(
@@ -1355,28 +1355,28 @@ class GridTradingManager:
                 peak_price=current_price,
                 valley_price=current_price
             )
-            logger.debug(f"[GRID] start_grid_session: [阶段2] PriceTracker创建完成, current_price={current_price:.2f}")
+            logger.debug(f"[网格] start_grid_session: [阶段2] PriceTracker创建完成, current_price={current_price:.2f}")
 
         finally:
             self.lock.release()
-            logger.info(f"[GRID] start_grid_session: [阶段2] 已释放锁")
+            logger.info(f"[网格] [阶段2] 已释放锁")
 
         # ========== 阶段3: 锁外操作 - 后处理 ==========
-        logger.info(f"[GRID] start_grid_session: [阶段3] 执行后处理...")
+        logger.info(f"[网格] [阶段3] 执行后处理...")
 
         # 触发数据版本更新
         self.position_manager._increment_data_version()
 
         # 打印成功日志
         levels = session.get_grid_levels()
-        logger.info(f"[GRID] start_grid_session: ========== 启动成功 ==========")
-        logger.info(f"[GRID] start_grid_session: 股票代码={stock_code}, 会话ID={session.id}")
-        logger.info(f"[GRID] start_grid_session: 中心价={center_price:.2f}, 档位间隔={session.price_interval*100:.1f}%")
-        logger.info(f"[GRID] start_grid_session: 网格档位 lower={levels['lower']:.2f}, center={levels['center']:.2f}, upper={levels['upper']:.2f}")
-        logger.info(f"[GRID] start_grid_session: 最大投入={session.max_investment:.2f}, 持仓比例={session.position_ratio*100:.1f}%")
-        logger.info(f"[GRID] start_grid_session: 回调比例={session.callback_ratio*100:.2f}%, 最大偏离={session.max_deviation*100:.1f}%")
-        logger.info(f"[GRID] start_grid_session: 目标盈利={session.target_profit*100:.1f}%, 止损={session.stop_loss*100:.1f}%")
-        logger.info(f"[GRID] start_grid_session: 有效期至 {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"[网格] ========== 启动成功 ==========")
+        logger.info(f"[网格] 股票代码={stock_code}, 会话ID={session.id}")
+        logger.info(f"[网格] 中心价={center_price:.2f}, 档位间隔={session.price_interval*100:.1f}%")
+        logger.info(f"[网格] 网格档位 lower={levels['lower']:.2f}, center={levels['center']:.2f}, upper={levels['upper']:.2f}")
+        logger.info(f"[网格] 最大投入={session.max_investment:.2f}, 持仓比例={session.position_ratio*100:.1f}%")
+        logger.info(f"[网格] 回调比例={session.callback_ratio*100:.2f}%, 最大偏离={session.max_deviation*100:.1f}%")
+        logger.info(f"[网格] 目标盈利={session.target_profit*100:.1f}%, 止损={session.stop_loss*100:.1f}%")
+        logger.info(f"[网格] 有效期至 {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         return session
 
@@ -1388,13 +1388,13 @@ class GridTradingManager:
         2. 等委托终态回调或锁外下单完成后，再真正清理内存会话。
         3. 无未完成委托时保持旧行为，立即停止。
         """
-        logger.info(f"[GRID] stop_grid_session: 开始停止会话 session_id={session_id}, reason={reason}")
+        logger.info(f"[网格] 开始停止会话 session_id={session_id}, reason={reason}")
 
         cancel_orders = []
         with self.lock:
             session = self._find_session_by_id(session_id)
             if not session:
-                logger.warning(f"[GRID] stop_grid_session: 会话{session_id}不存在, 无法停止")
+                logger.warning(f"[网格] 会话{session_id}不存在, 无法停止")
                 raise ValueError(f"会话{session_id}不存在")
 
             open_orders = [
@@ -1428,14 +1428,14 @@ class GridTradingManager:
                                 'last_error': f'stop requested: {reason}'
                             })
                     except Exception as db_err:
-                        logger.warning(f"[GRID] stop_grid_session: 标记撤单请求失败 order_id={order_id}, err={db_err}")
+                        logger.warning(f"[网格] 标记撤单请求失败 委托号={order_id}, err={db_err}")
 
                 for plan in submitting_orders:
                     plan['stop_requested'] = True
                     plan['stop_reason'] = reason
 
                 logger.warning(
-                    f"[GRID] stop_grid_session: session_id={session_id} 进入stopping，"
+                    f"[网格] session_id={session_id} 进入stopping，"
                     f"待撤单={len(open_orders)}, 提交中={len(submitting_orders)}"
                 )
             else:
@@ -1458,7 +1458,7 @@ class GridTradingManager:
                                     'last_error': f'cancel failed during stop: {reason}'
                                 })
                         except Exception as db_err:
-                            logger.warning(f"[GRID] stop_grid_session: 写入撤单失败状态失败 order_id={order_id}, err={db_err}")
+                            logger.warning(f"[网格] 写入撤单失败状态失败 委托号={order_id}, err={db_err}")
 
         with self.lock:
             still_open = any(
@@ -1505,7 +1505,7 @@ class GridTradingManager:
                 pass
 
             logger.info(
-                f"[GRID] set_session_enabled: session_id={session_id}, "
+                f"[网格] session_id={session_id}, "
                 f"stock_code={session.stock_code}, enabled={session.enabled}"
             )
             return {
@@ -1542,7 +1542,7 @@ class GridTradingManager:
                 'reason': reason
             })
             logger.info(
-                f"[GRID] pause_session_by_stock: stock_code={session.stock_code}, "
+                f"[网格] stock_code={session.stock_code}, "
                 f"session_id={session.id}, reason={reason}"
             )
             return result
@@ -1563,12 +1563,12 @@ class GridTradingManager:
             elif hasattr(self.executor, 'cancel_order_stock'):
                 ok = self.executor.cancel_order_stock(order_id) == 0
             else:
-                logger.error(f"[GRID] _cancel_grid_order: executor缺少撤单接口 order_id={order_id}")
+                logger.error(f"[网格] executor缺少撤单接口 委托号={order_id}")
                 return False
-            logger.info(f"[GRID] _cancel_grid_order: order_id={order_id}, ok={ok}")
+            logger.info(f"[网格] 委托号={order_id}, ok={ok}")
             return ok
         except Exception as e:
-            logger.error(f"[GRID] _cancel_grid_order: 撤单异常 order_id={order_id}, err={e}", exc_info=True)
+            logger.error(f"[网格] 撤单异常 委托号={order_id}, err={e}", exc_info=True)
             return False
 
     def _complete_stop_if_no_open_orders_unlocked(self, session_id: int) -> bool:
@@ -1590,23 +1590,23 @@ class GridTradingManager:
 
         reason = session.stop_reason or 'stopped_after_orders_closed'
         self._stop_grid_session_unlocked(session_id, reason)
-        logger.info(f"[GRID] stopping会话已完成停止 session_id={session_id}, reason={reason}")
+        logger.info(f"[网格] stopping会话已完成停止 session_id={session_id}, reason={reason}")
         return True
 
     def _stop_grid_session_unlocked(self, session_id: int, reason: str) -> dict:
         """停止网格交易会话（内部方法，调用者必须已持有锁）"""
-        logger.info(f"[GRID] _stop_grid_session_unlocked: 开始停止会话 session_id={session_id}, reason={reason}")
+        logger.info(f"[网格] 开始停止会话 session_id={session_id}, reason={reason}")
 
         # 查找会话
         session = self._find_session_by_id(session_id)
 
         if not session:
-            logger.warning(f"[GRID] _stop_grid_session_unlocked: 会话{session_id}不存在, 无法停止")
+            logger.warning(f"[网格] 会话{session_id}不存在, 无法停止")
             raise ValueError(f"会话{session_id}不存在")
 
         stock_code = session.stock_code
         stock_code_key = self._normalize_code(stock_code)  # 用于 sessions 字典操作
-        logger.debug(f"[GRID] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}, key={stock_code_key}")
+        logger.debug(f"[网格] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}, key={stock_code_key}")
 
         pnl_snapshot = self.get_pnl_snapshot(
             session,
@@ -1614,19 +1614,19 @@ class GridTradingManager:
         )
 
         # 记录停止前的统计信息
-        logger.info(f"[GRID] _stop_grid_session_unlocked: 停止前统计:")
-        logger.info(f"[GRID]   - 股票代码: {stock_code}")
-        logger.info(f"[GRID]   - 总交易次数: {session.trade_count} (买入{session.buy_count}/卖出{session.sell_count})")
-        logger.info(f"[GRID]   - 总买入金额: {session.total_buy_amount:.2f}")
-        logger.info(f"[GRID]   - 总卖出金额: {session.total_sell_amount:.2f}")
-        logger.info(f"[GRID]   - 网格盈亏: {pnl_snapshot['profit_ratio']*100:.2f}% "
+        logger.info(f"[网格] 停止前统计:")
+        logger.info(f"[网格]   - 股票代码: {stock_code}")
+        logger.info(f"[网格]   - 总交易次数: {session.trade_count} (买入{session.buy_count}/卖出{session.sell_count})")
+        logger.info(f"[网格]   - 总买入金额: {session.total_buy_amount:.2f}")
+        logger.info(f"[网格]   - 总卖出金额: {session.total_sell_amount:.2f}")
+        logger.info(f"[网格]   - 网格盈亏: {pnl_snapshot['profit_ratio']*100:.2f}% "
                     f"({pnl_snapshot['method_detail']})")
-        logger.info(f"[GRID]   - 网格总PnL: {pnl_snapshot['total_pnl']:.2f}元 "
+        logger.info(f"[网格]   - 网格总PnL: {pnl_snapshot['total_pnl']:.2f}元 "
                     f"(已实现{pnl_snapshot['realized_pnl']:.2f}, 未实现{pnl_snapshot['unrealized_pnl']:.2f})")
-        logger.info(f"[GRID]   - 现金流利润(旧口径): {pnl_snapshot['cash_flow_profit']:.2f}元")
-        logger.info(f"[GRID]   - 最大投入额度: {session.max_investment:.2f}元")
-        logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
-        logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
+        logger.info(f"[网格]   - 现金流利润(旧口径): {pnl_snapshot['cash_flow_profit']:.2f}元")
+        logger.info(f"[网格]   - 最大投入额度: {session.max_investment:.2f}元")
+        logger.info(f"[网格]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
+        logger.info(f"[网格]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
 
         # 同步内存中的统计信息到数据库
         if stock_code_key in self.sessions:
@@ -1640,25 +1640,25 @@ class GridTradingManager:
                 'current_investment': session_obj.current_investment
             }
             self.db.update_grid_session(session_id, updates)
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 同步统计信息到数据库完成")
+            logger.debug(f"[网格] _stop_grid_session_unlocked: 同步统计信息到数据库完成")
 
         # 更新数据库
         self.db.stop_grid_session(session_id, reason)
-        logger.debug(f"[GRID] _stop_grid_session_unlocked: 数据库更新完成")
+        logger.debug(f"[网格] _stop_grid_session_unlocked: 数据库更新完成")
 
         # 从内存中移除
         if stock_code_key in self.sessions:
             del self.sessions[stock_code_key]
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从sessions中移除 {stock_code} (key={stock_code_key})")
+            logger.debug(f"[网格] _stop_grid_session_unlocked: 从sessions中移除 {stock_code} (key={stock_code_key})")
         self._position_cleared_confirmations.pop(stock_code_key, None)
         if session_id in self.trackers:
             del self.trackers[session_id]
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
+            logger.debug(f"[网格] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
 
         # 清除冷却记录 (键格式为 (session_id: int, level_price: float))
         cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
         if cooldown_keys:
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys)} 个档位冷却记录")
+            logger.debug(f"[网格] _stop_grid_session_unlocked: 清除 {len(cooldown_keys)} 个档位冷却记录")
         for key in cooldown_keys:
             del self.level_cooldowns[key]
 
@@ -1671,7 +1671,7 @@ class GridTradingManager:
                 signal_info = self.position_manager.latest_signals[stock_code]
                 signal_type = signal_info.get('type', '')
                 if signal_type.startswith('grid_'):
-                    logger.info(f"[GRID] 会话停止，清除 {stock_code} 的网格信号: {signal_type}")
+                    logger.info(f"[网格] 会话停止，清除 {stock_code} 的网格信号: {signal_type}")
                     del self.position_manager.latest_signals[stock_code]
 
         final_stats = {
@@ -1682,7 +1682,7 @@ class GridTradingManager:
             'stop_reason': reason
         }
 
-        logger.info(f"[GRID] _stop_grid_session_unlocked: 停止完成! stock_code={stock_code}, reason={reason}, "
+        logger.info(f"[网格] 停止完成! stock_code={stock_code}, reason={reason}, "
                    f"trade_count={session.trade_count}, profit={pnl_snapshot['profit_ratio']*100:.2f}%")
 
         return final_stats
@@ -1699,7 +1699,7 @@ class GridTradingManager:
             position_snapshot: 可选的持仓快照（锁外预取，避免锁内调用外部依赖）。
                                若为 None，则在方法内部直接调用 get_position()（向后兼容）。
         """
-        logger.debug(f"[GRID] _check_exit_conditions: session_id={session.id}, stock_code={session.stock_code}, current_price={current_price:.2f}")
+        logger.debug(f"[网格] _check_exit_conditions: session_id={session.id}, stock_code={session.stock_code}, current_price={current_price:.2f}")
 
         # 1. 偏离度检测（双重保护）
         if session.current_center_price and session.center_price:
@@ -1709,13 +1709,13 @@ class GridTradingManager:
             market_deviation = abs(current_price - session.current_center_price) / session.current_center_price
             deviation = max(drift_deviation, market_deviation)
             logger.debug(
-                f"[GRID] _check_exit_conditions: 偏离度检测 "
+                f"[网格] _check_exit_conditions: 偏离度检测 "
                 f"drift={drift_deviation*100:.2f}%, market={market_deviation*100:.2f}%, "
                 f"max={session.max_deviation*100:.2f}%"
             )
             if deviation > session.max_deviation:
                 logger.warning(
-                    f"[GRID] _check_exit_conditions: {session.stock_code} "
+                    f"[网格] {session.stock_code} "
                     f"偏离度{deviation*100:.2f}%超过限制{session.max_deviation*100:.2f}% "
                     f"(drift={drift_deviation*100:.2f}%, market={market_deviation*100:.2f}%), 触发退出"
                 )
@@ -1736,7 +1736,7 @@ class GridTradingManager:
                 try:
                     ledger_summary = self.db.get_grid_ledger_summary(session.id, current_price)
                 except Exception as ledger_err:
-                    logger.warning(f"[GRID] _check_exit_conditions: 账本盈亏汇总失败，降级旧口径: {ledger_err}")
+                    logger.warning(f"[网格] 账本盈亏汇总失败，降级旧口径: {ledger_err}")
 
             pnl_snapshot = self.get_pnl_snapshot(
                 session,
@@ -1745,42 +1745,42 @@ class GridTradingManager:
                 ledger_summary=ledger_summary
             )
             profit_ratio = pnl_snapshot['profit_ratio']
-            logger.debug(f"[GRID] _check_exit_conditions: profit_ratio={profit_ratio*100:.2f}% "
+            logger.debug(f"[网格] _check_exit_conditions: profit_ratio={profit_ratio*100:.2f}% "
                         f"method={pnl_snapshot['method_detail']}, "
                         f"target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%, "
                         f"buy_count={session.buy_count}, sell_count={session.sell_count}")
 
             # 止盈检测（需要买卖配对）
             if session.sell_count > 0 and profit_ratio >= session.target_profit:
-                logger.info(f"[GRID] {session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%, "
+                logger.info(f"[网格] {session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%, "
                            f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'target_profit'
 
             # 止损检测（允许仅买未卖阶段触发）
             if profit_ratio <= session.stop_loss:
-                logger.warning(f"[GRID] {session.stock_code} 触发止损{profit_ratio*100:.2f}%, "
+                logger.warning(f"[网格] {session.stock_code} 触发止损{profit_ratio*100:.2f}%, "
                               f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'stop_loss'
         else:
-            logger.debug(f"[GRID] _check_exit_conditions: 未有买入记录, 跳过盈亏检测")
+            logger.debug(f"[网格] _check_exit_conditions: 未有买入记录, 跳过盈亏检测")
 
         # 3. 时间限制
         if session.end_time:
             remaining = session.end_time - datetime.now()
-            logger.debug(f"[GRID] _check_exit_conditions: 时间检测 end_time={session.end_time}, remaining={remaining}")
+            logger.debug(f"[网格] _check_exit_conditions: 时间检测 end_time={session.end_time}, remaining={remaining}")
             if datetime.now() > session.end_time:
-                logger.info(f"[GRID] _check_exit_conditions: {session.stock_code} 达到运行时长限制, 触发退出")
+                logger.info(f"[网格] {session.stock_code} 达到运行时长限制, 触发退出")
                 return 'expired'
 
         # 4. 持仓清空（优先使用锁外预取的快照，避免锁内调用外部依赖导致死锁）
         # A-3修复：若调用方提供了 position_snapshot，直接使用；否则降级为直接调用（向后兼容）。
         if position_lookup_failed:
             logger.warning(
-                f"[GRID] _check_exit_conditions: {session.stock_code} 持仓查询失败，"
+                f"[网格] {session.stock_code} 持仓查询失败，"
                 "跳过本轮清仓退出判断"
             )
             self._clear_position_cleared_confirmation(session)
-            logger.debug(f"[GRID] _check_exit_conditions: 未触发任何退出条件")
+            logger.debug(f"[网格] _check_exit_conditions: 未触发任何退出条件")
             return None
 
         if position_snapshot_provided:
@@ -1790,31 +1790,31 @@ class GridTradingManager:
         else:
             position = self.position_manager.get_position(session.stock_code)
         volume = position.get('volume', 0) if position else 0
-        logger.debug(f"[GRID] _check_exit_conditions: 持仓检测 volume={volume}")
+        logger.debug(f"[网格] _check_exit_conditions: 持仓检测 volume={volume}")
         if not position or volume == 0:
             if confirm_position_cleared and not self._confirm_position_cleared(session):
-                logger.debug(f"[GRID] _check_exit_conditions: 未触发任何退出条件")
+                logger.debug(f"[网格] _check_exit_conditions: 未触发任何退出条件")
                 return None
-            logger.info(f"[GRID] _check_exit_conditions: {session.stock_code} 持仓已清空, 触发退出")
+            logger.info(f"[网格] {session.stock_code} 持仓已清空, 触发退出")
             return 'position_cleared'
         self._clear_position_cleared_confirmation(session)
 
-        logger.debug(f"[GRID] _check_exit_conditions: 未触发任何退出条件")
+        logger.debug(f"[网格] _check_exit_conditions: 未触发任何退出条件")
         return None
 
     def _check_level_crossing(self, session: GridSession, tracker: PriceTracker, price: float):
         """检查是否穿越档位"""
         levels = session.get_grid_levels()
-        logger.debug(f"[GRID] _check_level_crossing: session_id={session.id}, stock_code={session.stock_code}, "
+        logger.debug(f"[网格] _check_level_crossing: session_id={session.id}, stock_code={session.stock_code}, "
                     f"price={price:.2f}, levels=[{levels['lower']:.2f}, {levels['center']:.2f}, {levels['upper']:.2f}], "
                     f"waiting_callback={tracker.waiting_callback}")
 
         # 检查上穿(卖出档位)
         if price > levels['upper'] and not tracker.waiting_callback:
-            logger.debug(f"[GRID] _check_level_crossing: 检测到上穿卖出档位 price={price:.2f} > upper={levels['upper']:.2f}")
+            logger.debug(f"[网格] _check_level_crossing: 检测到上穿卖出档位 price={price:.2f} > upper={levels['upper']:.2f}")
             # 检查冷却
             if self._is_level_in_cooldown(session.id, levels['upper']):
-                logger.debug(f"[GRID] _check_level_crossing: 卖出档位{levels['upper']:.2f}在冷却期, 跳过")
+                logger.debug(f"[网格] _check_level_crossing: 卖出档位{levels['upper']:.2f}在冷却期, 跳过")
                 return
 
             tracker.crossed_level = levels['upper']
@@ -1822,23 +1822,23 @@ class GridTradingManager:
             tracker.direction = 'rising'
             tracker.waiting_callback = True
 
-            logger.info(f"[GRID] _check_level_crossing: {session.stock_code} 穿越卖出档位{levels['upper']:.2f}, "
+            logger.info(f"[网格] {session.stock_code} 穿越卖出档位{levels['upper']:.2f}, "
                        f"price={price:.2f}, 等待回调{session.callback_ratio*100:.2f}%")
 
         # 检查下穿(买入档位)
         elif price < levels['lower'] and not tracker.waiting_callback:
-            logger.debug(f"[GRID] _check_level_crossing: 检测到下穿买入档位 price={price:.2f} < lower={levels['lower']:.2f}")
+            logger.debug(f"[网格] _check_level_crossing: 检测到下穿买入档位 price={price:.2f} < lower={levels['lower']:.2f}")
             # Gap 2修复：max_investment 耗尽时跳过买入穿越检测。
             # 若不检查，买入失败后 tracker 虽重置为 waiting=False，但价格仍在下轨以下，
             # 下一个 tick 立刻又检测到穿越并设置 waiting=True，形成每 6 秒一次的慢速循环。
             if session.current_investment >= session.max_investment > 0:
-                logger.warning(f"[GRID] _check_level_crossing: {session.stock_code} max_investment已耗尽"
+                logger.warning(f"[网格] {session.stock_code} max_investment已耗尽"
                                f"({session.current_investment:.0f}/{session.max_investment:.0f}), "
                                f"跳过买入档位穿越检测，等待卖出后资金回收")
                 return
             # 检查冷却
             if self._is_level_in_cooldown(session.id, levels['lower']):
-                logger.debug(f"[GRID] _check_level_crossing: 买入档位{levels['lower']:.2f}在冷却期, 跳过")
+                logger.debug(f"[网格] _check_level_crossing: 买入档位{levels['lower']:.2f}在冷却期, 跳过")
                 return
 
             tracker.crossed_level = levels['lower']
@@ -1846,22 +1846,22 @@ class GridTradingManager:
             tracker.direction = 'falling'
             tracker.waiting_callback = True
 
-            logger.info(f"[GRID] _check_level_crossing: {session.stock_code} 穿越买入档位{levels['lower']:.2f}, "
+            logger.info(f"[网格] {session.stock_code} 穿越买入档位{levels['lower']:.2f}, "
                        f"price={price:.2f}, 等待回升{session.callback_ratio*100:.2f}%")
         else:
-            logger.debug(f"[GRID] _check_level_crossing: 价格在档位区间内, 无穿越")
+            logger.debug(f"[网格] _check_level_crossing: 价格在档位区间内, 无穿越")
 
     def _is_level_in_cooldown(self, session_id: int, level_price: float) -> bool:
         """检查档位是否在冷却期"""
         key = (session_id, level_price)
         if key not in self.level_cooldowns:
-            logger.debug(f"[GRID] _is_level_in_cooldown: session_id={session_id}, level={level_price:.2f}, 无冷却记录, 返回False")
+            logger.debug(f"[网格] _is_level_in_cooldown: session_id={session_id}, level={level_price:.2f}, 无冷却记录, 返回False")
             return False
 
         elapsed = time.time() - self.level_cooldowns[key]
         cooldown = config.GRID_LEVEL_COOLDOWN
         in_cooldown = elapsed < cooldown
-        logger.debug(f"[GRID] _is_level_in_cooldown: session_id={session_id}, level={level_price:.2f}, "
+        logger.debug(f"[网格] _is_level_in_cooldown: session_id={session_id}, level={level_price:.2f}, "
                     f"elapsed={elapsed:.1f}s, cooldown={cooldown}s, in_cooldown={in_cooldown}")
         return in_cooldown
 
@@ -1876,7 +1876,7 @@ class GridTradingManager:
         Returns:
             网格交易信号字典或None
         """
-        logger.debug(f"[GRID] check_grid_signals: stock_code={stock_code}, current_price={current_price:.2f}, "
+        logger.debug(f"[网格] check_grid_signals: stock_code={stock_code}, current_price={current_price:.2f}, "
                     f"active_sessions_count={len(self.sessions)}")
 
         self.reconcile_pending_grid_orders_if_due(reason="运行期对账")
@@ -1894,21 +1894,21 @@ class GridTradingManager:
             position_snapshot_provided = True
         except Exception as e:
             position_lookup_failed = True
-            logger.warning(f"[GRID] check_grid_signals: 锁外预取持仓失败(本轮跳过清仓退出判断): {e}")
+            logger.warning(f"[网格] 锁外预取持仓失败(本轮跳过清仓退出判断): {e}")
 
         with self.lock:
             session = self.sessions.get(self._normalize_code(stock_code))
             if not session:
-                logger.debug(f"[GRID] check_grid_signals: {stock_code} 无活跃会话, 返回None")
+                logger.debug(f"[网格] check_grid_signals: {stock_code} 无活跃会话, 返回None")
                 return None
             if session.status != 'active':
-                logger.debug(f"[GRID] check_grid_signals: {stock_code} 会话状态={session.status}, 非active, 返回None")
+                logger.debug(f"[网格] check_grid_signals: {stock_code} 会话状态={session.status}, 非active, 返回None")
                 return None
             if not session.enabled:
-                logger.debug(f"[GRID] check_grid_signals: {stock_code} 个股网格开关关闭, 返回None")
+                logger.debug(f"[网格] check_grid_signals: {stock_code} 个股网格开关关闭, 返回None")
                 return None
 
-            logger.debug(f"[GRID] check_grid_signals: 找到活跃会话 session_id={session.id}, status={session.status}")
+            logger.debug(f"[网格] check_grid_signals: 找到活跃会话 session_id={session.id}, status={session.status}")
 
             # 1. 检查退出条件（传入锁外预取的持仓快照）
             exit_reason = self._check_exit_conditions(
@@ -1920,19 +1920,19 @@ class GridTradingManager:
                 position_lookup_failed=position_lookup_failed
             )
             if exit_reason:
-                logger.info(f"[GRID] check_grid_signals: {stock_code} 触发退出条件 reason={exit_reason}")
+                logger.info(f"[网格] {stock_code} 触发退出条件 reason={exit_reason}")
                 # RISK-4修复：捕获 ValueError，防止并发场景下（如 Web API 同时手动停止）
                 # 第二次调用 stop_grid_session 因会话已消失而抛出未处理异常，导致持仓监控线程崩溃
                 try:
                     self.stop_grid_session(session.id, exit_reason)
                 except ValueError as e:
-                    logger.warning(f"[GRID] check_grid_signals: 停止会话时会话已不存在（可能已被并发停止）: {e}")
+                    logger.warning(f"[网格] 停止会话时会话已不存在（可能已被并发停止）: {e}")
                 return None
 
             # 2. 更新价格追踪器
             tracker = self.trackers.get(session.id)
             if not tracker:
-                logger.warning(f"[GRID] check_grid_signals: session_id={session.id} 无对应的PriceTracker, 返回None")
+                logger.warning(f"[网格] session_id={session.id} 无对应的PriceTracker, 返回None")
                 return None
 
             tracker.update_price(current_price)
@@ -1945,7 +1945,7 @@ class GridTradingManager:
             if signal_type:
                 if self._has_open_same_side_order_unlocked(session.id, signal_type):
                     logger.debug(
-                        f"[GRID] check_grid_signals: {stock_code} 已有未完成{signal_type}网格委托，跳过新信号"
+                        f"[网格] check_grid_signals: {stock_code} 已有未完成{signal_type}网格委托，跳过新信号"
                     )
                     return None
 
@@ -1953,19 +1953,19 @@ class GridTradingManager:
                 with self.position_manager.signal_lock:
                     existing = self.position_manager.latest_signals.get(stock_code)
                     if existing and existing.get('type') == f'grid_{signal_type.lower()}':
-                        logger.debug(f"[GRID] check_grid_signals: {stock_code} 已有 {signal_type} 信号，跳过重复生成")
+                        logger.debug(f"[网格] check_grid_signals: {stock_code} 已有 {signal_type} 信号，跳过重复生成")
                         return None
 
-                logger.info(f"[GRID] check_grid_signals: {stock_code} 检测到信号 signal_type={signal_type}")
+                logger.info(f"[网格] {stock_code} 检测到信号 signal_type={signal_type}")
                 return self._create_grid_signal(session, tracker, signal_type, current_price)
 
-            logger.debug(f"[GRID] check_grid_signals: {stock_code} 本次检查无信号")
+            logger.debug(f"[网格] check_grid_signals: {stock_code} 本次检查无信号")
             return None
 
     def _create_grid_signal(self, session: GridSession, tracker: PriceTracker,
                            signal_type: str, current_price: float) -> dict:
         """创建网格交易信号"""
-        logger.debug(f"[GRID] _create_grid_signal: session_id={session.id}, stock_code={session.stock_code}, "
+        logger.debug(f"[网格] _create_grid_signal: session_id={session.id}, stock_code={session.stock_code}, "
                     f"signal_type={signal_type}, current_price={current_price:.2f}")
 
         signal = {
@@ -1987,7 +1987,7 @@ class GridTradingManager:
                 signal['callback_ratio'] = (tracker.peak_price - current_price) / tracker.peak_price
             else:
                 signal['callback_ratio'] = 0.0
-            logger.debug(f"[GRID] _create_grid_signal: SELL信号 peak_price={tracker.peak_price:.2f}, "
+            logger.debug(f"[网格] _create_grid_signal: SELL信号 peak_price={tracker.peak_price:.2f}, "
                         f"callback_ratio={signal['callback_ratio']*100:.2f}%")
         elif signal_type == 'BUY':
             signal['valley_price'] = tracker.valley_price
@@ -1996,10 +1996,10 @@ class GridTradingManager:
                 signal['callback_ratio'] = (current_price - tracker.valley_price) / tracker.valley_price
             else:
                 signal['callback_ratio'] = 0.0
-            logger.debug(f"[GRID] _create_grid_signal: BUY信号 valley_price={tracker.valley_price:.2f}, "
+            logger.debug(f"[网格] _create_grid_signal: BUY信号 valley_price={tracker.valley_price:.2f}, "
                         f"callback_ratio={signal['callback_ratio']*100:.2f}%")
 
-        logger.info(f"[GRID] _create_grid_signal: 生成网格{signal_type}信号: {session.stock_code}, "
+        logger.info(f"[网格] 生成网格{signal_type}信号: {session.stock_code}, "
                    f"档位={tracker.crossed_level:.2f}, 触发价={current_price:.2f}, "
                    f"回调={signal.get('callback_ratio', 0)*100:.2f}%")
 
@@ -2007,19 +2007,19 @@ class GridTradingManager:
 
     def _rebuild_grid(self, session: GridSession, trade_price: float):
         """交易后重建网格,以成交价为新中心"""
-        logger.debug(f"[GRID] _rebuild_grid: session_id={session.id}, stock_code={session.stock_code}, trade_price={trade_price:.2f}")
+        logger.debug(f"[网格] _rebuild_grid: session_id={session.id}, stock_code={session.stock_code}, trade_price={trade_price:.2f}")
 
         old_center = session.current_center_price
         session.current_center_price = trade_price
-        logger.debug(f"[GRID] _rebuild_grid: 更新中心价 {old_center:.2f} -> {trade_price:.2f}")
+        logger.debug(f"[网格] _rebuild_grid: 更新中心价 {old_center:.2f} -> {trade_price:.2f}")
 
         # 重置追踪器
         tracker = self.trackers.get(session.id)
         if tracker:
-            logger.debug(f"[GRID] _rebuild_grid: 重置PriceTracker")
+            logger.debug(f"[网格] _rebuild_grid: 重置PriceTracker")
             tracker.reset(trade_price)
         else:
-            logger.warning(f"[GRID] _rebuild_grid: session_id={session.id} 无对应的PriceTracker")
+            logger.warning(f"[网格] session_id={session.id} 无对应的PriceTracker")
 
         # 更新数据库（独立保护: 失败时不回滚内存状态，交易统计已由RISK-1/RISK-2保障）
         # 网格中心价不一致会在下一笔交易时自动覆盖，风险可控
@@ -2028,12 +2028,12 @@ class GridTradingManager:
                 'current_center_price': trade_price
             })
         except Exception as db_err:
-            logger.error(f"[GRID] _rebuild_grid: DB更新center_price失败"
+            logger.error(f"[网格] DB更新center_price失败"
                         f"(内存已更新,下一笔交易时会覆盖): {db_err}")
-        logger.debug(f"[GRID] _rebuild_grid: 数据库更新完成")
+        logger.debug(f"[网格] _rebuild_grid: 数据库更新完成")
 
         levels = session.get_grid_levels()
-        logger.info(f"[GRID] _rebuild_grid: 网格重建完成 {session.stock_code}, "
+        logger.info(f"[网格] 网格重建完成 {session.stock_code}, "
                    f"旧中心={old_center:.2f} -> 新中心={trade_price:.2f}, "
                    f"新档位=[{levels['lower']:.2f}, {levels['center']:.2f}, {levels['upper']:.2f}]")
 
@@ -2082,7 +2082,7 @@ class GridTradingManager:
                 if price is not None:
                     return price
         except Exception as e:
-            logger.warning(f"[GRID] _get_latest_price_for_signal: 获取行情失败 stock_code={stock_code}, err={e}")
+            logger.warning(f"[网格] 获取行情失败 stock_code={stock_code}, err={e}")
 
         return None
 
@@ -2117,7 +2117,7 @@ class GridTradingManager:
             down_limit = _first_positive(('DownStopPrice', 'downStopPrice', 'LowLimit', '跌停价'))
             return up_limit, down_limit
         except Exception as e:
-            logger.debug(f"[GRID] _get_price_limits: 获取涨跌停价失败 stock_code={stock_code}, err={e}")
+            logger.debug(f"[网格] _get_price_limits: 获取涨跌停价失败 stock_code={stock_code}, err={e}")
             return None, None
 
     def _check_tradable(self, stock_code: str, signal_type: str, current_price):
@@ -2191,12 +2191,12 @@ class GridTradingManager:
     def _validate_grid_signal_before_execute(self, signal: dict, session: GridSession, latest_price=None) -> bool:
         """执行前复核网格信号，防止旧信号、会话错配和明显价格漂移"""
         if session.status != 'active':
-            logger.warning(f"[GRID] signal validate: 会话非active session_id={session.id}, status={session.status}")
+            logger.warning(f"[网格] signal validate: 会话非active session_id={session.id}, status={session.status}")
             return False
 
         signal_session_id = signal.get('session_id')
         if signal_session_id is not None and str(signal_session_id) != str(session.id):
-            logger.warning(f"[GRID] signal validate: session_id不匹配 signal={signal_session_id}, current={session.id}")
+            logger.warning(f"[网格] signal validate: session_id不匹配 signal={signal_session_id}, current={session.id}")
             return False
 
         timestamp = signal.get('timestamp')
@@ -2204,17 +2204,17 @@ class GridTradingManager:
             try:
                 signal_time = self._parse_signal_timestamp(timestamp)
             except Exception as e:
-                logger.warning(f"[GRID] signal validate: timestamp无效 timestamp={timestamp}, err={e}")
+                logger.warning(f"[网格] signal validate: timestamp无效 timestamp={timestamp}, err={e}")
                 return False
 
             max_age = getattr(config, 'GRID_SIGNAL_MAX_AGE_SECONDS', 60)
             if max_age and max_age > 0:
                 age_seconds = (datetime.now() - signal_time).total_seconds()
                 if age_seconds > max_age:
-                    logger.warning(f"[GRID] signal validate: 信号过期 age={age_seconds:.1f}s > {max_age}s")
+                    logger.warning(f"[网格] signal validate: 信号过期 age={age_seconds:.1f}s > {max_age}s")
                     return False
                 if age_seconds < -5:
-                    logger.warning(f"[GRID] signal validate: 信号时间来自未来 age={age_seconds:.1f}s")
+                    logger.warning(f"[网格] signal validate: 信号时间来自未来 age={age_seconds:.1f}s")
                     return False
 
         should_check_price_drift = (
@@ -2230,21 +2230,21 @@ class GridTradingManager:
             try:
                 trigger_price = float(trigger_price)
             except (TypeError, ValueError):
-                logger.warning(f"[GRID] signal validate: trigger_price无效 value={trigger_price}")
+                logger.warning(f"[网格] signal validate: trigger_price无效 value={trigger_price}")
                 return False
             if trigger_price <= 0:
-                logger.warning(f"[GRID] signal validate: trigger_price非正 value={trigger_price}")
+                logger.warning(f"[网格] signal validate: trigger_price非正 value={trigger_price}")
                 return False
             drift = abs(float(latest_price) - trigger_price) / trigger_price
             if drift > max_drift:
                 logger.warning(
-                    f"[GRID] signal validate: 价格漂移过大 stock_code={session.stock_code}, "
+                    f"[网格] signal validate: 价格漂移过大 stock_code={session.stock_code}, "
                     f"latest={latest_price:.4f}, trigger={trigger_price:.4f}, "
                     f"drift={drift*100:.2f}% > {max_drift*100:.2f}%"
                 )
                 return False
         elif should_check_price_drift and timestamp is not None and signal_session_id is not None:
-            logger.debug(f"[GRID] signal validate: 未取得最新价，跳过价格漂移复核 stock_code={session.stock_code}")
+            logger.debug(f"[网格] signal validate: 未取得最新价，跳过价格漂移复核 stock_code={session.stock_code}")
 
         return True
 
@@ -2285,8 +2285,9 @@ class GridTradingManager:
             })
         self.pending_grid_orders[normalized_order_id] = pending_info
         logger.info(
-            f"[GRID] pending order registered: order_id={normalized_order_id}, "
-            f"session_id={session.id}, side={side}, volume={volume}, price={expected_price:.2f}"
+            f"[网格] 已登记待成交委托 股票代码={session.stock_code}, 委托号={normalized_order_id}, "
+            f"会话={session.id}, 方向={config.TRADE_SIDE_LABELS.get(side, side)}, "
+            f"数量={volume}, 委托价={expected_price:.2f}"
         )
 
     def _record_confirmed_grid_trade(self, session: GridSession, signal: dict, side: str,
@@ -2329,7 +2330,7 @@ class GridTradingManager:
             try:
                 unmatched_sell_volume = self.db.get_unmatched_grid_sell_volume(session.id)
             except Exception as ledger_err:
-                logger.warning(f"[GRID] 查询未匹配卖出数量失败，按普通买入处理: {ledger_err}")
+                logger.warning(f"[网格] 查询未匹配卖出数量失败，按普通买入处理: {ledger_err}")
                 unmatched_sell_volume = 0
 
         session.trade_count += 1
@@ -2342,12 +2343,12 @@ class GridTradingManager:
             reserved_price = self._safe_float(signal.get('reserved_price'), 0.0)
             if reserved_price > 0 and price > reserved_price + 0.0001:
                 logger.error(
-                    f"[GRID] confirmed buy price exceeded reserved_price: stock_code={stock_code}, "
+                    f"[网格] confirmed buy price exceeded reserved_price: stock_code={stock_code}, "
                     f"deal_price={price:.4f}, reserved_price={reserved_price:.4f}, volume={volume}"
                 )
             if session.current_investment > session.max_investment + 0.01:
                 logger.error(
-                    f"[GRID] confirmed buy hard cap: current_investment={session.current_investment:.4f} "
+                    f"[网格] confirmed buy hard cap: current_investment={session.current_investment:.4f} "
                     f"> max_investment={session.max_investment:.4f}, 修正至max_investment"
                 )
                 session.current_investment = session.max_investment
@@ -2405,7 +2406,7 @@ class GridTradingManager:
                 if order_id and order_updates and hasattr(self.db, 'update_grid_order'):
                     self.db.update_grid_order(order_id, order_updates)
         except Exception as db_err:
-            logger.error(f"[GRID] confirmed trade DB写入失败，回滚内存统计: {db_err}")
+            logger.error(f"[网格] confirmed trade DB写入失败，回滚内存统计: {db_err}")
             session.trade_count = old_trade_count
             session.buy_count = old_buy_count
             session.sell_count = old_sell_count
@@ -2435,8 +2436,8 @@ class GridTradingManager:
             pass
 
         logger.info(
-            f"[GRID] confirmed {side}: stock_code={stock_code}, volume={volume}, "
-            f"price={price:.2f}, amount={amount:.2f}, trade_id={trade_id}"
+            f"[网格] 成交入账 股票代码={stock_code}, 方向={config.TRADE_SIDE_LABELS.get(side, side)}, "
+            f"成交价={price:.2f}, 数量={volume}, 金额={amount:.2f}, 流水号={trade_id}"
         )
         return True
 
@@ -2452,7 +2453,7 @@ class GridTradingManager:
             raw = self._get_attr_or_key(trade, ('traded_time', '成交时间'))
             deal_time, deal_time_str = settlement_db.parse_deal_time(raw)
         except Exception as err:
-            logger.debug(f"[GRID] 提取 traded_time 失败（按 local_fallback 处理）: {err}")
+            logger.debug(f"[网格] 提取 traded_time 失败（按 local_fallback 处理）: {err}")
 
         if time_source is None:
             time_source = (settlement_db.TIME_SOURCE_EXCHANGE if deal_time_str
@@ -2500,9 +2501,9 @@ class GridTradingManager:
                 deal_meta=deal_meta,
             )
             if not saved:
-                logger.warning(f"[GRID] confirmed trade_records写入失败: trade_id={trade_id}")
+                logger.warning(f"[网格] 成交入账写交易流水失败 流水号={trade_id}")
         except Exception as err:
-            logger.warning(f"[GRID] confirmed trade_records写入异常: trade_id={trade_id}, err={err}")
+            logger.warning(f"[网格] 成交入账写交易流水异常 流水号={trade_id}, err={err}")
 
     def handle_deal_callback(self, trade, time_source: str = None) -> bool:
         """实盘成交回调确认网格委托；只有真实成交后才更新网格统计和交易表
@@ -2532,15 +2533,15 @@ class GridTradingManager:
                 volume = int(volume)
                 commission = float(commission) if commission is not None else None
             except (TypeError, ValueError):
-                logger.warning(f"[GRID] handle_deal_callback: 成交价格/数量无效 order_id={order_id}, price={price}, volume={volume}")
+                logger.warning(f"[网格] 成交价格/数量无效 委托号={order_id}, price={price}, volume={volume}")
                 return False
             if price <= 0 or volume <= 0:
-                logger.warning(f"[GRID] handle_deal_callback: 成交价格/数量非正 order_id={order_id}, price={price}, volume={volume}")
+                logger.warning(f"[网格] 成交价格/数量非正 委托号={order_id}, price={price}, volume={volume}")
                 return False
 
             if self._normalize_code(str(stock_code)) != self._normalize_code(pending['stock_code']):
                 logger.warning(
-                    f"[GRID] handle_deal_callback: 股票代码不匹配 order_id={order_id}, "
+                    f"[网格] 股票代码不匹配 委托号={order_id}, "
                     f"callback={stock_code}, pending={pending['stock_code']}"
                 )
                 return False
@@ -2554,10 +2555,10 @@ class GridTradingManager:
             trade_id = str(raw_trade_id) if raw_trade_id else f"{order_id}_{pending.get('filled_volume', 0) + confirmed_volume}"
             confirmed_trade_ids = pending.setdefault('confirmed_trade_ids', set())
             if trade_id in confirmed_trade_ids:
-                logger.warning(f"[GRID] handle_deal_callback: 重复成交回报已忽略 trade_id={trade_id}, order_id={order_id}")
+                logger.warning(f"[网格] 重复成交回报已忽略 成交编号={trade_id}, 委托号={order_id}")
                 return False
             if hasattr(self.db, 'grid_trade_exists') and self.db.grid_trade_exists(trade_id):
-                logger.warning(f"[GRID] handle_deal_callback: 成交已在DB落账，忽略重复回报 trade_id={trade_id}, order_id={order_id}")
+                logger.warning(f"[网格] 成交已在DB落账，忽略重复回报 成交编号={trade_id}, 委托号={order_id}")
                 confirmed_trade_ids.add(trade_id)
                 return False
 
@@ -2566,7 +2567,7 @@ class GridTradingManager:
                 or self.sessions.get(pending['stock_code'])
             )
             if not session or session.status not in ('active', 'stopping'):
-                logger.warning(f"[GRID] handle_deal_callback: 会话不存在或非active order_id={order_id}, session_id={pending['session_id']}")
+                logger.warning(f"[网格] 会话不存在或非active 委托号={order_id}, session_id={pending['session_id']}")
                 return False
 
             # ── 累积填充量 ──
@@ -2592,11 +2593,11 @@ class GridTradingManager:
                         'filled_amount': new_filled_amount
                     })
                 except Exception as db_err:
-                    logger.warning(f"[GRID] handle_deal_callback: 更新grid_order状态失败 order_id={order_id}, err={db_err}")
+                    logger.warning(f"[网格] 更新grid_order状态失败 委托号={order_id}, err={db_err}")
 
             if order_status == 'partial_filled':
                 logger.info(
-                    f"[GRID] handle_deal_callback: 部分成交累积 order_id={order_id}, "
+                    f"[网格] 部分成交累积 委托号={order_id}, "
                     f"filled={pending['filled_volume']}/{pending['requested_volume']}"
                 )
                 self._complete_stop_if_no_open_orders_unlocked(pending['session_id'])
@@ -2636,16 +2637,16 @@ class GridTradingManager:
                     pending['filled_total_commission'] = pending.get('filled_total_commission', 0.0) - commission
                 confirmed_trade_ids.discard(trade_id)
                 logger.warning(
-                    f"[GRID] handle_deal_callback: 聚合落账失败，已回滚 pending 累积量 "
-                    f"order_id={order_id}, rolled_back_volume={confirmed_volume}"
+                    f"[网格] 聚合落账失败，已回滚 pending 累积量 "
+                    f"委托号={order_id}, rolled_back_volume={confirmed_volume}"
                 )
                 return False
 
             self.pending_grid_orders.pop(order_id, None)
             logger.info(
-                f"[GRID] handle_deal_callback: 委托已全部成交并聚合落账 order_id={order_id}, "
-                f"total_volume={total_volume}, avg_price={avg_price:.2f}, "
-                f"partial_fill_count={len(confirmed_trade_ids)}"
+                f"[网格] 委托已全部成交并聚合落账 委托号={order_id}, "
+                f"累计数量={total_volume}, 均价={avg_price:.2f}, "
+                f"分笔数={len(confirmed_trade_ids)}"
             )
             self._complete_stop_if_no_open_orders_unlocked(pending['session_id'])
             return True
@@ -2682,7 +2683,7 @@ class GridTradingManager:
                             'last_error': f'order terminal status {status}'
                         })
                     except Exception as db_err:
-                        logger.warning(f"[GRID] handle_order_callback: 更新历史委托状态失败 order_id={order_id}, err={db_err}")
+                        logger.warning(f"[网格] 更新历史委托状态失败 委托号={order_id}, err={db_err}")
                     return True
                 return False
 
@@ -2703,7 +2704,7 @@ class GridTradingManager:
                         'last_error': f'order terminal status {status}'
                     })
             except Exception as db_err:
-                logger.error(f"[GRID] handle_order_callback: 更新委托终态失败 order_id={order_id}, err={db_err}")
+                logger.error(f"[网格] 更新委托终态失败 委托号={order_id}, err={db_err}")
                 return False
 
             self.pending_grid_orders.pop(order_id, None)
@@ -2713,7 +2714,7 @@ class GridTradingManager:
                 tracker.crossed_level = None
             self._complete_stop_if_no_open_orders_unlocked(pending.get('session_id'))
             logger.warning(
-                f"[GRID] handle_order_callback: 委托终态已处理 order_id={order_id}, "
+                f"[网格] 委托终态已处理 委托号={order_id}, "
                 f"status={status}, mapped={new_status}, filled={filled_volume}/{requested_volume}"
             )
 
@@ -2762,8 +2763,8 @@ class GridTradingManager:
         max_attempts = self._safe_int(getattr(config, 'GRID_PENDING_ORDER_REORDER_MAX_ATTEMPTS', 1), 1)
         if reorder_count >= max_attempts:
             logger.warning(
-                f"[GRID] reorder: 已达到最大重挂次数，放弃重挂 "
-                f"order_id={parent_order_id}, attempts={reorder_count}/{max_attempts}"
+                f"[网格] 已达到最大重挂次数，放弃重挂 "
+                f"委托号={parent_order_id}, attempts={reorder_count}/{max_attempts}"
             )
             return False
 
@@ -2771,7 +2772,7 @@ class GridTradingManager:
         stock_code = pending_snapshot.get('stock_code') or signal.get('stock_code')
         side = str(pending_snapshot.get('side') or signal.get('signal_type') or '').upper()
         if not stock_code or side not in ('BUY', 'SELL'):
-            logger.error(f"[GRID] reorder: pending信息不足，放弃重挂 order_id={parent_order_id}")
+            logger.error(f"[网格] pending信息不足，放弃重挂 委托号={parent_order_id}")
             return False
 
         signal.setdefault('stock_code', stock_code)
@@ -2790,11 +2791,11 @@ class GridTradingManager:
         try:
             position_snapshot = self.position_manager.get_position(stock_code)
         except Exception as e:
-            logger.warning(f"[GRID] reorder: 预取持仓失败(将按原逻辑降级): {e}")
+            logger.warning(f"[网格] 预取持仓失败(将按原逻辑降级): {e}")
 
         latest_price = self._get_latest_price_for_signal(stock_code, position_snapshot=position_snapshot)
         if latest_price is None:
-            logger.error(f"[GRID] reorder: 无法获取最新行情，放弃重挂 order_id={parent_order_id}, stock={stock_code}")
+            logger.error(f"[网格] 无法获取最新行情，放弃重挂 委托号={parent_order_id}, stock={stock_code}")
             return False
         signal['latest_price'] = latest_price
 
@@ -2806,22 +2807,22 @@ class GridTradingManager:
             session = self._find_session_by_id(pending_snapshot.get('session_id'))
             if not session or session.status != 'active' or not session.enabled:
                 logger.warning(
-                    f"[GRID] reorder: 会话不可用，放弃重挂 order_id={parent_order_id}, "
+                    f"[网格] 会话不可用，放弃重挂 委托号={parent_order_id}, "
                     f"session_id={pending_snapshot.get('session_id')}"
                 )
                 return False
             if not tradable:
-                logger.warning(f"[GRID] reorder: 涨跌停/停牌防护拦截 {stock_code} {side}: {reason}")
+                logger.warning(f"[网格] 涨跌停/停牌防护拦截 {stock_code} {side}: {reason}")
                 self._reset_tracker_after_failed_trade_unlocked(session, side)
                 return False
             if not self._validate_grid_signal_before_execute(signal, session, latest_price=latest_price):
-                logger.warning(f"[GRID] reorder: 信号复核失败，放弃重挂 order_id={parent_order_id}")
+                logger.warning(f"[网格] 信号复核失败，放弃重挂 委托号={parent_order_id}")
                 self._reset_tracker_after_failed_trade_unlocked(session, side)
                 return False
 
             plan = self._build_grid_order_plan(session, signal, position_snapshot=position_snapshot)
             if not plan:
-                logger.warning(f"[GRID] reorder: 生成重挂计划失败 order_id={parent_order_id}")
+                logger.warning(f"[网格] 生成重挂计划失败 委托号={parent_order_id}")
                 self._reset_tracker_after_failed_trade_unlocked(session, side)
                 return False
             plan['parent_order_id'] = parent_order_id
@@ -2829,26 +2830,26 @@ class GridTradingManager:
             self.submitting_grid_orders[plan['submit_id']] = plan
 
         result = self._submit_grid_order_outside_lock(plan)
-        trade_id = self._extract_order_id(result)
+        order_id = self._extract_order_id(result)
 
         with self.lock:
             self.submitting_grid_orders.pop(plan['submit_id'], None)
             session = self._find_session_by_id(plan['session_id'])
             if not session:
-                logger.warning(f"[GRID] reorder: 下单返回后会话不存在 submit_id={plan['submit_id']}")
+                logger.warning(f"[网格] 下单返回后会话不存在 submit_id={plan['submit_id']}")
                 return False
-            if not result or not trade_id:
-                logger.error(f"[GRID] reorder: 重挂下单失败 order_id={parent_order_id}, stock={stock_code}")
+            if not result or not order_id:
+                logger.error(f"[网格] 重挂下单失败 委托号={parent_order_id}, stock={stock_code}")
                 self._reset_tracker_after_failed_trade_unlocked(session, side)
                 return False
 
-            accepted = self._mark_order_accepted_unlocked(session, plan, trade_id)
+            accepted = self._mark_order_accepted_unlocked(session, plan, order_id)
             if not accepted:
-                logger.error(f"[GRID] reorder: 重挂登记pending失败 new_order_id={trade_id}, parent={parent_order_id}")
+                logger.error(f"[网格] 重挂登记pending失败 新委托号={order_id}, 原委托号={parent_order_id}")
                 self._reset_tracker_after_failed_trade_unlocked(session, side)
                 return False
 
-            new_pending = self.pending_grid_orders.get(str(trade_id))
+            new_pending = self.pending_grid_orders.get(str(order_id))
             if new_pending:
                 new_pending.update({
                     'parent_order_id': parent_order_id,
@@ -2857,7 +2858,7 @@ class GridTradingManager:
                     'status': 'submitted',
                 })
             if hasattr(self.db, 'update_grid_order'):
-                self.db.update_grid_order(str(trade_id), {
+                self.db.update_grid_order(str(order_id), {
                     'parent_order_id': parent_order_id,
                     'reorder_count': reorder_count + 1,
                     'reorder_after_cancel': 0,
@@ -2866,9 +2867,9 @@ class GridTradingManager:
             self.position_manager._increment_data_version()
 
         logger.info(
-            f"[GRID] reorder: 重挂成功 parent_order_id={parent_order_id}, "
-            f"new_order_id={trade_id}, stock={stock_code}, side={side}, "
-            f"attempt={reorder_count + 1}/{max_attempts}"
+            f"[网格] 重挂成功 股票代码={stock_code}, 原委托号={parent_order_id}, "
+            f"新委托号={order_id}, 方向={config.TRADE_SIDE_LABELS.get(side, side)}, "
+            f"第{reorder_count + 1}/{max_attempts}次"
         )
         return True
 
@@ -2924,32 +2925,32 @@ class GridTradingManager:
         is_reorder = bool(signal.get('is_reorder'))
 
         if session.status != 'active':
-            logger.warning(f"[GRID] _build_grid_order_plan: 会话非active, status={session.status}")
+            logger.warning(f"[网格] 会话非active, status={session.status}")
             return None
 
         if self._has_open_same_side_order_unlocked(session.id, signal_type):
             logger.warning(
-                f"[GRID] _build_grid_order_plan: {stock_code} 已有未完成{signal_type}网格委托，拒绝重复下单"
+                f"[网格] {stock_code} 已有未完成{signal_type}网格委托，拒绝重复下单"
             )
             return None
 
         if signal_type == 'BUY':
             if session.max_investment <= 0:
-                logger.error(f"[GRID] _build_grid_order_plan: {stock_code} max_investment无效")
+                logger.error(f"[网格] {stock_code} max_investment无效")
                 return None
 
             buy_cooldown = getattr(config, 'GRID_BUY_COOLDOWN', 0)
             if buy_cooldown > 0 and not is_reorder:
                 elapsed = time.time() - self.last_buy_times.get(session.id, 0)
                 if elapsed < buy_cooldown:
-                    logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 买入冷却中, 剩余{buy_cooldown - elapsed:.0f}秒")
+                    logger.warning(f"[网格] {stock_code} 买入冷却中, 剩余{buy_cooldown - elapsed:.0f}秒")
                     return None
 
             reserved_amount = self._get_reserved_buy_amount_unlocked(session.id)
             effective_investment = session.current_investment + reserved_amount
             if effective_investment >= session.max_investment:
                 logger.warning(
-                    f"[GRID] _build_grid_order_plan: {stock_code} 达到最大投入限额 "
+                    f"[网格] {stock_code} 达到最大投入限额 "
                     f"current={session.current_investment:.2f}, reserved={reserved_amount:.2f}, "
                     f"max={session.max_investment:.2f}"
                 )
@@ -2958,7 +2959,7 @@ class GridTradingManager:
             remaining_investment = session.max_investment - effective_investment
             buy_amount = min(remaining_investment, session.max_investment * session.position_ratio)
             if buy_amount < 100:
-                logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 可用买入金额{buy_amount:.2f}不足100元")
+                logger.warning(f"[网格] {stock_code} 可用买入金额{buy_amount:.2f}不足100元")
                 return None
 
             confirm_by_deal = (
@@ -2976,7 +2977,7 @@ class GridTradingManager:
                 latest_price=signal.get('latest_price')
             )
             if reserved_price <= 0:
-                logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 买入风险价无效")
+                logger.warning(f"[网格] {stock_code} 买入风险价无效")
                 return None
 
             # ── 买入量基数统一：与卖出量一致，取持仓总数 × position_ratio ──
@@ -2994,10 +2995,10 @@ class GridTradingManager:
                 # 硬上限：不得超出剩余投资额度
                 max_vol = int(remaining_investment / reserved_price) // 100 * 100
                 if volume > max_vol:
-                    logger.debug(f"[GRID] _build_grid_order_plan: {stock_code} 买入量{volume}超出剩余额度限制{max_vol}, 调整")
+                    logger.debug(f"[网格] _build_grid_order_plan: {stock_code} 买入量{volume}超出剩余额度限制{max_vol}, 调整")
                     volume = max_vol
                 logger.debug(
-                    f"[GRID] _build_grid_order_plan: {stock_code} 买入量基于持仓基数 "
+                    f"[网格] _build_grid_order_plan: {stock_code} 买入量基于持仓基数 "
                     f"current_volume={current_volume}, position_ratio={session.position_ratio*100:.0f}%, "
                     f"volume={volume}"
                 )
@@ -3005,19 +3006,19 @@ class GridTradingManager:
                 # 无持仓（首次买入）：回退为基于金额计算
                 volume = (int(buy_amount / reserved_price) // 100) * 100
                 logger.debug(
-                    f"[GRID] _build_grid_order_plan: {stock_code} 无持仓，买入量基于金额 "
+                    f"[网格] _build_grid_order_plan: {stock_code} 无持仓，买入量基于金额 "
                     f"buy_amount={buy_amount:.2f}, reserved_price={reserved_price:.4f}, volume={volume}"
                 )
             if volume < 100:
                 logger.warning(
-                    f"[GRID] _build_grid_order_plan: {stock_code} 按风险价{reserved_price:.4f}计算后买入数量{volume}不足100股"
+                    f"[网格] {stock_code} 按风险价{reserved_price:.4f}计算后买入数量{volume}不足100股"
                 )
                 return None
 
             expected_amount = volume * reserved_price
             if expected_amount > remaining_investment + 0.01:
                 logger.error(
-                    f"[GRID] _build_grid_order_plan: HARD CAP 阻止超买 amount={expected_amount:.4f}, "
+                    f"[网格] HARD CAP 阻止超买 amount={expected_amount:.4f}, "
                     f"remaining={remaining_investment:.4f}, reserved_price={reserved_price:.4f}"
                 )
                 return None
@@ -3052,24 +3053,24 @@ class GridTradingManager:
                         and elapsed >= sell_cooldown // 2
                     )
                     if not adaptive_allowed:
-                        logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 卖出冷却中")
+                        logger.warning(f"[网格] {stock_code} 卖出冷却中")
                         return None
 
             position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
             if not position:
-                logger.error(f"[GRID] _build_grid_order_plan: {stock_code} 持仓不存在")
+                logger.error(f"[网格] {stock_code} 持仓不存在")
                 return None
             current_volume = int(position.get('volume', 0) or 0)
             available_volume = int(position.get('available', current_volume) or 0)
             if current_volume <= 0 or available_volume <= 0:
-                logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 无可卖持仓")
+                logger.warning(f"[网格] {stock_code} 无可卖持仓")
                 return None
 
             reserved_sell = self._get_reserved_sell_volume_unlocked(session.id)
             effective_available = max(0, available_volume - reserved_sell)
             if effective_available <= 0:
                 logger.warning(
-                    f"[GRID] _build_grid_order_plan: {stock_code} 可卖数量已被未完成网格卖单占用 "
+                    f"[网格] {stock_code} 可卖数量已被未完成网格卖单占用 "
                     f"available={available_volume}, reserved={reserved_sell}"
                 )
                 return None
@@ -3080,7 +3081,7 @@ class GridTradingManager:
             if sell_volume > effective_available:
                 sell_volume = (int(effective_available) // 100) * 100
             if sell_volume <= 0:
-                logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 可卖数量不足100股")
+                logger.warning(f"[网格] {stock_code} 可卖数量不足100股")
                 return None
 
             confirm_by_deal = (
@@ -3103,7 +3104,7 @@ class GridTradingManager:
                 'confirm_by_deal': confirm_by_deal
             }
 
-        logger.error(f"[GRID] _build_grid_order_plan: 未知信号类型 {signal_type}")
+        logger.error(f"[网格] 未知信号类型 {signal_type}")
         return None
 
     def _submit_grid_order_outside_lock(self, plan: dict):
@@ -3122,7 +3123,7 @@ class GridTradingManager:
             strategy=config.GRID_STRATEGY_NAME
         )
 
-    def _mark_order_accepted_unlocked(self, session: GridSession, plan: dict, trade_id: str) -> bool:
+    def _mark_order_accepted_unlocked(self, session: GridSession, plan: dict, order_id: str) -> bool:
         """券商已接受委托后，锁内登记 pending 或按旧模式直接落账。"""
         side = plan['side']
         if side == 'BUY':
@@ -3133,7 +3134,7 @@ class GridTradingManager:
 
         if plan.get('confirm_by_deal'):
             self._register_pending_grid_order(
-                order_id=trade_id,
+                order_id=order_id,
                 session=session,
                 signal=plan['signal'],
                 side=side,
@@ -3148,7 +3149,7 @@ class GridTradingManager:
             side=side,
             price=plan['expected_price'],
             volume=plan['volume'],
-            trade_id=trade_id
+            trade_id=order_id
         )
 
     def _reset_tracker_after_failed_trade_unlocked(self, session: GridSession, signal_type: str):
@@ -3158,7 +3159,7 @@ class GridTradingManager:
             tracker.waiting_callback = False
             tracker.crossed_level = None
             logger.info(
-                f"[GRID] execute_grid_trade: 交易失败，重置追踪器 waiting_callback=False "
+                f"[网格] 交易失败，重置追踪器 waiting_callback=False "
                 f"stock_code={session.stock_code}, signal_type={signal_type}"
             )
 
@@ -3172,7 +3173,12 @@ class GridTradingManager:
         Returns:
             执行是否成功
         """
-        logger.info(f"[GRID] execute_grid_trade: 开始执行交易 signal={signal}")
+        logger.info(
+            f"[网格] 开始执行交易 股票代码={signal.get('stock_code')}, "
+            f"方向={config.TRADE_SIDE_LABELS.get(signal.get('signal_type'), signal.get('signal_type'))}, "
+            f"触发价={signal.get('trigger_price')}, 档位价={signal.get('grid_level')}, "
+            f"会话={signal.get('session_id')}"
+        )
 
         session_id = None
         signal_type = signal.get('signal_type', '')
@@ -3183,7 +3189,7 @@ class GridTradingManager:
             if stock_code:
                 # BUY 需要持仓快照用于统一买卖量基数（持仓×ratio）；SELL 需要用于T+1可卖数量
                 position_snapshot = self.position_manager.get_position(stock_code)
-                logger.debug(f"[GRID] execute_grid_trade: 预取持仓 stock_code={stock_code}, "
+                logger.debug(f"[网格] execute_grid_trade: 预取持仓 stock_code={stock_code}, "
                              f"snapshot={'有持仓' if position_snapshot else '无持仓'}")
             latest_price = self._get_latest_price_for_signal(stock_code, position_snapshot=position_snapshot) if stock_code else None
             tradable_result = (True, "")
@@ -3194,25 +3200,25 @@ class GridTradingManager:
                 stock_code = signal['stock_code']
                 session = self.sessions.get(self._normalize_code(stock_code))
                 if not session:
-                    logger.error(f"[GRID] execute_grid_trade: 会话不存在: {stock_code}")
+                    logger.error(f"[网格] 会话不存在: {stock_code}")
                     return False
                 if not session.enabled:
-                    logger.warning(f"[GRID] execute_grid_trade: 个股网格开关关闭，拒绝执行 stock_code={stock_code}, session_id={session.id}")
+                    logger.warning(f"[网格] 个股网格开关关闭，拒绝执行 stock_code={stock_code}, session_id={session.id}")
                     return False
 
                 signal_type = signal['signal_type']
                 session_id = session.id
                 trigger_price = signal['trigger_price']
-                logger.debug(f"[GRID] execute_grid_trade: session_id={session.id}, signal_type={signal_type}, trigger_price={trigger_price:.2f}")
+                logger.debug(f"[网格] execute_grid_trade: session_id={session.id}, signal_type={signal_type}, trigger_price={trigger_price:.2f}")
 
                 if not self._validate_grid_signal_before_execute(signal, session, latest_price=latest_price):
-                    logger.warning(f"[GRID] execute_grid_trade: 信号复核失败，拒绝执行 stock_code={stock_code}, signal_type={signal_type}")
+                    logger.warning(f"[网格] 信号复核失败，拒绝执行 stock_code={stock_code}, signal_type={signal_type}")
                     self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     return False
 
                 tradable, reason = tradable_result
                 if not tradable:
-                    logger.warning(f"[GRID] execute_grid_trade: 涨跌停/停牌防护拦截 "
+                    logger.warning(f"[网格] 涨跌停/停牌防护拦截 "
                                    f"stock_code={stock_code}, signal_type={signal_type}: {reason}")
                     self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     return False
@@ -3223,7 +3229,7 @@ class GridTradingManager:
                     current_price=trigger_price,
                     position_snapshot=position_snapshot
                 )
-                logger.debug(f"[GRID] execute_grid_trade: 交易前状态 trade_count={session.trade_count}, "
+                logger.debug(f"[网格] execute_grid_trade: 交易前状态 trade_count={session.trade_count}, "
                             f"current_investment={session.current_investment:.2f}, "
                             f"profit_ratio={before_pnl['profit_ratio']*100:.2f}% "
                             f"({before_pnl['method_detail']})")
@@ -3233,7 +3239,7 @@ class GridTradingManager:
                     signal_for_plan['latest_price'] = latest_price
                 plan = self._build_grid_order_plan(session, signal_for_plan, position_snapshot=position_snapshot)
                 if not plan:
-                    logger.warning(f"[GRID] execute_grid_trade: 生成下单计划失败 stock_code={stock_code}, signal_type={signal_type}")
+                    logger.warning(f"[网格] 生成下单计划失败 stock_code={stock_code}, signal_type={signal_type}")
                     self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     return False
 
@@ -3241,42 +3247,42 @@ class GridTradingManager:
 
             # 真正下单发生在锁外，避免QMT卡顿阻塞网格状态机。
             if config.ENABLE_SIMULATION_MODE:
-                trade_id = f"GRID_SIM_{plan['side']}_{int(time.time()*1000)}"
-                result = trade_id
+                order_id = f"GRID_SIM_{plan['side']}_{int(time.time()*1000)}"
+                result = order_id
             else:
                 result = self._submit_grid_order_outside_lock(plan)
                 if not result:
-                    logger.error(f"[GRID] execute_grid_trade: 实盘网格{plan['side']}下单失败: {plan['stock_code']}")
+                    logger.error(f"[网格] 实盘网格{plan['side']}下单失败: {plan['stock_code']}")
                     result = None
-                trade_id = self._extract_order_id(result)
+                order_id = self._extract_order_id(result)
 
             cancel_after_accept = None
             with self.lock:
                 current_plan = self.submitting_grid_orders.pop(plan['submit_id'], plan)
                 session = self._find_session_by_id(plan['session_id'])
                 if not session:
-                    logger.warning(f"[GRID] execute_grid_trade: 下单返回后会话已不存在 submit_id={plan['submit_id']}")
+                    logger.warning(f"[网格] 下单返回后会话已不存在 submit_id={plan['submit_id']}")
                     return False
 
-                if not result or (plan.get('confirm_by_deal') and not trade_id):
-                    logger.warning(f"[GRID] execute_grid_trade: 交易执行失败 stock_code={stock_code}, signal_type={signal_type}")
+                if not result or (plan.get('confirm_by_deal') and not order_id):
+                    logger.warning(f"[网格] 交易执行失败 stock_code={stock_code}, signal_type={signal_type}")
                     self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     self._complete_stop_if_no_open_orders_unlocked(session.id)
                     return False
 
-                success = self._mark_order_accepted_unlocked(session, plan, trade_id)
+                success = self._mark_order_accepted_unlocked(session, plan, order_id)
                 if not success:
-                    logger.warning(f"[GRID] execute_grid_trade: 交易落账/登记失败 stock_code={stock_code}, signal_type={signal_type}")
+                    logger.warning(f"[网格] 交易落账/登记失败 stock_code={stock_code}, signal_type={signal_type}")
                     self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     self._complete_stop_if_no_open_orders_unlocked(session.id)
                     return False
 
                 if session.status == 'stopping' or current_plan.get('stop_requested'):
-                    pending = self.pending_grid_orders.get(str(trade_id))
+                    pending = self.pending_grid_orders.get(str(order_id))
                     if pending:
                         pending['stop_requested'] = True
                         pending['stop_reason'] = session.stop_reason or current_plan.get('stop_reason')
-                        cancel_after_accept = str(trade_id)
+                        cancel_after_accept = str(order_id)
                         try:
                             if hasattr(self.db, 'update_grid_order'):
                                 self.db.update_grid_order(cancel_after_accept, {
@@ -3284,17 +3290,17 @@ class GridTradingManager:
                                     'last_error': f"stop requested: {pending.get('stop_reason')}"
                                 })
                         except Exception as db_err:
-                            logger.warning(f"[GRID] execute_grid_trade: 下单后标记撤单请求失败 order_id={trade_id}, err={db_err}")
+                            logger.warning(f"[网格] 下单后标记撤单请求失败 委托号={order_id}, err={db_err}")
 
                 cooldown_level = signal.get('grid_level')
                 if cooldown_level is not None:
                     cooldown_key = (session.id, cooldown_level)
                     self.level_cooldowns[cooldown_key] = time.time()
-                    logger.debug(f"[GRID] execute_grid_trade: 设置档位冷却 session_id={session.id}, "
+                    logger.debug(f"[网格] execute_grid_trade: 设置档位冷却 session_id={session.id}, "
                                 f"level={cooldown_level:.2f} (触发档位价格), "
                                 f"signal_type={signal_type}")
                 else:
-                    logger.warning(f"[GRID] execute_grid_trade: signal 中无 grid_level，跳过冷却设置")
+                    logger.warning(f"[网格] signal 中无 grid_level，跳过冷却设置")
 
                 # 执行交易后的状态
                 after_pnl = self.get_pnl_snapshot(
@@ -3302,7 +3308,7 @@ class GridTradingManager:
                     current_price=trigger_price,
                     position_snapshot=position_snapshot
                 )
-                logger.debug(f"[GRID] execute_grid_trade: 交易后状态 trade_count={session.trade_count}, "
+                logger.debug(f"[网格] execute_grid_trade: 交易后状态 trade_count={session.trade_count}, "
                             f"current_investment={session.current_investment:.2f}, "
                             f"profit_ratio={after_pnl['profit_ratio']*100:.2f}% "
                             f"({after_pnl['method_detail']})")
@@ -3310,9 +3316,9 @@ class GridTradingManager:
                 # 触发数据版本更新
                 self.position_manager._increment_data_version()
 
-                logger.info(f"[GRID] execute_grid_trade: 交易执行成功 stock_code={stock_code}, signal_type={signal_type}")
+                logger.info(f"[网格] 交易执行成功 stock_code={stock_code}, signal_type={signal_type}")
 
-                if not self.pending_grid_orders.get(str(trade_id)):
+                if not self.pending_grid_orders.get(str(order_id)):
                     self._complete_stop_if_no_open_orders_unlocked(session.id)
 
             if cancel_after_accept:
@@ -3325,11 +3331,11 @@ class GridTradingManager:
                                     'last_error': 'cancel failed after stop requested'
                                 })
                         except Exception as db_err:
-                            logger.warning(f"[GRID] execute_grid_trade: 写入撤单失败状态失败 order_id={cancel_after_accept}, err={db_err}")
+                            logger.warning(f"[网格] 写入撤单失败状态失败 委托号={cancel_after_accept}, err={db_err}")
             return True
 
         except Exception as e:
-            logger.error(f"[GRID] execute_grid_trade: 执行网格交易失败: {str(e)}", exc_info=True)
+            logger.error(f"[网格] 执行网格交易失败: {str(e)}", exc_info=True)
             # Gap 1修复：异常路径同样重置追踪器，防止与 success=False 路径不一致。
             # 若不重置，任何 DB/网络异常都会导致 tracker.waiting_callback 留在 True，
             # 重现无限重试死循环。
@@ -3345,18 +3351,18 @@ class GridTradingManager:
                             self._reset_tracker_after_failed_trade_unlocked(session_for_reset, signal.get('signal_type', ''))
                             self._complete_stop_if_no_open_orders_unlocked(session_for_reset.id)
             except Exception as reset_err:
-                logger.warning(f"[GRID] execute_grid_trade: 异常路径重置追踪器失败(可忽略): {reset_err}")
+                logger.warning(f"[网格] 异常路径重置追踪器失败(可忽略): {reset_err}")
             return False
 
     def _execute_grid_buy(self, session: GridSession, signal: dict) -> bool:
         """执行网格买入"""
         stock_code = session.stock_code
         trigger_price = signal['trigger_price']
-        logger.info(f"[GRID] _execute_grid_buy: 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
+        logger.info(f"[网格] 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
 
         # 0. 检查 max_investment 有效性
         if session.max_investment <= 0:
-            logger.error(f"[GRID] _execute_grid_buy: {stock_code} max_investment={session.max_investment} 无效，无法执行买入")
+            logger.error(f"[网格] {stock_code} max_investment={session.max_investment} 无效，无法执行买入")
             return False
 
         # 0.5 检查成功买入冷却时间 (GRID_BUY_COOLDOWN)
@@ -3366,14 +3372,14 @@ class GridTradingManager:
             last_buy = self.last_buy_times.get(session.id, 0)
             elapsed = time.time() - last_buy
             if elapsed < buy_cooldown:
-                logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 买入冷却中 "
+                logger.warning(f"[网格] {stock_code} 买入冷却中 "
                                f"(剩余{buy_cooldown - elapsed:.0f}秒), 跳过买入")
                 return False
 
         # 1. 检查投入限额
-        logger.debug(f"[GRID] _execute_grid_buy: 检查投入限额 current_investment={session.current_investment:.2f}, max_investment={session.max_investment:.2f}")
+        logger.debug(f"[网格] _execute_grid_buy: 检查投入限额 current_investment={session.current_investment:.2f}, max_investment={session.max_investment:.2f}")
         if session.current_investment >= session.max_investment:
-            logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 达到最大投入限额{session.max_investment:.2f}, 跳过买入")
+            logger.warning(f"[网格] {stock_code} 达到最大投入限额{session.max_investment:.2f}, 跳过买入")
             return False
 
         # 2. 计算买入金额和数量
@@ -3383,9 +3389,9 @@ class GridTradingManager:
         if session.trade_mode == 'shares':
             # 固定股数模式：每次买入 fixed_volume 股（对齐100股）
             volume = (int(session.fixed_volume) // 100) * 100
-            logger.debug(f"[GRID] _execute_grid_buy: 固定股数模式 fixed_volume={session.fixed_volume}, volume={volume}")
+            logger.debug(f"[网格] _execute_grid_buy: 固定股数模式 fixed_volume={session.fixed_volume}, volume={volume}")
             if volume < min_volume:
-                logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 固定股数{session.fixed_volume}不足{min_volume}股, 跳过买入")
+                logger.warning(f"[网格] {stock_code} 固定股数{session.fixed_volume}不足{min_volume}股, 跳过买入")
                 return False
         else:
             # 固定金额模式：单次买入金额 = min(剩余额度, 总额度 × position_ratio)
@@ -3395,11 +3401,11 @@ class GridTradingManager:
             # - 默认 position_ratio=0.25 即单次买入不超过总额度 25%（最多 4 档），与原 20% 逻辑类似但更灵活。
             target_buy_amount = session.max_investment * session.position_ratio
             buy_amount = min(remaining_investment, target_buy_amount)
-            logger.debug(f"[GRID] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, "
+            logger.debug(f"[网格] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, "
                         f"target_buy_amount(position_ratio={session.position_ratio*100:.0f}%)={target_buy_amount:.2f}, buy_amount={buy_amount:.2f}")
 
             if buy_amount < 100:  # 最小买入金额
-                logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 可用买入金额{buy_amount:.2f}不足100元, 跳过买入")
+                logger.warning(f"[网格] {stock_code} 可用买入金额{buy_amount:.2f}不足100元, 跳过买入")
                 return False
 
             # 计算股数
@@ -3408,15 +3414,15 @@ class GridTradingManager:
             # 计算股数 (统一要求100股倍数)
             volume = (int(raw_volume) // 100) * 100
 
-            logger.debug(f"[GRID] _execute_grid_buy: 计算买入数量 raw_volume={raw_volume:.2f}, volume={volume}, min_volume={min_volume}")
+            logger.debug(f"[网格] _execute_grid_buy: 计算买入数量 raw_volume={raw_volume:.2f}, volume={volume}, min_volume={min_volume}")
 
             if volume < min_volume:
-                logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 买入数量{volume}不足{min_volume}股(原始={raw_volume:.2f}股), 跳过")
+                logger.warning(f"[网格] {stock_code} 买入数量{volume}不足{min_volume}股(原始={raw_volume:.2f}股), 跳过")
                 return False
 
         # 3. 执行买入
         actual_amount = volume * trigger_price
-        logger.debug(f"[GRID] _execute_grid_buy: 执行买入 volume={volume}, actual_amount={actual_amount:.2f}")
+        logger.debug(f"[网格] _execute_grid_buy: 执行买入 volume={volume}, actual_amount={actual_amount:.2f}")
 
         # ── 硬上限校验 V3（防御性兜底，防浮点误差/逻辑bug） ──────────────────────────
         # 无论 buy_amount/remaining 计算链路是否有误，此处确保 actual_amount 不超过剩余额度。
@@ -3424,7 +3430,7 @@ class GridTradingManager:
         remaining_strict = session.max_investment - session.current_investment
         if actual_amount > remaining_strict + 0.01:
             logger.error(
-                f"[GRID] _execute_grid_buy: HARD CAP 阻止超买 "
+                f"[网格] HARD CAP 阻止超买 "
                 f"stock_code={stock_code}, actual_amount={actual_amount:.4f} > "
                 f"remaining={remaining_strict:.4f} (current={session.current_investment:.4f}, "
                 f"max={session.max_investment:.4f})"
@@ -3432,8 +3438,8 @@ class GridTradingManager:
             return False
 
         if config.ENABLE_SIMULATION_MODE:
-            trade_id = f"GRID_SIM_BUY_{int(time.time()*1000)}"
-            logger.info(f"[GRID] _execute_grid_buy: [模拟]网格买入: {stock_code}, 数量={volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
+            order_id = f"GRID_SIM_BUY_{int(time.time()*1000)}"
+            logger.info(f"[网格] [模拟]网格买入 股票代码={stock_code}, 数量={volume}, 委托价={trigger_price:.2f}, 委托号={order_id}")
         else:
             # ── V1 修复：明确传入 volume+price，避免 executor 用市价重算量 ──────────────
             # 若只传 amount，executor 会用实时市价重算股数，当计算量≤0时强制设100股，
@@ -3448,7 +3454,7 @@ class GridTradingManager:
                 and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
             )
             order_price = None if use_counterparty else trigger_price
-            logger.debug(f"[GRID] _execute_grid_buy: 调用executor.buy_stock 实盘买入 "
+            logger.debug(f"[网格] _execute_grid_buy: 调用executor.buy_stock 实盘买入 "
                          f"volume={volume}, price={'卖三价(对手价)' if order_price is None else f'{order_price:.2f}'}")
             result = self.executor.buy_stock(
                 stock_code=stock_code,
@@ -3457,19 +3463,19 @@ class GridTradingManager:
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:
-                logger.error(f"[GRID] _execute_grid_buy: 实盘网格买入失败: {stock_code}")
+                logger.error(f"[网格] 实盘网格买入失败: {stock_code}")
                 return False
-            trade_id = self._extract_order_id(result)
-            logger.info(f"[GRID] _execute_grid_buy: 实盘网格买入成功: {stock_code}, trade_id={trade_id}")
+            order_id = self._extract_order_id(result)
+            logger.info(f"[网格] 实盘网格买入委托已下达 股票代码={stock_code}, 委托号={order_id}")
 
             if getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True):
-                if not trade_id:
-                    logger.error(f"[GRID] _execute_grid_buy: 实盘委托成功但缺少order_id，无法等待成交确认: {stock_code}")
+                if not order_id:
+                    logger.error(f"[网格] 实盘委托成功但缺少order_id，无法等待成交确认: {stock_code}")
                     return False
                 self.last_buy_times[session.id] = time.time()
-                logger.debug(f"[GRID] _execute_grid_buy: 实盘委托已登记冷却 last_buy_times[{session.id}]")
+                logger.debug(f"[网格] _execute_grid_buy: 实盘委托已登记冷却 last_buy_times[{session.id}]")
                 self._register_pending_grid_order(
-                    order_id=trade_id,
+                    order_id=order_id,
                     session=session,
                     signal=signal,
                     side='BUY',
@@ -3477,8 +3483,8 @@ class GridTradingManager:
                     expected_price=trigger_price
                 )
                 logger.info(
-                    f"[GRID] _execute_grid_buy: 实盘网格买入委托已提交，等待成交回调确认 "
-                    f"stock_code={stock_code}, order_id={trade_id}, volume={volume}, price={trigger_price:.2f}"
+                    f"[网格] 实盘网格买入委托已提交，等待成交回调确认 "
+                    f"stock_code={stock_code}, 委托号={order_id}, volume={volume}, price={trigger_price:.2f}"
                 )
                 return True
 
@@ -3490,7 +3496,7 @@ class GridTradingManager:
         # 修复方案: 将时间戳记录提前到订单确认后、DB 操作之前。即使 DB 失败，
         # GRID_BUY_COOLDOWN 保护依然有效，阻止在冷却期内重新触发买入。
         self.last_buy_times[session.id] = time.time()
-        logger.debug(f"[GRID] _execute_grid_buy: BUG-C1修复 last_buy_times[{session.id}]已记录(DB写入前)")
+        logger.debug(f"[网格] _execute_grid_buy: BUG-C1修复 last_buy_times[{session.id}]已记录(DB写入前)")
 
         success = self._record_confirmed_grid_trade(
             session=session,
@@ -3498,11 +3504,11 @@ class GridTradingManager:
             side='BUY',
             price=trigger_price,
             volume=volume,
-            trade_id=trade_id
+            trade_id=order_id
         )
         if success:
-            logger.info(f"[GRID] _execute_grid_buy: 网格买入成功! stock_code={stock_code}, volume={volume}, amount={actual_amount:.2f}, "
-                       f"investment={session.current_investment:.2f}/{session.max_investment:.2f}, trade_id={trade_id}")
+            logger.info(f"[网格] 网格买入成功! 股票代码={stock_code}, 数量={volume}, 金额={actual_amount:.2f}, "
+                       f"已投入={session.current_investment:.2f}/{session.max_investment:.2f}, 委托号={order_id}")
         return success
 
     def _execute_grid_sell(self, session: GridSession, signal: dict, position_snapshot=None) -> bool:
@@ -3516,7 +3522,7 @@ class GridTradingManager:
         """
         stock_code = session.stock_code
         trigger_price = signal['trigger_price']
-        logger.info(f"[GRID] _execute_grid_sell: 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
+        logger.info(f"[网格] 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
 
         # 0.5 检查成功卖出冷却时间 (GRID_SELL_COOLDOWN) - 对称于买入冷却 BUG-C1/A-4修复
         # 防止价格在上轨附近震荡时短时间内级联触发多次卖出
@@ -3533,27 +3539,27 @@ class GridTradingManager:
                     effective_cooldown = sell_cooldown // 2
                     if elapsed < effective_cooldown:
                         logger.warning(
-                            f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中（自适应缩短至{effective_cooldown}秒）"
+                            f"[网格] {stock_code} 卖出冷却中（自适应缩短至{effective_cooldown}秒）"
                             f" 剩余{effective_cooldown - elapsed:.0f}秒, "
                             f"触发价={trigger_price:.2f} 上次={last_sell_price:.2f} "
                             f"涨幅={(trigger_price/last_sell_price - 1)*100:.1f}%")
                         return False
                     else:
                         logger.info(
-                            f"[GRID] _execute_grid_sell: {stock_code} 自适应冷却缩短生效 "
+                            f"[网格] {stock_code} 自适应冷却缩短生效 "
                             f"原{sell_cooldown}s→{effective_cooldown}s, "
                             f"触发价={trigger_price:.2f} 上次={last_sell_price:.2f} "
                             f"涨幅={(trigger_price/last_sell_price - 1)*100:.1f}%, "
                             f"已过{elapsed:.0f}s≥{effective_cooldown}s, 允许执行")
                 else:
-                    logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中 "
+                    logger.warning(f"[网格] {stock_code} 卖出冷却中 "
                                    f"(剩余{sell_cooldown - elapsed:.0f}秒), 跳过卖出")
                     return False
 
         # 1. 获取当前持仓（优先使用调用方预取的快照，避免在持有 self.lock 时再次获取锁）
         position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
         if not position:
-            logger.error(f"[GRID] _execute_grid_sell: {stock_code} 持仓不存在")
+            logger.error(f"[网格] {stock_code} 持仓不存在")
             return False
 
         current_volume = position.get('volume', 0)
@@ -3562,15 +3568,15 @@ class GridTradingManager:
         # 若持仓字典中无 available 字段（如部分 mock 或旧版快照），则退化为 current_volume（向后兼容）。
         available_volume = position.get('available', current_volume)
         cost_price = position.get('cost_price', trigger_price)
-        logger.debug(f"[GRID] _execute_grid_sell: 当前持仓 volume={current_volume}, "
+        logger.debug(f"[网格] _execute_grid_sell: 当前持仓 volume={current_volume}, "
                      f"available={available_volume}, cost_price={cost_price:.2f}")
 
         if current_volume == 0:
-            logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 持仓为0, 跳过卖出")
+            logger.warning(f"[网格] {stock_code} 持仓为0, 跳过卖出")
             return False
 
         if available_volume == 0:
-            logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 可卖数量为0"
+            logger.warning(f"[网格] {stock_code} 可卖数量为0"
                            f"（T+1限制：今日买入的{current_volume}股无法当日卖出）, 跳过卖出")
             return False
 
@@ -3578,7 +3584,7 @@ class GridTradingManager:
         if session.trade_mode == 'shares':
             # 固定股数模式：每次卖出 fixed_volume 股（对齐100股），不超过可卖数量
             sell_volume = (int(session.fixed_volume) // 100) * 100
-            logger.debug(f"[GRID] _execute_grid_sell: 固定股数模式 fixed_volume={session.fixed_volume}, "
+            logger.debug(f"[网格] _execute_grid_sell: 固定股数模式 fixed_volume={session.fixed_volume}, "
                          f"初步sell_volume={sell_volume}, available_volume={available_volume}")
         else:
             # position_ratio 字段控制每次卖出可卖持仓的比例（买入使用相同字段，语义统一）。
@@ -3588,28 +3594,28 @@ class GridTradingManager:
             # 先计算应卖股数（浮点转整数截断），再向下取整到100的倍数
             # 与买入逻辑的整百方式统一，两者数值等价但表达一致
             sell_volume = (int(available_volume * session.position_ratio) // 100) * 100
-            logger.debug(f"[GRID] _execute_grid_sell: 计算卖出数量 position_ratio={session.position_ratio*100:.1f}%, "
+            logger.debug(f"[网格] _execute_grid_sell: 计算卖出数量 position_ratio={session.position_ratio*100:.1f}%, "
                          f"available_volume={available_volume}, 初步sell_volume={sell_volume}")
 
         if sell_volume == 0:
             sell_volume = 100  # 最少卖100股
-            logger.debug(f"[GRID] _execute_grid_sell: 卖出数量为0, 调整为最小值100")
+            logger.debug(f"[网格] _execute_grid_sell: 卖出数量为0, 调整为最小值100")
 
         if sell_volume > available_volume:
             sell_volume = int(available_volume / 100) * 100
-            logger.debug(f"[GRID] _execute_grid_sell: 卖出数量超过可卖持仓(T+1可卖={available_volume}), 调整为{sell_volume}")
+            logger.debug(f"[网格] _execute_grid_sell: 卖出数量超过可卖持仓(T+1可卖={available_volume}), 调整为{sell_volume}")
 
         if sell_volume == 0:
-            logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 可卖数量不足100股, 跳过")
+            logger.warning(f"[网格] {stock_code} 可卖数量不足100股, 跳过")
             return False
 
         # 3. 执行卖出
         sell_amount = sell_volume * trigger_price
-        logger.debug(f"[GRID] _execute_grid_sell: 执行卖出 sell_volume={sell_volume}, sell_amount={sell_amount:.2f}")
+        logger.debug(f"[网格] _execute_grid_sell: 执行卖出 sell_volume={sell_volume}, sell_amount={sell_amount:.2f}")
 
         if config.ENABLE_SIMULATION_MODE:
-            trade_id = f"GRID_SIM_SELL_{int(time.time()*1000)}"
-            logger.info(f"[GRID] _execute_grid_sell: [模拟]网格卖出: {stock_code}, 数量={sell_volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
+            order_id = f"GRID_SIM_SELL_{int(time.time()*1000)}"
+            logger.info(f"[网格] [模拟]网格卖出 股票代码={stock_code}, 数量={sell_volume}, 委托价={trigger_price:.2f}, 委托号={order_id}")
         else:
             # V1-SELL修复: 卖出明确传入 volume，避免 executor 用市价重算量。
             #
@@ -3622,7 +3628,7 @@ class GridTradingManager:
                 and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
             )
             order_price = None if use_counterparty else trigger_price
-            logger.debug(f"[GRID] _execute_grid_sell: 调用executor.sell_stock 实盘卖出 "
+            logger.debug(f"[网格] _execute_grid_sell: 调用executor.sell_stock 实盘卖出 "
                          f"volume={sell_volume}, price={'买三价(对手价)' if order_price is None else f'{order_price:.2f}'}")
             result = self.executor.sell_stock(
                 stock_code=stock_code,
@@ -3631,20 +3637,20 @@ class GridTradingManager:
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:
-                logger.error(f"[GRID] _execute_grid_sell: 实盘网格卖出失败: {stock_code}")
+                logger.error(f"[网格] 实盘网格卖出失败: {stock_code}")
                 return False
-            trade_id = self._extract_order_id(result)
-            logger.info(f"[GRID] _execute_grid_sell: 实盘网格卖出成功: {stock_code}, trade_id={trade_id}")
+            order_id = self._extract_order_id(result)
+            logger.info(f"[网格] 实盘网格卖出委托已下达 股票代码={stock_code}, 委托号={order_id}")
 
             if getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True):
-                if not trade_id:
-                    logger.error(f"[GRID] _execute_grid_sell: 实盘委托成功但缺少order_id，无法等待成交确认: {stock_code}")
+                if not order_id:
+                    logger.error(f"[网格] 实盘委托成功但缺少order_id，无法等待成交确认: {stock_code}")
                     return False
                 self.last_sell_times[session.id] = time.time()
                 self.last_sell_prices[session.id] = trigger_price
-                logger.debug(f"[GRID] _execute_grid_sell: 实盘委托已登记冷却 last_sell_times[{session.id}]")
+                logger.debug(f"[网格] _execute_grid_sell: 实盘委托已登记冷却 last_sell_times[{session.id}]")
                 self._register_pending_grid_order(
-                    order_id=trade_id,
+                    order_id=order_id,
                     session=session,
                     signal=signal,
                     side='SELL',
@@ -3652,8 +3658,8 @@ class GridTradingManager:
                     expected_price=trigger_price
                 )
                 logger.info(
-                    f"[GRID] _execute_grid_sell: 实盘网格卖出委托已提交，等待成交回调确认 "
-                    f"stock_code={stock_code}, order_id={trade_id}, volume={sell_volume}, price={trigger_price:.2f}"
+                    f"[网格] 实盘网格卖出委托已提交，等待成交回调确认 "
+                    f"stock_code={stock_code}, 委托号={order_id}, volume={sell_volume}, price={trigger_price:.2f}"
                 )
                 return True
 
@@ -3662,7 +3668,7 @@ class GridTradingManager:
         # GRID_SELL_COOLDOWN 保护依然有效，阻止在冷却期内再次触发卖出。
         self.last_sell_times[session.id] = time.time()
         self.last_sell_prices[session.id] = trigger_price  # 记录触发价，供自适应冷却缩短使用
-        logger.debug(f"[GRID] _execute_grid_sell: A-4修复 last_sell_times[{session.id}]已记录(DB写入前)")
+        logger.debug(f"[网格] _execute_grid_sell: A-4修复 last_sell_times[{session.id}]已记录(DB写入前)")
 
         success = self._record_confirmed_grid_trade(
             session=session,
@@ -3670,13 +3676,13 @@ class GridTradingManager:
             side='SELL',
             price=trigger_price,
             volume=sell_volume,
-            trade_id=trade_id
+            trade_id=order_id
         )
         if success:
             pnl_snapshot = self.get_pnl_snapshot(session, current_price=trigger_price)
-            logger.info(f"[GRID] _execute_grid_sell: 网格卖出成功! stock_code={stock_code}, volume={sell_volume}, amount={sell_amount:.2f}, "
-                       f"profit={pnl_snapshot['profit_ratio']*100:.2f}% "
-                       f"({pnl_snapshot['method_detail']}), trade_id={trade_id}")
+            logger.info(f"[网格] 网格卖出成功! 股票代码={stock_code}, 数量={sell_volume}, 金额={sell_amount:.2f}, "
+                       f"盈亏={pnl_snapshot['profit_ratio']*100:.2f}% "
+                       f"({pnl_snapshot['method_detail']}), 委托号={order_id}")
         return success
 
     def get_session_stats(self, session_id: int) -> dict:
@@ -3696,7 +3702,7 @@ class GridTradingManager:
             try:
                 ledger_summary = self.db.get_grid_ledger_summary(session.id, mark_price)
             except Exception as e:
-                logger.debug(f"[GRID] get_session_stats: 获取账本摘要失败 session_id={session_id}, err={e}")
+                logger.debug(f"[网格] get_session_stats: 获取账本摘要失败 session_id={session_id}, err={e}")
         pnl_snapshot = self.get_pnl_snapshot(
             session,
             current_price=mark_price,

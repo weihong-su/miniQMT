@@ -6,6 +6,8 @@
 
 miniQMT 默认使用 `order_stock_async()` 下单。该接口同步返回的是请求序号 `seq`，真实券商委托号 `order_id` 需要等待 QMT 异步回调 `on_order_stock_async_response()` 到达后才能建立映射。
 
+> **日志术语**：自 2026-09-17 起，日志中 `seq` 统一写作 `请求序号=`、`order_id` 统一写作 `委托号=`、`order_sysid` 写作 `柜台编号=`、`traded_id` 写作 `成交编号=`、`trade_records.trade_id` 写作 `流水号=`。完整术语表见 [CLAUDE.md](https://github.com/Su-M10/miniQMT/blob/main/CLAUDE.md) 开发规范一节。查日志时注意 `委托号` 与 `柜台编号` 是两个不同的值。
+
 2026-08-11 09:30 前后，自动止盈止损开启后暴露的核心风险是：卖出委托已经提交到 QMT，但主程序未能可靠把 `seq` 匹配为真实 `order_id`。如果程序把“已提交但未确认 order_id”的订单当作失败继续重试，就可能造成同股同方向重复卖出委托。
 
 ## 已确认的 QMT 行为

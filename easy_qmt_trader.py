@@ -112,7 +112,9 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :param order: XtOrder对象
         :return:
         """
-        logger.info(f"委托回报: 股票代码={order.stock_code}, 委托状态={order.order_status}, 系统订单号={order.order_sysid}")
+        logger.info(f"委托回报: 股票代码={order.stock_code}, "
+            f"委托状态={config.ORDER_STATUS_LABELS.get(order.order_status, '未知')}({order.order_status}), "
+            f"柜台编号={order.order_sysid}")
         if self.detached:
             logger.info("已失效的旧 callback 收到委托回报，忽略")
             return
@@ -134,7 +136,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :param trade: XtTrade对象
         :return:
         """
-        logger.info(f"成交回报: 账户={trade.account_id}, 股票代码={trade.stock_code}, 订单号={trade.order_id}")
+        logger.info(f"成交回报: 股票代码={trade.stock_code}, 委托号={trade.order_id}, 账户={trade.account_id}")
         # 通知所有注册的外部回调（如 position_manager 的委托跟踪清理）
         for cb in self.trade_callbacks:
             try:
@@ -154,21 +156,21 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :param order_error:XtOrderError 对象
         :return:
         """
-        logger.error(f"委托失败: 订单号={order_error.order_id}, 错误码={order_error.error_id}, 错误信息={order_error.error_msg}")
+        logger.error(f"委托失败: 委托号={order_error.order_id}, 错误码={order_error.error_id}, 错误信息={order_error.error_msg}")
     def on_cancel_error(self, cancel_error):
         """
         撤单失败推送
         :param cancel_error: XtCancelError 对象
         :return:
         """
-        logger.error(f"撤单失败: 订单号={cancel_error.order_id}, 错误码={cancel_error.error_id}, 错误信息={cancel_error.error_msg}")
+        logger.error(f"撤单失败: 委托号={cancel_error.order_id}, 错误码={cancel_error.error_id}, 错误信息={cancel_error.error_msg}")
     def on_order_stock_async_response(self, response):
         """
         异步下单回报推送
         :param response: XtOrderResponse 对象
         :return:
         """
-        logger.info(f"异步下单回报: 账户={response.account_id}, 订单号={response.order_id}, 请求序号={response.seq}")
+        logger.info(f"异步下单回报: 委托号={response.order_id}, 请求序号={response.seq}, 账户={response.account_id}")
         self._store_order_id_mapping(response.seq, response.order_id)
         for cb in self.async_order_response_callbacks:
             try:
@@ -184,7 +186,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         """
         logger.info(
             f"异步撤单回报: 账户={getattr(response, 'account_id', '')}, "
-            f"订单号={getattr(response, 'order_id', '')}, "
+            f"委托号={getattr(response, 'order_id', '')}, "
             f"请求序号={getattr(response, 'seq', '')}, "
             f"结果={getattr(response, 'cancel_result', '')}"
         )
@@ -664,7 +666,7 @@ class easy_qmt_trader:
             fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-            logger.info(f'下单成功 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+            logger.info(f'下单成功 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 委托号={fix_result_order_id}')
             return fix_result_order_id
     def buy(self,security='600031.SH', order_type=xtconstant.STOCK_BUY,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -686,14 +688,14 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'买入成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+                logger.info(f'买入成功(同步) 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 委托号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'买入请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+                logger.info(f'买入请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
             logger.error(f'买入参数错误 标的={stock_code}, 价格={price:.2f}, 委托数量={order_volume}小于0')
@@ -718,14 +720,14 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'卖出成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+                logger.info(f'卖出成功(同步) 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 委托号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'卖出请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+                logger.info(f'卖出请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
             logger.error(f'卖出参数错误 标的={stock_code}, 价格={price:.2f}, 委托数量={order_volume}小于0')
@@ -756,7 +758,7 @@ class easy_qmt_trader:
         fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-        logger.info(f'异步下单请求提交 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+        logger.info(f'异步下单请求提交 交易类型={order_type}, 代码={stock_code}, 委托价={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
         return fix_result_order_id
     def cancel_order_stock(self,order_id=12):
         '''
@@ -767,15 +769,15 @@ class easy_qmt_trader:
         # 使用订单编号撤单
         cancel_order_result = self.xt_trader.cancel_order_stock(account=self.acc,order_id=order_id)
         if cancel_order_result==0:
-            logger.info(f'撤单成功 订单号={order_id}')
+            logger.info(f'撤单成功 委托号={order_id}')
         elif cancel_order_result==-1:
-            logger.error(f'撤单失败-委托已完成 订单号={order_id}')
+            logger.error(f'撤单失败-委托已完成 委托号={order_id}')
         elif cancel_order_result==-2:
-            logger.error(f'撤单失败-未找到对应委托编号 订单号={order_id}')
+            logger.error(f'撤单失败-未找到对应委托编号 委托号={order_id}')
         elif cancel_order_result==-3:
-            logger.error(f'撤单失败-账号未登陆 订单号={order_id}')
+            logger.error(f'撤单失败-账号未登陆 委托号={order_id}')
         else:
-            logger.warning(f'撤单结果未知 订单号={order_id}, 结果码={cancel_order_result}')
+            logger.warning(f'撤单结果未知 委托号={order_id}, 结果码={cancel_order_result}')
         return cancel_order_result
     def cancel_order_stock_async(self,order_id=12):
         '''
@@ -792,15 +794,15 @@ class easy_qmt_trader:
         # 使用订单编号撤单
         cancel_order_result = self.xt_trader.cancel_order_stock_async(account=self.acc,order_id=order_id)
         if cancel_order_result==0:
-            logger.info(f'异步撤单请求提交成功 订单号={order_id}')
+            logger.info(f'异步撤单请求提交成功 委托号={order_id}')
         elif cancel_order_result==-1:
-            logger.error(f'异步撤单失败-委托已完成 订单号={order_id}')
+            logger.error(f'异步撤单失败-委托已完成 委托号={order_id}')
         elif cancel_order_result==-2:
-            logger.error(f'异步撤单失败-未找到对应委托编号 订单号={order_id}')
+            logger.error(f'异步撤单失败-未找到对应委托编号 委托号={order_id}')
         elif cancel_order_result==-3:
-            logger.error(f'异步撤单失败-账号未登陆 订单号={order_id}')
+            logger.error(f'异步撤单失败-账号未登陆 委托号={order_id}')
         else:
-            logger.warning(f'异步撤单结果未知 订单号={order_id}, 结果码={cancel_order_result}')
+            logger.warning(f'异步撤单结果未知 委托号={order_id}, 结果码={cancel_order_result}')
         return cancel_order_result
     def query_stock_asset(self):
         '''

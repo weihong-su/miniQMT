@@ -632,7 +632,7 @@ def record_trade(record, conn=None, db_path=None):
         if time_source == TIME_SOURCE_LOCAL:
             logger.warning(
                 f"未能取得交易所成交时间，标记 time_source=local_fallback: "
-                f"trade_id={trade_id}, order_id={record.get('order_id')}, "
+                f"流水号={trade_id}, 委托号={record.get('order_id')}, "
                 f"code={record.get('stock_code')}")
 
         commission = record.get('commission')
@@ -704,7 +704,7 @@ def record_trade(record, conn=None, db_path=None):
         # 键冲突但内容不同 —— 这是丢单的前兆，必须留痕并强行写入
         logger.error(
             f"唯一键冲突但内容不同，判定为不同成交并强制写入: "
-            f"trade_id={trade_id}, code={record.get('stock_code')}, "
+            f"流水号={trade_id}, code={record.get('stock_code')}, "
             f"已存在 id={conflict['id']} "
             f"(vol={conflict['volume']}, px={conflict['price']}) vs "
             f"本次 (vol={record.get('volume')}, px={record.get('price')})")
@@ -726,7 +726,7 @@ def record_trade(record, conn=None, db_path=None):
         forced['trade_id_source'] = 'collision_suffixed'
         return _insert_raw(conn, forced, now_str, owns_conn, db_path)
     except Exception as e:
-        logger.error(f"交易流水写入失败: trade_id={trade_id}, error={e}")
+        logger.error(f"交易流水写入失败: 流水号={trade_id}, error={e}")
         try:
             if owns_conn and conn is not None:
                 conn.rollback()
@@ -847,7 +847,7 @@ def _insert_legacy(conn, record, trade_id, strategy, now_str):
         conn.commit()
         return 'legacy_inserted' if cur.rowcount else 'duplicate'
     except Exception as e:
-        logger.error(f"交易流水降级写入失败: trade_id={trade_id}, error={e}")
+        logger.error(f"交易流水降级写入失败: 流水号={trade_id}, error={e}")
         return 'failed'
 
 

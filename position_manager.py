@@ -3416,14 +3416,14 @@ class PositionManager:
             else:
                 matches.append(order_id)
             logger.debug(
-                f"[ASYNC_ORDER_QUERY_CANDIDATE] seq={returned_id} 候选委托: {brief}"
+                f"[ASYNC_ORDER_QUERY_CANDIDATE] 请求序号={returned_id} 候选委托: {brief}"
             )
 
         unique_matches = sorted(set(matches))
         if len(unique_matches) == 1:
             real_order_id = unique_matches[0]
             logger.info(
-                f"[ASYNC_ORDER_QUERY_RESOLVED] seq={returned_id} 通过委托列表反查到真实order_id={real_order_id} "
+                f"[ASYNC_ORDER_QUERY_RESOLVED] 请求序号={returned_id} 通过委托列表反查到真实委托号={real_order_id} "
                 f"({side} {stock_base}, volume={expected_volume}, strategy={expected_strategy})"
             )
             self._cache_order_id_mapping(returned_id, real_order_id)
@@ -3431,7 +3431,7 @@ class PositionManager:
 
         if len(unique_matches) > 1:
             logger.warning(
-                f"[ASYNC_ORDER_QUERY_AMBIGUOUS] seq={returned_id} 反查到多个候选order_id={unique_matches}，"
+                f"[ASYNC_ORDER_QUERY_AMBIGUOUS] 请求序号={returned_id} 反查到多个候选委托号={unique_matches}，"
                 f"保守返回None"
             )
             return None
@@ -3440,27 +3440,27 @@ class PositionManager:
         if len(partial_unique_matches) == 1:
             real_order_id = partial_unique_matches[0]
             logger.info(
-                f"[ASYNC_ORDER_QUERY_RESOLVED_PARTIAL] seq={returned_id} 通过成交列表部分成交反查到真实order_id={real_order_id} "
+                f"[ASYNC_ORDER_QUERY_RESOLVED_PARTIAL] 请求序号={returned_id} 通过成交列表部分成交反查到真实委托号={real_order_id} "
                 f"({side} {stock_base}, expected_volume={expected_volume}, strategy={expected_strategy})"
             )
             self._cache_order_id_mapping(returned_id, real_order_id)
             return real_order_id
         if len(partial_unique_matches) > 1:
             logger.warning(
-                f"[ASYNC_ORDER_QUERY_AMBIGUOUS] seq={returned_id} 反查到多个部分成交候选order_id={partial_unique_matches}，"
+                f"[ASYNC_ORDER_QUERY_AMBIGUOUS] 请求序号={returned_id} 反查到多个部分成交候选委托号={partial_unique_matches}，"
                 f"保守返回None"
             )
             return None
 
         if inspected:
             logger.info(
-                f"[ASYNC_ORDER_QUERY_NO_MATCH] seq={returned_id} 反查未命中: "
+                f"[ASYNC_ORDER_QUERY_NO_MATCH] 请求序号={returned_id} 反查未命中: "
                 f"stock={stock_base}, side={side}, volume={expected_volume}, "
                 f"strategy={expected_strategy}, inspected={inspected}, rejects={rejects}"
             )
         else:
             logger.info(
-                f"[ASYNC_ORDER_QUERY_EMPTY] seq={returned_id} 未查询到今日委托记录: "
+                f"[ASYNC_ORDER_QUERY_EMPTY] 请求序号={returned_id} 未查询到今日委托记录: "
                 f"stock={stock_base}, side={side}, volume={expected_volume}"
             )
         return None
@@ -3489,7 +3489,7 @@ class PositionManager:
         else:
             # 异步模式需要从映射表获取
             import time
-            logger.debug(f"异步模式，查找seq={returned_id}的映射")
+            logger.debug(f"异步模式，查找请求序号={returned_id}的映射")
 
             wait_timeout = float(getattr(config, 'ASYNC_ORDER_ID_WAIT_TIMEOUT_SECONDS', 2.0))
             wait_interval = float(getattr(config, 'ASYNC_ORDER_ID_WAIT_INTERVAL_SECONDS', 0.1))
@@ -3501,11 +3501,11 @@ class PositionManager:
             for i in range(wait_count):
                 real_order_id = self._get_cached_order_id_mapping(returned_id)
                 if real_order_id:
-                    logger.debug(f"映射成功: seq={returned_id} -> order_id={real_order_id}")
+                    logger.debug(f"映射成功: 请求序号={returned_id} -> 委托号={real_order_id}")
                     return real_order_id
                 time.sleep(wait_interval)
 
-            logger.warning(f"seq={returned_id}未在order_id_map中找到映射，等待超时")
+            logger.warning(f"请求序号={returned_id}未在order_id_map中找到映射，等待超时")
             logger.debug(f"当前order_id_map内容: {self.qmt_trader.order_id_map}")
             fallback_timeout = float(getattr(config, 'ASYNC_ORDER_QUERY_FALLBACK_TIMEOUT_SECONDS', 3.0))
             fallback_interval = float(getattr(config, 'ASYNC_ORDER_QUERY_FALLBACK_INTERVAL_SECONDS', 0.2))
@@ -3525,7 +3525,7 @@ class PositionManager:
                         price=price,
                     )
                 except Exception as e:
-                    logger.warning(f"[ASYNC_ORDER_QUERY_FAILED] seq={returned_id} 委托列表反查异常: {e}")
+                    logger.warning(f"[ASYNC_ORDER_QUERY_FAILED] 请求序号={returned_id} 委托列表反查异常: {e}")
                     real_order_id = None
                 if real_order_id:
                     return real_order_id
@@ -3566,7 +3566,7 @@ class PositionManager:
                         # 找到活跃委托
                         for order in active_orders:
                             logger.info(f"[OK] 发现活跃委托单: {stock_code}, "
-                                      f"订单号={order.order_id}, 状态={order.order_status}, "
+                                      f"委托号={order.order_id}, 状态={order.order_status}, "
                                       f"委托量={order.order_volume}, 已成交={order.traded_volume}")
                         return True
                     else:
@@ -4987,14 +4987,14 @@ class PositionManager:
                                 grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
                                 if grid_signal:
                                     grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
-                                    logger.info(f"[GRID] {stock_code} 检测到网格信号: {grid_signal_type}")
+                                    logger.info(f"[网格] {stock_code} 检测到网格信号: {grid_signal_type}")
                                     success = self.grid_manager.execute_grid_trade(grid_signal)
                                     if success:
-                                        logger.info(f"[GRID] {stock_code} 网格交易执行成功: {grid_signal_type}")
+                                        logger.info(f"[网格] {stock_code} 网格交易执行成功: {grid_signal_type}")
                                     else:
-                                        logger.warning(f"[GRID] {stock_code} 网格交易执行失败: {grid_signal_type}")
+                                        logger.warning(f"[网格] {stock_code} 网格交易执行失败: {grid_signal_type}")
                             except Exception as e:
-                                logger.error(f"[GRID] {stock_code} 网格信号检测/执行异常: {e}")
+                                logger.error(f"[网格] {stock_code} 网格信号检测/执行异常: {e}")
 
                     # 更新最高价（如果当前价格更高,使用已获取的价格）
                     try:
@@ -5064,12 +5064,12 @@ class PositionManager:
                 try:
                     grid_handled = bool(grid_manager.handle_deal_callback(trade))
                 except Exception as grid_err:
-                    logger.warning(f"[GRID] 成交回调确认网格委托失败: {grid_err}")
+                    logger.warning(f"[网格] 成交回调确认网格委托失败: {grid_err}")
 
             if not handled_by_pending and not grid_handled and stock_code_short:
                 if self._has_tracked_pending_order(stock_code_short):
                     logger.warning(
-                        f"[外部成交] {stock_code_short} order_id={order_id} 未匹配本机委托，"
+                        f"[外部成交] {stock_code_short} 委托号={order_id} 未匹配本机委托，"
                         "但同股仍有待确认委托，跳过自动补账"
                     )
                 else:
@@ -5096,7 +5096,7 @@ class PositionManager:
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
                 grid_manager.handle_order_callback(order)
         except Exception as e:
-            logger.warning(f"[GRID] 委托状态回调处理失败: {e}")
+            logger.warning(f"[网格] 委托状态回调处理失败: {e}")
 
     def _sync_profit_triggered_to_sqlite(self, stock_code):
         """P1修复: 立即将内存中的profit_triggered=True同步到SQLite，不等待定时同步"""
@@ -5147,7 +5147,7 @@ class PositionManager:
                     'stock_code': stock_code,
                     'status': 'submitted'
                 }
-                logger.info(f"📋 开始跟踪委托单: {stock_code} {signal_type} order_id={order_id}")
+                logger.info(f"📋 开始跟踪委托单: {stock_code} {signal_type} 委托号={order_id}")
         except Exception as e:
             logger.error(f"跟踪委托单失败: {str(e)}")
 
@@ -5236,7 +5236,7 @@ class PositionManager:
                 deal_info=trade
             )
         except Exception as e:
-            logger.warning(f"成交确认后写交易流水失败（不影响pending清理）: order_id={order_id}, error={e}")
+            logger.warning(f"成交确认后写交易流水失败（不影响pending清理）: 委托号={order_id}, error={e}")
             return False
 
     def _record_external_trade_after_callback(self, stock_code, order_id, trade):
@@ -5253,7 +5253,7 @@ class PositionManager:
         recorded = self._record_trade_after_confirmation(order_id, order_info, trade=trade)
         if recorded:
             logger.info(
-                f"[外部成交] 已确认交易流水: {stock_code} order_id={order_id}"
+                f"[外部成交] 已确认交易流水: {stock_code} 委托号={order_id}"
                 f"（未匹配本机待确认委托；落库策略以下单缓存为准，缺失时才记为 external）"
             )
         self.last_position_update_time = 0
@@ -5280,11 +5280,11 @@ class PositionManager:
             ) or {}
             if result.get('paused'):
                 logger.info(
-                    f"[GRID] {stock_code} {reason} 已成交(清仓)，已暂停该股网格会话 "
+                    f"[网格] {stock_code} {reason} 已成交(清仓)，已暂停该股网格会话 "
                     f"(session_id={result.get('session_id')})"
                 )
         except Exception as e:
-            logger.warning(f"[GRID] {stock_code} {reason} 成交后暂停网格会话失败: {e}")
+            logger.warning(f"[网格] {stock_code} {reason} 成交后暂停网格会话失败: {e}")
 
     def _confirm_filled_order(self, stock_code, order_id, source, trade=None, order_info=None):
         """统一处理真实成交确认：清 pending、落状态、补流水、请求持仓快刷。"""
@@ -5301,7 +5301,7 @@ class PositionManager:
         if matched_key or order_info:
             signal_type = pending_snapshot.get('signal_type', '')
             logger.info(
-                f"✅ [{source}] {stock_code_base} 委托已成交(order_id={order_id})，"
+                f"✅ [{source}] {stock_code_base} 委托已成交(委托号={order_id})，"
                 f"移除跟踪并执行成交确认(信号={signal_type})"
             )
 
@@ -5348,7 +5348,7 @@ class PositionManager:
         should_reorder = bool(pending_snapshot.get('reorder_after_cancel', False))
 
         logger.info(
-            f"✅ [{source}] {stock_code_base} 委托已撤(order_id={order_id})，"
+            f"✅ [{source}] {stock_code_base} 委托已撤(委托号={order_id})，"
             f"撤单完成确认已收到(信号={signal_type})"
         )
 
@@ -5463,10 +5463,10 @@ class PositionManager:
             local_status = order_info.get('status')
 
             if local_status == 'cancel_requested':
-                logger.info(f"⏳ {stock_code} 撤单请求已提交: order_id={order_id}, "
+                logger.info(f"⏳ {stock_code} 撤单请求已提交: 委托号={order_id}, "
                             f"等待 54=已撤 后再决定是否重挂")
             else:
-                logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
+                logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: 委托号={order_id}, "
                              f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={timeout_minutes}分钟)，"
                              f"将查询当前状态并决定是否提交撤单请求")
 
@@ -5474,7 +5474,7 @@ class PositionManager:
             order_status = self._query_order_status(stock_code, order_id)
 
             if order_status is None:
-                logger.error(f"❌ [E_ORDER_TIMEOUT_004] 无法查询委托单状态: {stock_code} order_id={order_id}，"
+                logger.error(f"❌ [E_ORDER_TIMEOUT_004] 无法查询委托单状态: {stock_code} 委托号={order_id}，"
                              f"QMT连接可能异常，请人工登录QMT客户端确认委托状态并手动处理")
                 logger.warning(f"{stock_code} 委托状态未知，保留 pending 跟踪以阻断重复下单")
                 return
@@ -5496,7 +5496,7 @@ class PositionManager:
 
             if local_status == 'cancel_requested':
                 if order_status in [48, 49, 50, 51, 52, 55]:
-                    logger.info(f"⏳ {stock_code} 撤单尚未完成: order_id={order_id}, "
+                    logger.info(f"⏳ {stock_code} 撤单尚未完成: 委托号={order_id}, "
                                 f"当前状态={order_status}，继续等待 54=已撤")
                     return
 
@@ -5539,10 +5539,10 @@ class PositionManager:
                         logger.warning(f"⚠️ [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=False，撤单完成后不自动重挂，"
                                        f"请人工确认是否需要手动补单 (信号类型={signal_type}，委托号={order_id})")
                 else:
-                    logger.error(f"❌ [E_ORDER_TIMEOUT_003] {stock_code} 自动撤单失败: order_id={order_id}，"
+                    logger.error(f"❌ [E_ORDER_TIMEOUT_003] {stock_code} 自动撤单失败: 委托号={order_id}，"
                                  f"请人工介入处理：登录QMT客户端手动撤销该委托，并确认持仓状态后视情况补单")
             elif order_status in [51, 52]:  # 已报待撤/部分待撤，等待撤单终态
-                logger.info(f"⏳ {stock_code} 委托正在撤单中: order_id={order_id}, 状态={order_status}，等待 54=已撤")
+                logger.info(f"⏳ {stock_code} 委托正在撤单中: 委托号={order_id}, 状态={order_status}，等待 54=已撤")
                 with self.pending_orders_lock:
                     current_order = self.pending_orders.get(stock_code)
                     if (not current_order or
@@ -5675,7 +5675,7 @@ class PositionManager:
                 if result == 0:
                     return True
 
-                logger.warning(f"{stock_code} 撤单失败: order_id={order_id}, 尝试 {attempt}/{max_retries}")
+                logger.warning(f"{stock_code} 撤单失败: 委托号={order_id}, 尝试 {attempt}/{max_retries}")
                 if attempt < max_retries:
                     time.sleep(retry_interval)
 

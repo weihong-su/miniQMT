@@ -297,7 +297,7 @@ def _get_grid_mark_price(position_manager, stock_code, session):
                 if price is not None:
                     return price
     except Exception as e:
-        logger.debug(f"[GRID] 获取 {stock_code} 当前市价失败，使用网格中心价兜底: {e}")
+        logger.debug(f"[网格] 获取 {stock_code} 当前市价失败，使用网格中心价兜底: {e}")
 
     return (
         _positive_float(getattr(session, 'current_center_price', None)) or

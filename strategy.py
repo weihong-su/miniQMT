@@ -380,7 +380,7 @@ class TradingStrategy:
                     }
                 )
                 if order_id:
-                    logger.info(f"[实盘交易] {stock_code} 首次止盈卖出委托已下达，委托号: {order_id}")
+                    logger.info(f"[实盘交易] {stock_code} 首次止盈卖出委托已下达，委托号={order_id}")
                     logger.info(f"[状态标记] {stock_code} 等待成交回报确认后再标记profit_triggered=True")
                     return True
                 else:
@@ -444,7 +444,7 @@ class TradingStrategy:
                 )
 
                 if order_id:
-                    logger.info(f"[实盘交易] {stock_code} 止盈全仓卖出委托已下达，委托号: {order_id}")
+                    logger.info(f"[实盘交易] {stock_code} 止盈全仓卖出委托已下达，委托号={order_id}")
                     return True
                 else:
                     logger.error(f"[E_ORDER_SELL_102] {stock_code} 全仓止盈卖出委托下达失败，原因: trading_executor返回None (可能是ENABLE_ALLOW_SELL=False、持仓不足或QMT连接异常)，本次信号保留，将在下个策略循环重试(最多3次/分钟窗口)")
@@ -863,7 +863,7 @@ class TradingStrategy:
             if stock_code in pending_signals:
                 signal_type = pending_signals[stock_code]['type']
                 if signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
-                    logger.info(f"[GRID-STRATEGY] {stock_code} 清理遗留网格信号: {signal_type}")
+                    logger.info(f"[网格-策略] {stock_code} 清理遗留网格信号: {signal_type}")
                     self.position_manager.mark_signal_processed(stock_code)
                     return
 
@@ -1033,7 +1033,7 @@ class TradingStrategy:
             )
             
             if order_id:
-                logger.info(f"手动买入 {stock_code} 成功，委托号: {order_id}，模式: {'模拟' if is_simulation else '实盘'}")
+                logger.info(f"手动买入 {stock_code} 成功，委托号={order_id}，模式: {'模拟' if is_simulation else '实盘'}")
             
             return order_id
             
@@ -1060,7 +1060,7 @@ class TradingStrategy:
             )
             
             if order_id:
-                logger.info(f"手动卖出 {stock_code} 成功，委托号: {order_id}，模式: {'模拟' if is_simulation else '实盘'}")
+                logger.info(f"手动卖出 {stock_code} 成功，委托号={order_id}，模式: {'模拟' if is_simulation else '实盘'}")
             
             return order_id
             

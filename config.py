@@ -179,6 +179,26 @@ QMT_ORDER_ID_MAP_MAX_ENTRIES = 4096  # seq->order_id 映射最大键数量（int
 QMT_CONNECT_TIMEOUT = 30            # QMT交易接口连接超时(秒)，避免connect卡死
 QMT_STOP_TIMEOUT = 5.0              # QMT交易接口停止超时(秒)，避免旧连接清理卡死
 
+# QMT 委托状态码 -> 中文标签（日志与Web展示共用，避免各处重复定义）
+ORDER_STATUS_LABELS = {
+    48: "未报",
+    49: "待报",
+    50: "已报",
+    51: "已报待撤",
+    52: "部成待撤",
+    53: "部撤",
+    54: "已撤",
+    55: "部成",
+    56: "已成",
+    57: "废单",
+}
+
+# 交易方向 -> 中文标签（日志展示用，避免 BUY/SELL 与中文混杂）
+TRADE_SIDE_LABELS = {
+    "BUY": "买入",
+    "SELL": "卖出",
+}
+
 # 注释说明：
 # - 策略线程始终运行，进行信号检测和监控
 # - ENABLE_AUTO_TRADING 控制是否执行检测到的交易信号

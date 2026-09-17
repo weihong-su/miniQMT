@@ -121,7 +121,7 @@ class TradingExecutor:
         if mapped_order_id:
             logger.info(
                 f"[E_ORDER_UNKNOWN_RESOLVED] {side} {stock_code} 的未知委托已收到order_id，"
-                f"seq={seq}, order_id={mapped_order_id}"
+                f"请求序号={seq}, 委托号={mapped_order_id}"
             )
             self._register_resolved_unknown_order_submission(stock_code, side, mapped_order_id, info)
             submissions.pop(key, None)
@@ -132,7 +132,7 @@ class TradingExecutor:
             remaining = int(cooldown - elapsed)
             logger.warning(
                 f"[E_ORDER_UNKNOWN_GUARD] {side} {stock_code} 存在未确认异步委托，"
-                f"seq={seq}, volume={info.get('volume')}, price={info.get('price')}, "
+                f"请求序号={seq}, volume={info.get('volume')}, price={info.get('price')}, "
                 f"strategy={info.get('strategy')}, 剩余冷却{remaining}秒，拒绝重复提交"
             )
             return True
@@ -425,7 +425,7 @@ class TradingExecutor:
                     if not grid_handled:
                         logger.warning(
                             f"实盘网格成交回报未匹配待确认委托，跳过通用交易流水写入: "
-                            f"order_id={order_id}, trade_id={trade_id}"
+                            f"委托号={order_id}, 流水号={trade_id}"
                         )
                 else:
                     self.record_live_deal_after_confirmation(deal_info)
@@ -469,20 +469,10 @@ class TradingExecutor:
                 cached_order_info = order_info
             self.order_cache[str(order_id)] = cached_order_info
 
-            status_desc = {
-                48: "未报",
-                49: "待报",
-                50: "已报",
-                51: "已报待撤",
-                52: "部成待撤",
-                53: "部撤",
-                54: "已撤",
-                55: "部成",
-                56: "已成",
-                57: "废单"
-            }
-
-            logger.info(f"收到委托回调: {stock_code}, 委托号: {order_id}, 状态: {status_desc.get(status, '未知')}")
+            logger.info(
+                f"收到委托回调: 股票代码={stock_code}, 委托号={order_id}, "
+                f"委托状态={config.ORDER_STATUS_LABELS.get(status, '未知')}({status})"
+            )
 
             # 如果委托已完成（已成、已撤、废单），移除回调
             grid_manager = getattr(self.position_manager, 'grid_manager', None)
@@ -783,7 +773,7 @@ class TradingExecutor:
 
             if not record.get('stock_code') or record.get('price', 0) <= 0 or record.get('volume', 0) <= 0:
                 logger.warning(
-                    f"成交确认流水字段不足，跳过写入: order_id={record.get('order_id')}, "
+                    f"成交确认流水字段不足，跳过写入: 委托号={record.get('order_id')}, "
                     f"stock={record.get('stock_code')}, price={record.get('price')}, volume={record.get('volume')}"
                 )
                 return False
@@ -841,7 +831,7 @@ class TradingExecutor:
             }
             return self.record_live_deal_after_confirmation(fallback_deal, fallback_order_info)
         except Exception as e:
-            logger.error(f"订单成交兜底确认写流水失败: order_id={order_id}, error={e}")
+            logger.error(f"订单成交兜底确认写流水失败: 委托号={order_id}, error={e}")
             return False
 
     @staticmethod
@@ -928,7 +918,7 @@ class TradingExecutor:
                 cursor.execute("SELECT 1 FROM trade_records WHERE trade_id=? LIMIT 1", (str(trade_id),))
             return cursor.fetchone() is not None
         except Exception as e:
-            logger.warning(f"检查交易流水是否已存在失败: trade_id={trade_id}, error={e}")
+            logger.warning(f"检查交易流水是否已存在失败: 流水号={trade_id}, error={e}")
             return False
 
     def _drop_placeholder_trade_record(self, order_id, stock_code, exclude_trade_id=None):
@@ -975,12 +965,12 @@ class TradingExecutor:
                 self.conn.commit()
             if removed:
                 logger.info(
-                    f"已清理下单占位流水，改以成交回报为准: trade_id={placeholder_id}, "
+                    f"已清理下单占位流水，改以成交回报为准: 流水号={placeholder_id}, "
                     f"stock={base_code}, 清理{removed}条"
                 )
             return removed
         except Exception as e:
-            logger.warning(f"清理下单占位流水失败: trade_id={placeholder_id}, error={e}")
+            logger.warning(f"清理下单占位流水失败: 流水号={placeholder_id}, error={e}")
             try:
                 self.conn.rollback()
             except Exception:
@@ -1022,7 +1012,7 @@ class TradingExecutor:
                     if self._trade_record_exists(
                             trade_id, stock_code, trade_time, trade_type, price, volume, amount):
                         logger.info(
-                            f"交易记录已存在，跳过重复写入: trade_id={trade_id}, "
+                            f"交易记录已存在，跳过重复写入: 流水号={trade_id}, "
                             f"stock={stock_code}, type={trade_type}, volume={volume}, price={price:.2f}"
                         )
                         return True
@@ -1053,7 +1043,7 @@ class TradingExecutor:
 
                 if result == 'duplicate':
                     logger.info(
-                        f"交易记录已存在，跳过重复写入: trade_id={trade_id}, "
+                        f"交易记录已存在，跳过重复写入: 流水号={trade_id}, "
                         f"stock={stock_code}, type={trade_type}, volume={volume}, price={price:.2f}"
                     )
                     return True
@@ -1614,7 +1604,7 @@ class TradingExecutor:
                     
                     if success:
                         sim_order_id = self._generate_sim_order_id()
-                        logger.info(f"[模拟] 买入 {formatted_stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}")
+                        logger.info(f"[模拟] 买入 {formatted_stock_code} 成功，委托号={sim_order_id}, 委托价={price:.2f}, 数量={volume}")
                         return sim_order_id
                     else:
                         logger.error(f"[模拟] 买入 {formatted_stock_code} 失败")
@@ -1684,13 +1674,13 @@ class TradingExecutor:
                                 )
                                 logger.error(
                                     f"[E_ORDER_BUY_UNKNOWN] 买入 {formatted_stock_code} 已收到QMT异步seq但未收到真实order_id，"
-                                    f"seq={returned_id}。本次按未知提交处理并停止重试，避免重复实盘发单"
+                                    f"请求序号={returned_id}。本次按未知提交处理并停止重试，避免重复实盘发单"
                                 )
                                 break
                             # order_id=-1 表示QMT拒绝委托（账户限制/行情未就绪等），不重试不保存记录
                             if order_id == -1:
                                 logger.error(f"[E_ORDER_BUY_REJECT] 买入 {formatted_stock_code} 被QMT拒绝 "
-                                             f"(order_id=-1, seq={returned_id}), 停止重试，不保存交易记录")
+                                             f"(委托号=-1, 请求序号={returned_id}), 停止重试，不保存交易记录")
                                 order_id = None
                                 self._clear_unknown_order_submission(formatted_stock_code, 'BUY')
                                 break
@@ -1707,7 +1697,7 @@ class TradingExecutor:
                             if should_defer_record:
                                 logger.info(
                                     f"实盘买入委托已提交，等待成交确认后写入交易流水: "
-                                    f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
+                                    f"{stock_code}, 委托号={order_id}, 策略={strategy}"
                                 )
                             else:
                                 trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1734,7 +1724,7 @@ class TradingExecutor:
                                     'amount': amount
                                 }
                                 
-                                logger.info(f"实盘买入订单已下达并记录: {stock_code}, 订单号: {order_id}, 策略: {strategy}")
+                                logger.info(f"实盘买入订单已下达并记录: {stock_code}, 委托号={order_id}, 策略={strategy}")
 
                                 if signal_type and signal_info and not is_simulation:
                                     try:
@@ -1756,7 +1746,7 @@ class TradingExecutor:
                                     self.callbacks[order_id] = callback
                             break
                         else:
-                            logger.warning(f"[E_ORDER_BUY_002] 买入 {formatted_stock_code} 下单失败 (order_id=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是行情未就绪或账户限制")
+                            logger.warning(f"[E_ORDER_BUY_002] 买入 {formatted_stock_code} 下单失败 (委托号=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是行情未就绪或账户限制")
                             retry_count += 1
                             time.sleep(1)  # 等待1秒再重试
                     except Exception as e:
@@ -1938,7 +1928,7 @@ class TradingExecutor:
                     config.SIMULATION_BALANCE = self.simulation_balance
                     logger.info(f"模拟账户资金更新: +{revenue:.2f}, 余额: {self.simulation_balance:.2f}")
                     
-                    logger.info(f"[模拟] 卖出 {formatted_stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}")
+                    logger.info(f"[模拟] 卖出 {formatted_stock_code} 成功，委托号={sim_order_id}, 委托价={price:.2f}, 数量={volume}")
                     return sim_order_id
                 
                 # 实盘交易模式处理
@@ -2007,13 +1997,13 @@ class TradingExecutor:
                                 )
                                 logger.error(
                                     f"[E_ORDER_SELL_UNKNOWN] 卖出 {formatted_stock_code} 已收到QMT异步seq但未收到真实order_id，"
-                                    f"seq={returned_id}。本次按未知提交处理并停止重试，避免重复实盘发单"
+                                    f"请求序号={returned_id}。本次按未知提交处理并停止重试，避免重复实盘发单"
                                 )
                                 break
                             # order_id=-1 表示QMT拒绝委托，不重试不保存记录
                             if order_id == -1:
                                 logger.error(f"[E_ORDER_SELL_REJECT] 卖出 {formatted_stock_code} 被QMT拒绝 "
-                                             f"(order_id=-1, seq={returned_id}), 停止重试，不保存交易记录")
+                                             f"(委托号=-1, 请求序号={returned_id}), 停止重试，不保存交易记录")
                                 order_id = None
                                 self._clear_unknown_order_submission(formatted_stock_code, 'SELL')
                                 break
@@ -2030,7 +2020,7 @@ class TradingExecutor:
                             if should_defer_record:
                                 logger.info(
                                     f"实盘卖出委托已提交，等待成交确认后写入交易流水: "
-                                    f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
+                                    f"{stock_code}, 委托号={order_id}, 策略={strategy}"
                                 )
                             else:
                                 trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -2058,7 +2048,7 @@ class TradingExecutor:
                                     'amount': price * volume
                                 }
                                 
-                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号: {order_id}, 价格: {price:.2f}, 数量: {volume}, 价格类型: {price_type}")
+                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号={order_id}, 委托价={price:.2f}, 数量={volume}, 价格类型={price_type}")
 
                                 # 🔑 新增：跟踪委托单（用于超时管理，仅卖出信号）
                                 if signal_type and signal_info and not is_simulation:
@@ -2082,7 +2072,7 @@ class TradingExecutor:
 
                             break
                         else:
-                            logger.warning(f"[E_ORDER_SELL_002] 卖出 {formatted_stock_code} 下单失败 (order_id=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是持仓不足或账户限制")
+                            logger.warning(f"[E_ORDER_SELL_002] 卖出 {formatted_stock_code} 下单失败 (委托号=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是持仓不足或账户限制")
                             retry_count += 1
                             time.sleep(1)
 
@@ -2128,7 +2118,7 @@ class TradingExecutor:
 
             # 检查是否为模拟交易模式下的订单
             if order_id.startswith("SIM"):
-                logger.info(f"[模拟] 撤单请求已处理，委托号: {order_id}")
+                logger.info(f"[模拟] 撤单请求已处理，委托号={order_id}")
                 return True
 
             # 撤单统一委托给 PositionManager._cancel_order:
@@ -2136,16 +2126,16 @@ class TradingExecutor:
             # 避免在此维护第二套撤单实现
             cancel_func = getattr(self.position_manager, '_cancel_order', None)
             if not callable(cancel_func):
-                logger.error(f"没有找到可用的撤单方法，委托号: {order_id}")
+                logger.error(f"没有找到可用的撤单方法，委托号={order_id}")
                 return False
 
             ret = cancel_func(stock_code or f"order#{order_id}", order_id)
 
             if ret:
-                logger.info(f"撤单请求已发送，委托号: {order_id}")
+                logger.info(f"撤单请求已发送，委托号={order_id}")
                 return True
             else:
-                logger.error(f"撤单请求发送失败，委托号: {order_id}")
+                logger.error(f"撤单请求发送失败，委托号={order_id}")
                 return False
                 
         except Exception as e:
@@ -2203,19 +2193,7 @@ class TradingExecutor:
     
     def _get_order_status_desc(self, status):
         """获取委托状态描述"""
-        status_dict = {
-            48: "未报",
-            49: "待报",
-            50: "已报",
-            51: "已报待撤",
-            52: "部成待撤",
-            53: "部撤",
-            54: "已撤",
-            55: "部成",
-            56: "已成",
-            57: "废单"
-        }
-        return status_dict.get(status, "未知")
+        return config.ORDER_STATUS_LABELS.get(status, "未知")
     
     def get_trades(self, start_date=None, end_date=None):
         """
