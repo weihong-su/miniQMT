@@ -487,6 +487,32 @@ class PositionManager:
         except Exception as e:
             logger.warning(f"[POSITION_REFRESH] {stock_code} {reason} 调度失败: {e}")
 
+    def refresh_positions_from_broker(self, reason="", timeout=None):
+        """同步强制回源一次实盘持仓，返回是否刷新成功。
+
+        供快照等"必须拿到当下真实持仓"的场景使用：持仓监控线程在非交易时段
+        直接 sleep 跳过同步，内存表可能停留在上次交易时段（甚至上次进程）的
+        值，直接取数会写出陈旧快照。
+
+        模拟模式/未接 QMT 时返回 False——此时内存表就是权威数据源，调用方
+        应据此把数据来源标成非实时。
+        """
+        if getattr(config, 'ENABLE_SIMULATION_MODE', False) or self.qmt_trader is None:
+            return False
+
+        try:
+            self._invalidate_positions_cache(f"强制回源: {reason}" if reason else "强制回源")
+            timeout = timeout if timeout is not None else config.MONITOR_CALL_TIMEOUT
+            run_with_timeout(self.get_all_positions, timeout)
+            logger.info(f"持仓已从实盘强制刷新{f'（{reason}）' if reason else ''}")
+            return True
+        except concurrent.futures.TimeoutError:
+            logger.warning(f"持仓强制刷新超时({timeout}秒){f'（{reason}）' if reason else ''}")
+            return False
+        except Exception as e:
+            logger.warning(f"持仓强制刷新失败{f'（{reason}）' if reason else ''}: {e}")
+            return False
+
     def _increment_data_version(self):
         """递增数据版本号（内部方法）"""
         with self.version_lock:
@@ -1195,6 +1221,21 @@ class PositionManager:
             except Exception as e:
                 logger.error(f"定时同步循环出错: {str(e)}")
                 time.sleep(60)  # 出错后等待一分钟再继续
+
+    def _invalidate_positions_cache(self, reason=""):
+        """失效持仓缓存，强制下一次 get_all_positions() 真正重新加载。
+
+        ⚠️ 必须成对复位 last_position_update_time：get_all_positions() 只有在
+        距上次刷新超过 position_update_interval(10秒) 时才重建缓存，否则直接走
+        `positions_cache is None -> return pd.DataFrame()` 分支。只置 None 不复位
+        TTL 会让**所有**股票在最长 10 秒内都表现为"无持仓"，进而让监控循环走
+        `positions_df.empty -> sleep(60)`，止盈止损与网格信号静默停摆
+        （2026-09-16 实盘日志中已发生 168 秒停摆）。
+        """
+        self.positions_cache = None
+        self.last_position_update_time = 0
+        if reason:
+            logger.debug(f"持仓缓存已失效（原因: {reason}）")
 
     def get_all_positions(self):
         """获取所有持仓"""
@@ -4255,7 +4296,7 @@ class PositionManager:
                     logger.debug(f"{stock_code} 标记突破状态成功")
                     # BUG-1修复: 立即失效缓存，防止监控循环在10秒TTL内读到旧的
                     # profit_breakout_triggered=False，导致"首次突破"日志重复输出
-                    self.positions_cache = None
+                    self._invalidate_positions_cache(f"{stock_code} 标记突破状态")
                     return True
                 else:
                     logger.warning(f"{stock_code} 标记突破状态失败，未找到记录")
@@ -4278,7 +4319,7 @@ class PositionManager:
                 self.memory_conn.commit()
 
                 if cursor.rowcount > 0:
-                    self.positions_cache = None
+                    self._invalidate_positions_cache(f"{stock_code} 清除突破状态")
                     reason_text = f"（原因: {reason}）" if reason else ""
                     logger.info(f"{stock_code} 首次止盈突破状态已清除{reason_text}")
                     return True
@@ -4379,7 +4420,7 @@ class PositionManager:
             self._increment_data_version()
             
             # 4. 清理缓存
-            self.positions_cache = None
+            self._invalidate_positions_cache("初始化全部持仓数据")
             
             success_message = f"持仓数据初始化完成！成功更新 {refresh_count} 只股票"
             if error_count > 0:
@@ -4413,7 +4454,7 @@ class PositionManager:
             logger.info(f"已标记 {stock_code} profit_triggered已标记为True")
             # BUG-1修复: 立即失效缓存，防止监控循环在10秒TTL内读到旧的
             # profit_triggered=False，导致止盈信号在已标记True后仍被重复生成
-            self.positions_cache = None
+            self._invalidate_positions_cache(f"{stock_code} 标记首次止盈")
             return True
         except Exception as e:
             logger.error(f"标记 {stock_code} profit_triggered时出错: {str(e)}")

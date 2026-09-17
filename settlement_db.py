@@ -125,6 +125,22 @@ def is_trading_day(date_str, db_path=None):
 
 # ============================== 持仓快照 ==============================
 
+def _refresh_positions(position_manager, snapshot_type):
+    """快照取数前强制回源实盘持仓，返回是否刷到了实时数据。
+
+    老版本 position_manager 没有该方法时返回 False（降级为内存表取数），
+    不让快照因此写失败。
+    """
+    refresh = getattr(position_manager, 'refresh_positions_from_broker', None)
+    if not callable(refresh):
+        return False
+    try:
+        return bool(refresh(reason=f"{snapshot_type}持仓快照"))
+    except Exception as e:
+        logger.warning(f"持仓快照取数前刷新实盘失败({snapshot_type}): {e}")
+        return False
+
+
 def write_position_snapshot(position_manager, snapshot_type,
                             snapshot_date=None, db_path=None):
     """写一份全量持仓快照。返回写入行数，失败返回 -1。
@@ -134,6 +150,19 @@ def write_position_snapshot(position_manager, snapshot_type,
     account = get_account_id()
     snapshot_date = snapshot_date or datetime.now().strftime('%Y-%m-%d')
     recorded_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 取数前强制回源一次实盘持仓。持仓监控线程在非交易时段直接 sleep 跳过同步，
+    # 内存表可能停留在上一个交易时段、甚至上一个进程留在 SQLite 里的值 ——
+    # 盘后补录时直接取数会写出陈旧快照（2026-09-15 的 close 快照就是 09-14 的
+    # 逐字段拷贝，与同一次写入的净值快照市值相差 14100.00 = 缺失的 200 股）。
+    # 刷不到实盘时如实标 memory_db_stale，绝不冒充实时数据。
+    # source 取值与 write_equity_snapshot 对齐：模拟模式下内存表本就是权威
+    # 数据源，标 simulation 而不是 stale。
+    if config.ENABLE_SIMULATION_MODE:
+        source = 'simulation'
+    else:
+        source = 'memory_db' if _refresh_positions(position_manager, snapshot_type) \
+            else 'memory_db_stale'
 
     try:
         df = position_manager.get_all_positions_with_all_fields()
@@ -155,7 +184,7 @@ def write_position_snapshot(position_manager, snapshot_type,
                 _num(pos.get('cost_price')), _num(pos.get('base_cost_price')),
                 _num(pos.get('current_price')), _num(pos.get('market_value')),
                 _num(pos.get('profit_ratio')),
-                'memory_db', recorded_at,
+                source, recorded_at,
             ))
 
     try:
@@ -876,6 +905,35 @@ def should_run_close_snapshot(now, target_time, last_run_date, trading, confiden
     return (not confident) and now.weekday() < 5
 
 
+def has_snapshot(snapshot_date, snapshot_type, db_path=None):
+    """当天该类型的快照是否已经落库（持仓或净值任一有行即算已跑）。
+
+    `last_run_date` 只活在进程内存里，重启即归 None —— 于是一天内每重启一次
+    就会重跑一次 take_snapshot，而写入是 INSERT OR REPLACE，**后跑的会覆盖
+    先跑的**。2026-09-14 就是这样：15:07（收盘后 2 分钟、数据正常）写过一份，
+    17:55 重启后又写一份把它覆盖掉，而 17:55 已进入券商清算时段，QMT 返回
+    cash=0.00、持仓也已失真。查库判重才能让"补录"只在真的缺快照时发生。
+    """
+    try:
+        conn = _connect(db_path)
+        try:
+            for table, date_col in (('position_snapshot', 'snapshot_date'),
+                                    ('account_equity_daily', 'date')):
+                row = conn.execute(
+                    f"SELECT 1 FROM {table} WHERE account=? AND {date_col}=? "
+                    f"AND snapshot_type=? LIMIT 1",
+                    (get_account_id(), snapshot_date, snapshot_type)).fetchone()
+                if row:
+                    return True
+            return False
+        finally:
+            conn.close()
+    except Exception as e:
+        # 查不了就按"没有"处理：宁可重跑，也不要因为查询故障漏掉当天快照
+        logger.warning(f"查询已有快照失败({snapshot_date} {snapshot_type}): {e}")
+        return False
+
+
 def schedule_close_snapshot(position_manager, stop_event=None):
     """每交易日收盘后写一次 close 快照。
 
@@ -902,6 +960,11 @@ def schedule_close_snapshot(position_manager, stop_event=None):
             trading, confident = is_trading_day(today)
             should_run = should_run_close_snapshot(
                 now, target_time, last_run_date, trading, confident)
+            if should_run and has_snapshot(today, SNAPSHOT_CLOSE):
+                # 本进程没跑过，但库里已有 —— 是重启造成的重复补录，跳过
+                last_run_date = now.date()
+                logger.info(f"收盘快照已存在({today})，跳过重复补录，不覆盖已有数据")
+                should_run = False
             if should_run:
                 rows, equity_ok = take_snapshot(position_manager, SNAPSHOT_CLOSE,
                                                 snapshot_date=today)

@@ -376,7 +376,17 @@
         "test.test_broker_import",
         "test.test_backfill_trade_records",
         "test.test_data_pipeline_e2e",
-        "test.test_launcher_menu_pages"
+        "test.test_launcher_menu_pages",
+        "test.test_positions_cache_invalidation",
+        "test.test_snapshot_freshness"
+      ],
+      "priority": "critical"
+    },
+    "positions_cache": {
+      "name": "持仓缓存失效回归",
+      "description": "P0假空窗口：positions_cache置空必须同步复位last_position_update_time，否则全部股票在10秒TTL内被误判为无持仓，监控循环走sleep(60)静默停摆(2026-09-16实盘停摆168秒)",
+      "modules": [
+        "test.test_positions_cache_invalidation"
       ],
       "priority": "critical"
     },
@@ -390,7 +400,7 @@
     },
     "settlement_export": {
       "name": "交割单数据落库与导出测试",
-      "description": "交割单数据落库与导出：快照/净值/run_events/成交统一入口/模拟隔离/券商对账单导入与匹配/历史回填/导出与合并规则/全链路端到端",
+      "description": "交割单数据落库与导出：快照/净值/run_events/成交统一入口/模拟隔离/券商对账单导入与匹配/历史回填/导出与合并规则/全链路端到端/快照新鲜度与重复补录防护",
       "priority": "critical",
       "modules": [
         "test.test_settlement_db",
@@ -398,7 +408,8 @@
         "test.test_export_settlement",
         "test.test_broker_import",
         "test.test_backfill_trade_records",
-        "test.test_data_pipeline_e2e"
+        "test.test_data_pipeline_e2e",
+        "test.test_snapshot_freshness"
       ]
     }
   },
