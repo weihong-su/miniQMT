@@ -507,7 +507,24 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 
 ## 发布版本号
 
-发布版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`，web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符；发布新版本时只需要同步更新 `release_version.json` 和 `CHANGELOG.md`。
+发布版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`（**运行时**注入，改完重启即生效）；web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符（**构建时**注入，必须重新 `npm run build` 才生效）。
+
+!!! warning "发布清单不止两个文件"
+    此处原先写的是「只需要同步更新 `release_version.json` 和 `CHANGELOG.md`」，据此执行已经
+    漏掉过两次：v3.9.1 / v3.9.2 都没重新构建 web2.0（`dist/index.html` 一直停在 v3.9.0），
+    `README.md` / `QUICK_START.md` 的测试统计也落后了一个版本。完整清单：
+
+    | # | 对象 | 说明 |
+    |---|------|------|
+    | 1 | `release_version.json` | 版本号真源 |
+    | 2 | `CHANGELOG.md` | 新增版本章节 + **底部链接区**（`[Unreleased]` 指向新版本、补 `[x.y.z]` 行） |
+    | 3 | `README.md` / `QUICK_START.md` / `CLAUDE.md` | 回归测试统计行（组/模块/用例数 + 日期 + 版本号） |
+    | 4 | `docs/site/miniqmt/testing.md` | 概述两行 + 「测试统计速查」表格新增一行 |
+    | 5 | `ARCHITECTURE.md` | 头部「文档版本 / 最后更新」+ 变更记录表新增一行 |
+    | 6 | `cd web2.0 && npm run build` | 构建产物 `dist/` 是 gitignored 的，**部署机必须重建**，否则界面版本号不变 |
+    | 7 | `git tag -a vX.Y.Z` | annotated tag，打在发布 commit 上 |
+
+    `docs/site/changelog.md` 只是 `include-markdown "../../CHANGELOG.md"` 的转发页，不需要单独改。
 
 ---
 

@@ -6,6 +6,59 @@
 
 ## [Unreleased]
 
+## [3.9.3] - 2026-09-19
+
+> 本版本是一次**日志可读性整备 + 两个持仓状态 P0 修复**的组合发布。三个修复的共同点是：
+> **内存里的持仓状态不等于此刻的真实状态** —— 陈旧快照、假空缓存、被旧值覆盖的止损价，
+> 都是同一个根因家族的不同表现。
+
+### Fixed
+
+- **动态止盈止损价被陈旧持仓缓存覆盖回退**（2026-09-18 实盘 301085）：
+
+  ```
+  10:12:51,721  更新 301085 的最高价为 77.78
+  10:12:51,741  更新 301085 持仓: 止损价: 从 72.17 到 72.34   # 77.78 * 0.93
+  10:12:52,170  更新 301085 持仓: 止损价: 从 72.34 到 72.13   # 77.56 * 0.93  <-- 回退 0.21 元
+  ```
+
+  `update_all_positions_price()` 的持仓行取自 `get_all_positions()` 的 **10 秒缓存
+  `positions_cache`**，它把快照里的 `stop_loss_price` 原样回传给 `update_position()`。
+  而后者在「最高价无可见变化 + 成本价无变化」时会**保留传入值、不走任何重算分支**，
+  于是刚按新高点算出的止损价被上一次缓存刷新时的旧值覆盖，动态止盈位「只升不降」的
+  不变量被打破。价格冲高后快速跳水时，止盈位被下调会实打实少赚一档。
+
+  修复：`update_all_positions_price()` 不再回传 `stop_loss_price`，由 `update_position`
+  基于内存表的最新最高价重算。同一函数的 `highest_price` 参数本就被 `update_position`
+  忽略（用 DB 值取 `max`），不受影响；`_sync_real_positions_to_memory()` 的同名参数
+  **直读内存表、不经缓存**，无此问题，未改动。
+
+  新增 [test/test_stop_loss_price_regression.py](test/test_stop_loss_price_regression.py)
+  （4 用例，已接入 `stop_profit` 与 `fast` 组）。修复前 3 个用例失败，失败值恰为
+  `72.34 -> 72.13`。
+
+- **持仓快照写出陈旧数据**：持仓监控线程在非交易时段直接 `sleep` 跳过同步，内存表可能
+  停留在上一个交易时段、甚至上一个进程留在 SQLite 里的值。盘后补录时直接取数就会写出
+  陈旧快照 —— 2026-09-15 的 close 快照是 09-14 的逐字段拷贝，与同一次写入的净值快照
+  市值相差 14100.00（正是缺失的 200 股）。
+
+  - 新增 `PositionManager.refresh_positions_from_broker()`：同步强制回源一次实盘持仓；
+    模拟模式 / 未接 QMT 时返回 `False`（此时内存表就是权威数据源）
+  - `settlement_db.write_position_snapshot()` 取数前强制回源；刷不到实盘时如实标
+    `source='memory_db_stale'`，**绝不冒充实时数据**；模拟模式标 `simulation`
+  - 新增 `settlement_db.has_snapshot()`，收盘快照重复补录防护
+  - `scripts/fix_stale_snapshots_20260917.py`：修正已落库的陈旧快照
+
+- **持仓缓存假空窗口导致监控静默停摆**：`get_all_positions()` 只在距上次刷新 ≥
+  `position_update_interval`(10s) 时才重建缓存，否则 `positions_cache is None` 直接
+  返回空 DataFrame。裸写 `self.positions_cache = None` 而不复位
+  `last_position_update_time`，会让**所有**股票在 10 秒 TTL 内表现为「无持仓」，
+  监控循环走 `positions_df.empty -> sleep(60)` 静默停摆（2026-09-16 实盘停摆 168 秒，
+  网格 `_check_exit_conditions` 两只股票同时误报「持仓为空」）。
+
+  新增 `_invalidate_positions_cache(reason)`：置空缓存同时复位
+  `last_position_update_time`，四处裸赋值改为调用它。守卫测试禁止再出现裸赋值。
+
 ### Changed
 
 - **交易日志 ID 术语统一**（2026-09-17）：同一笔交易里同一个值曾被标成 4 种不同的 key
@@ -65,8 +118,14 @@
   该提交是**纯行尾变更**：`git diff --ignore-all-space` 为空，68 个文件
   43111 增 / 43111 删完全对称，286 个 `.py` 文件语法校验全部通过。
 
-> 本次只改日志文案与语义错误的局部变量名，**未改动任何交易逻辑**。
-> 全量集成回归测试通过。日志术语规范已写入 [CLAUDE.md](CLAUDE.md) 开发规范一节。
+> 以上 **Changed** 部分只改日志文案与语义错误的局部变量名，**未改动任何交易逻辑**；
+> 本版本涉及交易逻辑的改动全部在上方 **Fixed** 中。
+> 日志术语规范已写入 [CLAUDE.md](CLAUDE.md) 开发规范一节。
+
+### 测试
+
+发布前执行 `--all-with-fast` 全量集成回归（Anaconda `python39`）：
+**37 组、154 模块、3248 用例，3248 通过、0 失败、0 错误、0 跳过，成功率 100%**，耗时 19.5 分钟。
 
 ## [3.9.2] - 2026-09-14
 
@@ -1003,7 +1062,9 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.1...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.3...HEAD
+[3.9.3]: https://github.com/weihong-su/miniQMT/compare/v3.9.2...v3.9.3
+[3.9.2]: https://github.com/weihong-su/miniQMT/compare/v3.9.1...v3.9.2
 [3.9.1]: https://github.com/weihong-su/miniQMT/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/weihong-su/miniQMT/compare/v3.8.9...v3.9.0
 [3.8.9]: https://github.com/weihong-su/miniQMT/compare/v3.8.8...v3.8.9

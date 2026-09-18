@@ -1485,14 +1485,15 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 ---
 
-**文档版本**: v1.8
-**最后更新**: 2026-08-29
+**文档版本**: v2.1
+**最后更新**: 2026-09-19
 **维护者**: miniQMT Team
 
 ### 变更记录
 
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
+| v2.1 | 2026-09-19 | 同步 v3.9.3：修复三个同源的**持仓状态失真**缺陷 —— 动态止盈止损价被 `positions_cache` 10 秒陈旧快照回传覆盖导致止盈位回退（实盘 301085 由 72.34 退回 72.13）、持仓快照在非交易时段写出陈旧数据（`write_position_snapshot` 取数前强制回源，刷不到实盘时如实标 `memory_db_stale`）、裸写 `positions_cache = None` 造成 10 秒「假空」窗口致监控静默停摆（统一走 `_invalidate_positions_cache()`）；交易日志 ID 术语按 `xtquant/xttype.py` 收敛为委托号/柜台编号/成交编号/流水号四者互斥；统一仓库行尾为 LF 并新增 `.gitattributes` 锁定 |
 | v2.0 | 2026-09-14 | 同步 v3.9.2：修复 v3.9.1 引入的**成交流水漏提交共享连接**缺陷（`record_trade(conn=...)` 契约为 `owns_conn` 才提交，调用方未接手，写事务永久悬在 `data_manager` 共享连接上持有 RESERVED 锁，全库写入 `database is locked`）；修复四处 SQLite 连接泄漏（`close()` 在 `try` 主体内，traceback 留存时击穿引用计数回收）、网格落账嵌套事务被内层 `commit` 截断、持仓同步重试上限失效导致刷屏与线程泄漏；日志模块别名统一为三字母并补齐 `stl`/`mig`/`gvd` |
 | v1.9 | 2026-09-12 | 同步 v3.9.1：新增**交割单数据管道**（`trade_records` 扩展 17 列 + 新增 position_snapshot / account_equity_daily / run_events / trade_records_sim / broker_deals / broker_orders 六张表；成交写入收敛为 `settlement_db.record_trade()` 单一入口；`time_source` 四态语义；券商对账单三级匹配导入；历史回填；导出脚本重写）；总控制台改**分页菜单**；修复 deal 唯一键丢单、全零净值落库、非交易日写收盘快照、模拟单误标实盘四项缺陷 |
 | v1.8 | 2026-08-29 | 同步 v3.9.0：修复网格超时委托撤单死代码路径（`TradingExecutor.cancel_order` 统一委托 `PositionManager._cancel_order`）、止损清仓后联动暂停同股网格会话、Web 手动买卖策略标签统一 |
