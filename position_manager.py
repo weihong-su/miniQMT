@@ -2184,7 +2184,7 @@ class PositionManager:
                     
                     # 安全提取和转换所有数值
                     safe_numeric_values = {}
-                    for field in ['volume', 'cost_price', 'current_price', 'highest_price', 'profit_triggered', 'available', 'market_value', 'stop_loss_price']:
+                    for field in ['volume', 'cost_price', 'current_price', 'highest_price', 'profit_triggered', 'available', 'market_value']:
                         if field in position:
                             value = position[field]
                             # 布尔值特殊处理
@@ -2222,6 +2222,11 @@ class PositionManager:
                             old_price = safe_numeric_values['current_price']
                             if abs(current_price - old_price) >= 0.01:
                                 # 使用安全转换后的值来更新
+                                # 注意: 不回传 stop_loss_price。positions 取自 get_all_positions()
+                                # 的 10 秒缓存,其中的止损价对应的是缓存快照时的最高价;回传后
+                                # update_position 会在"最高价无变化"分支原样写回,把刚按新高点
+                                # 算出的止损价覆盖成旧值(实盘曾出现 72.34 -> 72.13 回退)。
+                                # 传 None 让 update_position 基于内存表的最新最高价重算。
                                 self.update_position(
                                     stock_code=stock_code,
                                     volume=safe_numeric_values['volume'],
@@ -2231,8 +2236,7 @@ class PositionManager:
                                     current_price=current_price,  # 使用最新价格
                                     profit_triggered=safe_numeric_values['profit_triggered'],
                                     highest_price=safe_numeric_values['highest_price'],
-                                    open_date=open_date,
-                                    stop_loss_price=safe_numeric_values['stop_loss_price']
+                                    open_date=open_date
                                 )
                                 logger.debug(f"更新 {stock_code} 的最新价格为 {current_price:.2f}")
 

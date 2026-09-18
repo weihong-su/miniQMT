@@ -21,6 +21,7 @@
         "test.test_highest_price_update",
         "test.test_stop_profit_signal_flow",
         "test.test_stop_loss_price_calc",
+        "test.test_stop_loss_price_regression",
         "test.test_macd_signal_fixes"
       ],
       "priority": "high"
@@ -350,6 +351,7 @@
         "test.test_premarket_xttrader_reinit",
         "test.test_max_investment_strict",
         "test.test_stop_loss_price_calc",
+        "test.test_stop_loss_price_regression",
         "test.test_grid_qa_gap_supplement",
         "test.test_grid_full_range_coverage",
         "test.test_grid_true_pnl",
