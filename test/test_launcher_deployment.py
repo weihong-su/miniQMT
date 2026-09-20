@@ -374,6 +374,83 @@ class TestAccountFlaskPort(unittest.TestCase):
             self.assertEqual(_launcher._account_flask_port("B", ["A", "B"]), 5201)
 
 
+class TestDetectRunningWebPort(unittest.TestCase):
+    """autobuy 启动时探测主程序真实 Flask 端口。
+
+    cfg 的 base_url 是静态值(默认 :5000)，实际端口由 WEB_SERVER_PORT + 账号索引
+    决定，两者常不一致 —— 若不探测，autobuy 会连到不存在的端口。
+    """
+
+    def _accounts(self, *ids):
+        return [{"account_id": i} for i in ids]
+
+    def test_returns_port_of_running_account(self):
+        with patch.object(_launcher, "load_accounts", return_value=self._accounts("A", "B")), \
+             patch.object(_launcher, "_resolve_account_process",
+                          side_effect=lambda aid, ids=None: (111, "pid") if aid == "A" else (None, "missing")), \
+             patch.object(_launcher, "_account_flask_port", return_value=50000), \
+             patch.object(_launcher, "_is_port_in_use", return_value=True):
+            port, src = _launcher._detect_running_web_port()
+        self.assertEqual(port, 50000)
+        self.assertIn("A", src)
+
+    def test_skips_stale_pid_and_uses_next_account(self):
+        """第一个账号 PID 已失效时应继续探测下一个。"""
+        resolved = {"A": (999, "stale"), "B": (222, "pid")}
+        ports = {"A": 5000, "B": 5001}
+        with patch.object(_launcher, "load_accounts", return_value=self._accounts("A", "B")), \
+             patch.object(_launcher, "_resolve_account_process",
+                          side_effect=lambda aid, ids=None: resolved[aid]), \
+             patch.object(_launcher, "_account_flask_port",
+                          side_effect=lambda aid, ids=None: ports[aid]), \
+             patch.object(_launcher, "_is_port_in_use", return_value=True):
+            port, src = _launcher._detect_running_web_port()
+        self.assertEqual(port, 5001)
+        self.assertIn("B", src)
+
+    def test_running_pid_but_port_not_listening_is_skipped(self):
+        with patch.object(_launcher, "load_accounts", return_value=self._accounts("A")), \
+             patch.object(_launcher, "_resolve_account_process", return_value=(111, "pid")), \
+             patch.object(_launcher, "_account_flask_port", return_value=5000), \
+             patch.object(_launcher, "_is_port_in_use", return_value=False), \
+             patch.object(_launcher, "_flask_base_port", return_value=5000):
+            port, _ = _launcher._detect_running_web_port()
+        self.assertIsNone(port)
+
+    def test_falls_back_to_base_port_when_listening(self):
+        """未匹配到具体账号，但基准端口在监听时仍可用。"""
+        with patch.object(_launcher, "load_accounts", return_value=self._accounts("A")), \
+             patch.object(_launcher, "_resolve_account_process", return_value=(None, "missing")), \
+             patch.object(_launcher, "_account_flask_port", return_value=5000), \
+             patch.object(_launcher, "_flask_base_port", return_value=5000), \
+             patch.object(_launcher, "_is_port_in_use", return_value=True):
+            port, src = _launcher._detect_running_web_port()
+        self.assertEqual(port, 5000)
+        self.assertIn("基准端口", src)
+
+    def test_no_running_program_returns_none(self):
+        with patch.object(_launcher, "load_accounts", return_value=self._accounts("A")), \
+             patch.object(_launcher, "_resolve_account_process", return_value=(None, "missing")), \
+             patch.object(_launcher, "_account_flask_port", return_value=5000), \
+             patch.object(_launcher, "_flask_base_port", return_value=5000), \
+             patch.object(_launcher, "_is_port_in_use", return_value=False):
+            port, src = _launcher._detect_running_web_port()
+        self.assertIsNone(port)
+        self.assertIn("未检测到", src)
+
+    def test_empty_account_config_returns_none(self):
+        with patch.object(_launcher, "load_accounts", return_value=[]):
+            port, src = _launcher._detect_running_web_port()
+        self.assertIsNone(port)
+        self.assertIn("没有账号", src)
+
+    def test_load_accounts_failure_does_not_raise(self):
+        with patch.object(_launcher, "load_accounts", side_effect=RuntimeError("boom")):
+            port, src = _launcher._detect_running_web_port()
+        self.assertIsNone(port)
+        self.assertIn("失败", src)
+
+
 class TestPortInUse(unittest.TestCase):
     def test_free_port_reports_not_in_use(self):
         self.assertFalse(_launcher._is_port_in_use(59999))

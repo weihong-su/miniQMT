@@ -116,12 +116,21 @@ python -m autobuy.app --simulate            # 持续调度试跑
 
 | 菜单 | 功能 |
 |------|------|
-| `[j]` | 启动自动买入服务 |
+| `[j]` | 启动自动买入服务(**实盘**,会真实下单) |
+| `[v]` | 启动自动买入服务(**模拟**,不下单) |
 | `[k]` | 停止自动买入服务 |
 | `[l]` | 查看状态(读 `data/.autobuy_status.json`) |
 | `[m]` | 查看日志(`logs/miniqmt_autobuy.log`) |
 
-手动单次触发(测试):`python -m autobuy.app --once`
+> `[j]`/`[v]` 启动时会**自动探测当前在跑的主程序 Flask 端口**并注入
+> `MINIQMT_AUTOBUY_BASE_URL`,无需手改 cfg 的 `base_url`。
+> 实际端口由 `WEB_SERVER_PORT`(.env/环境变量) + 账号索引决定,与 cfg 的静态值常不一致。
+> 同理,cfg 的 `api_token` 留空时会自动回退到 `QMT_API_TOKEN`,避免 401。
+
+对应 CLI:`python scripts/_launcher.py autobuy-start` / `autobuy-simulate`
+
+手动单次触发(测试):`python -m autobuy.app --once --simulate`
+或用试跑脚本(自动取 Token、可覆盖端口):`python scripts/autobuy_dryrun.py --port 50000`
 
 ## 复盘(data/autobuy.db)
 

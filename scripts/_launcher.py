@@ -16,7 +16,8 @@ miniQMT 总控制台后端（被 miniqmt.bat 调用）。
   xqm-stop                   停止 xtquant_manager 网关
   xqm-status                 查看 xtquant_manager 运行状态
   xqm-ui                     在浏览器打开 web2.0/1.0 界面
-  autobuy-start              启动自动买入服务
+  autobuy-start              启动自动买入服务（实盘）
+  autobuy-simulate           启动自动买入服务（模拟，不下单）
   autobuy-stop               停止自动买入服务
   autobuy-status             查看自动买入服务状态
   autobuy-log                查看自动买入服务日志
@@ -309,6 +310,38 @@ def _account_pid_from_port(acc_id: str, all_ids=None) -> int | None:
     if len(pids) == 1:
         return pids[0]
     return None
+
+
+def _detect_running_web_port() -> tuple[int | None, str]:
+    """探测当前在跑的主程序 Flask 端口，供 autobuy 直接对接。
+
+    cfg 里的 base_url 是静态配置(默认 :5000)，而实际端口由 WEB_SERVER_PORT
+    环境变量/.env + 账号索引决定(用户环境实测为 50000)，两者常常不一致。
+    因此按账号顺序探测真实在监听的端口，避免 autobuy 连到不存在的端口。
+
+    返回 (端口, 说明)；无账号在运行时返回 (None, 原因)。
+    """
+    try:
+        accounts = load_accounts()
+    except Exception as e:
+        return None, f"读取账号配置失败: {e}"
+    if not accounts:
+        return None, "account_config.json 中没有账号"
+
+    all_ids = [a["account_id"] for a in accounts]
+    for acc_id in all_ids:
+        pid, source = _resolve_account_process(acc_id, all_ids)
+        if pid is None or source == "stale":
+            continue
+        port = _account_flask_port(acc_id, all_ids)
+        if _is_port_in_use(port):
+            return port, f"账号 {acc_id} (PID={pid})"
+
+    # 没有识别到在跑的账号，再退一步直接看基准端口是否被占用
+    base = _flask_base_port()
+    if _is_port_in_use(base):
+        return base, "基准端口正在监听(未匹配到具体账号)"
+    return None, "未检测到运行中的主程序"
 
 
 def _resolve_account_process(acc_id: str, all_ids=None, cleanup_stale: bool = False) -> tuple[int | None, str]:
@@ -1534,10 +1567,17 @@ def _autobuy_read_pid() -> int | None:
         return None
 
 
-def cmd_autobuy_start(_args) -> int:
+def cmd_autobuy_start(args=None, simulate: bool = False) -> int:
+    """启动自动买入服务。simulate=True 时加 --simulate（不发真实买单）。
+
+    端口: autobuy 默认读 cfg 的 [web] base_url，但实际 Flask 端口由
+    WEB_SERVER_PORT(.env/环境变量) + 账号索引决定，两者常不一致。
+    因此这里探测真实在跑的端口并通过 MINIQMT_AUTOBUY_BASE_URL 传给子进程。
+    """
     pid = _autobuy_read_pid()
     if pid and pid_alive(pid):
         print(f"  ✓ 自动买入服务已在运行 (PID={pid})")
+        print("    如需切换 实盘/模拟 模式，请先用 [k] 停止再重新启动")
         return 0
     if not AUTOBUY_APP.exists():
         print(f"  ✗ 未找到 {AUTOBUY_APP}")
@@ -1546,14 +1586,32 @@ def cmd_autobuy_start(_args) -> int:
         print("  ✗ 未找到配置文件 autobuy/miniqmt_autobuy.cfg，请先创建/检查")
         return 1
 
+    mode_label = "模拟运行" if simulate else "实盘"
+    print(f"  启动模式: {mode_label}")
+
+    env = os.environ.copy()
+    port, port_src = _detect_running_web_port()
+    if port is not None:
+        base_url = f"http://127.0.0.1:{port}"
+        env["MINIQMT_AUTOBUY_BASE_URL"] = base_url
+        print(f"  目标 web_server: {base_url}  <- {port_src}")
+    else:
+        print(f"  [警告] {port_src}")
+        print("         将回退使用 cfg 中的 [web] base_url；若主程序未运行，")
+        print("         autobuy 查询持仓会失败并跳过本轮买入(fail-safe)。")
+
     (PROJECT_ROOT / "data").mkdir(exist_ok=True)
+    cmd = [sys.executable, "-m", "autobuy.app"]
+    if simulate:
+        cmd.append("--simulate")
     creationflags = 0x00000010  # CREATE_NEW_CONSOLE，独立控制台
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "autobuy.app"],
+            cmd,
             cwd=str(PROJECT_ROOT),
             creationflags=creationflags,
             close_fds=True,
+            env=env,
         )
     except OSError as e:
         print(f"  ✗ 启动自动买入服务失败: {e}")
@@ -1563,10 +1621,18 @@ def cmd_autobuy_start(_args) -> int:
         _autobuy_pid_file().write_text(str(proc.pid), encoding="ascii")
     except OSError:
         pass
-    print(f"  ✓ 自动买入服务已启动 (PID={proc.pid})")
+    print(f"  ✓ 自动买入服务已启动 (PID={proc.pid}, {mode_label})")
     print(f"    日志: {AUTOBUY_LOG}")
-    print("    ⚠ 需保证目标 web_server 已运行 (见 autobuy/miniqmt_autobuy.cfg [web] base_url)")
+    if simulate:
+        print("    ✓ 模拟模式: 不会发送任何真实买入请求，其余逻辑照常执行")
+        print("      决策明细可查 data/autobuy.db 的 decision_log 表")
+    else:
+        print("    ⚠ 实盘模式: 满足条件将真实下单")
     return 0
+
+
+def cmd_autobuy_start_simulate(_args) -> int:
+    return cmd_autobuy_start(None, simulate=True)
 
 
 def cmd_autobuy_stop(_args) -> int:
@@ -2323,7 +2389,7 @@ def cmd_menu(_args) -> int:
         pause_return()
 
     # 分页菜单：首页只放日常运行，其余折叠进二级页，一屏装得下。
-    # 各页按键天然不重叠（env 用 0-4 / 首页用 5-9,a-c / services 用 d-m /
+    # 各页按键天然不重叠（env 用 0-4 / 首页用 5-9,a-c / services 用 d-m,v /
     # data 用 n-p,r-u），因此下面的分派链无需按页改写，只在入口做按键校验。
     PAGE_TITLES = {
         "env": "环境与部署",
@@ -2381,7 +2447,8 @@ def cmd_menu(_args) -> int:
             print("   [i] 查看 xtquant_manager 实时日志")
             print()
             print("  [自动买入服务 miniqmt_autobuy]")
-            print("   [j] 启动自动买入服务")
+            print("   [j] 启动自动买入服务 (实盘，会真实下单)")
+            print("   [v] 启动自动买入服务 (模拟，不下单)")
             print("   [k] 停止自动买入服务")
             print("   [l] 查看自动买入状态")
             print("   [m] 查看自动买入日志")
@@ -2440,7 +2507,7 @@ def cmd_menu(_args) -> int:
                 time.sleep(1)
                 continue
         elif page == "services":
-            if choice not in tuple("defghijklm"):
+            if choice not in tuple("defghijklmv"):
                 print(f"\n[警告] 无效选择: {choice!r}")
                 time.sleep(1)
                 continue
@@ -2592,6 +2659,11 @@ def cmd_menu(_args) -> int:
             cmd_autobuy_start(None)
             pause_return()
 
+        elif choice == "v":
+            print()
+            cmd_autobuy_start_simulate(None)
+            pause_return()
+
         elif choice == "k":
             print()
             cmd_autobuy_stop(None)
@@ -2704,6 +2776,7 @@ def main() -> int:
     sub.add_parser("xqm-ui")
     sub.add_parser("xqm-log")
     sub.add_parser("autobuy-start")
+    sub.add_parser("autobuy-simulate")
     sub.add_parser("autobuy-stop")
     sub.add_parser("autobuy-status")
     sub.add_parser("autobuy-log")
@@ -2732,6 +2805,7 @@ def main() -> int:
         "xqm-ui":        cmd_xqm_ui,
         "xqm-log":       cmd_xqm_logs,
         "autobuy-start":  cmd_autobuy_start,
+        "autobuy-simulate": cmd_autobuy_start_simulate,
         "autobuy-stop":   cmd_autobuy_stop,
         "autobuy-status": cmd_autobuy_status,
         "autobuy-log":    cmd_autobuy_logs,

@@ -81,6 +81,39 @@ class TestAutoBuyConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_config(path)
 
+    def test_base_url_env_override(self):
+        """miniqmt.bat 探测到真实端口后通过环境变量注入，须覆盖 cfg 的静态值。"""
+        path = self._write_cfg("[web]\nbase_url = http://127.0.0.1:5000\n")
+        with patch.dict(os.environ, {"MINIQMT_AUTOBUY_BASE_URL": "http://127.0.0.1:50000"}):
+            cfg = load_config(path)
+        self.assertEqual(cfg.base_url, "http://127.0.0.1:50000")
+
+    def test_base_url_env_override_strips_trailing_slash(self):
+        path = self._write_cfg("[web]\nbase_url = http://127.0.0.1:5000\n")
+        with patch.dict(os.environ, {"MINIQMT_AUTOBUY_BASE_URL": "http://127.0.0.1:50000/"}):
+            cfg = load_config(path)
+        self.assertEqual(cfg.base_url, "http://127.0.0.1:50000")
+
+    def test_base_url_env_empty_falls_back_to_cfg(self):
+        path = self._write_cfg("[web]\nbase_url = http://127.0.0.1:5001\n")
+        with patch.dict(os.environ, {"MINIQMT_AUTOBUY_BASE_URL": "   "}):
+            cfg = load_config(path)
+        self.assertEqual(cfg.base_url, "http://127.0.0.1:5001")
+
+    def test_api_token_falls_back_to_env(self):
+        """cfg 未填 token 时回退 QMT_API_TOKEN，避免 401 导致整轮跳过买入。"""
+        path = self._write_cfg("[web]\napi_token =\n")
+        with patch.dict(os.environ, {"QMT_API_TOKEN": "env-token-xyz"}):
+            cfg = load_config(path)
+        self.assertEqual(cfg.api_token, "env-token-xyz")
+
+    def test_cfg_api_token_takes_precedence(self):
+        """cfg 显式填了 token 时不被环境变量覆盖。"""
+        path = self._write_cfg("[web]\napi_token = cfg-token\n")
+        with patch.dict(os.environ, {"QMT_API_TOKEN": "env-token-xyz"}):
+            cfg = load_config(path)
+        self.assertEqual(cfg.api_token, "cfg-token")
+
     def test_missing_file(self):
         with self.assertRaises(FileNotFoundError):
             load_config("no_such_file_xyz.cfg")

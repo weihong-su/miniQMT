@@ -208,7 +208,23 @@ def load_config(cfg_path: str = DEFAULT_CFG_PATH) -> AutoBuyConfig:
 
     # [web]
     cfg.base_url = g("web", "base_url", cfg.base_url).strip().rstrip("/")
+    # 环境变量覆写 base_url: 实际 Flask 端口由 WEB_SERVER_PORT + 账号索引决定，
+    # 与 cfg 里的静态值常不一致。miniqmt.bat 启动时会探测真实端口并注入此变量。
+    _env_base = os.environ.get("MINIQMT_AUTOBUY_BASE_URL", "").strip()
+    if _env_base:
+        cfg.base_url = _env_base.rstrip("/")
     cfg.api_token = g("web", "api_token", cfg.api_token).strip()
+    # cfg 未填 token 时回退到主程序同源的 QMT_API_TOKEN，
+    # 避免"web 启用了鉴权但 cfg 忘了填"导致持仓查询 401 → 整轮跳过买入。
+    # autobuy 是独立进程，.env 不会自动进环境变量，故复用主 config 的加载器
+    # (优先级：已存在的环境变量 > .env，与主程序一致)。
+    if not cfg.api_token:
+        try:
+            from config import _load_dotenv_fallback
+            _load_dotenv_fallback()
+        except Exception:
+            pass
+        cfg.api_token = os.environ.get("QMT_API_TOKEN", "").strip()
     cfg.timeout = gf("web", "timeout", cfg.timeout)
 
     # [pool]
