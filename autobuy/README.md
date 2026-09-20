@@ -63,16 +63,45 @@ python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
 ### [filter] 买入条件(均可独立开关 + 阈值可配)
 - 大盘门禁: `999999` / `399001` / `399005` 至少一个指数 MA5 向上才允许自动买入
 - 换手率 `>= min_turnover_rate`(默认 5%);`volume_unit_multiplier` 控制成交量单位换算(手→股填 100,已是股填 1)
-- 量比 `>= min_volume_ratio`(默认 2)
+- **近 N 日收盘量比**(默认开):近 `recent_volume_ratio_days`(默认 2)个**已收盘**交易日的量比
+  **全部** `>= min_recent_volume_ratio`(默认 1.2)。第 i 日量比 = 第 i 日量 / 该日**之前**
+  `volume_ratio_baseline_days`(默认 5)个交易日均量,每日独立回看。数据不足时判定**不通过**
+- 盘中累计量比 `>= min_volume_ratio`(默认**关闭**):口径为当日**累计**量 / 前 5 日**全天**均量,
+  分子分母时间跨度不对等 —— 盘中早段必然偏低,会把买入窗口隐式挤压到尾盘。已由上一条取代
 - 涨幅 `>= min_pct_change`(默认关闭)
 - MA8 方向向上;现价 `<= MA8 * max_price_to_ma8_ratio`(默认 1.07)
+- MA20 区间:偏离度 `现价/MA20 - 1` 须落在 `[min_price_to_ma20_deviation, max_price_to_ma20_deviation]`
+  内(默认 `[-3%, +5%]`,闭区间)。下界拦"跌离均线太远"(趋势走坏),上界拦"追高偏离太多"(回踩风险),
+  与 MA8 的单边上限互补。历史不足 20 根时判定**不通过**(不静默放行)
 - 涨停/停牌跳过
+- **ST/\*ST/退市整理股跳过**(默认开):按**证券名称前缀**判定
+  (`InstrumentStatus` 不可靠 —— 实测多数 ST 股该字段同样为 0)。
+  理由:退市风险 + 跌停幅度受限(创业板 ST 为 20%),跌停板上止损常常无法成交,
+  实际亏损会远超 `STOP_LOSS_RATIO`
 
 ### [risk] 风控(防重复买入同一只股票)
 - `dedup_by_position` — 已持仓该股则跳过(查 web `/api/positions`)
 - `dedup_window_days` — 历史 N 天内买过则跳过(0=当天,-1=永久)
 - `max_buys_per_run` — 每次触发最多买入只数(默认随机选 1 只)
-- 持仓查询失败时**本轮不下单**(安全优先,避免重复)
+- 持仓查询失败时**本轮不下单**(安全优先,避免重复)。"查询失败"包含:网络异常、
+  非 200 响应(401 Token 失败 / 500 服务端异常)、响应非 JSON、以及 200 但 `status=error`
+  的业务错误 —— 这些都**不会**被误判为"空仓"
+- `simulation_mode` — 模拟运行,见下
+
+## 模拟运行模式
+
+`simulation_mode = true`(或命令行 `--simulate`)时,**除不发送真实买入请求外,其余逻辑
+完全照常**:候选池筛选、大盘门禁、防重过滤、条件检查、决策日志、买入历史落库、状态文件
+全部正常执行,fail-safe 与各项门禁一个不少。
+
+```bash
+python -m autobuy.app --once --simulate     # 单次试跑,不动真实账户
+python -m autobuy.app --simulate            # 持续调度试跑
+```
+
+- 模拟买入记入 `buy_history` 并标记 `is_simulation=1`,日志打 `[模拟] 应买入 ...`
+- **模拟记录不参与防重**:试跑不会挡住当天该股的真实买入,可反复试跑不污染实盘风控
+- 状态文件 `data/.autobuy_status.json` 含 `simulation_mode` 字段,`[l]` 查看状态时可辨识
 
 ### [web] 下单通道
 - `base_url` — 目标账号 web_server(多账号改端口);`api_token` — 对应 `QMT_API_TOKEN`
@@ -96,7 +125,9 @@ python -m autobuy.app  (独立进程, 由 miniqmt.bat [j] 启动)
 
 ## 复盘(data/autobuy.db)
 
-- `buy_history` — 每次买入尝试(代码/时间/触发源/成功标志/HTTP状态/订单结果/金额),用于防重 + 资金复盘
+- `buy_history` — 每次买入尝试(代码/时间/触发源/成功标志/HTTP状态/订单结果/金额/是否模拟),
+  用于防重 + 资金复盘。`stock_code` 按 `600000.SH` 格式存储,防重查询
+  `recently_bought_codes()` 统一归一成 6 位数字后返回,与 `app._dedup_filter` 的比较口径一致
 - `decision_log` — 每轮**已检查**标的的条件明细(`reason_json` 记录各项实际值与通过判定)。
   注:惰性求值下只记录实际检查过的标的(命中即停),非全候选池
 

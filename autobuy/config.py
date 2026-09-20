@@ -84,19 +84,35 @@ class AutoBuyConfig:
     enable_turnover_rate: bool = True
     min_turnover_rate: float = 0.05
     volume_unit_multiplier: float = 100.0
-    enable_volume_ratio: bool = True
+    enable_volume_ratio: bool = False
     min_volume_ratio: float = 2.0
+    # 近 N 个已收盘交易日的收盘量比须全部 >= 阈值。
+    # 与 enable_volume_ratio 的区别: 后者用盘中累计量(分子分母时间跨度不对等，
+    # 盘中早段必然偏低)；本条用已收盘完整交易日，口径对等且盘中不漂移。
+    enable_recent_volume_ratio: bool = True
+    recent_volume_ratio_days: int = 2
+    min_recent_volume_ratio: float = 1.2
+    volume_ratio_baseline_days: int = 5
     enable_pct_change: bool = False
     min_pct_change: float = 0.05
     enable_ma8_uptrend: bool = True
     enable_price_below_ma8_ratio: bool = True
     max_price_to_ma8_ratio: float = 1.07
+    # 买入点须落在 MA20 的 [min, max] 偏离区间内(-0.03 = MA20 下方 3%)
+    enable_ma20_range: bool = True
+    min_price_to_ma20_deviation: float = -0.03
+    max_price_to_ma20_deviation: float = 0.05
     skip_limit_up: bool = True
+    # 跳过 ST/*ST/退市整理股: 退市风险 + 跌停幅度受限(创业板ST为20%)，
+    # 跌停板上止损常常无法成交，实际亏损会远超 STOP_LOSS_RATIO
+    skip_st: bool = True
 
     # [risk]
     dedup_by_position: bool = True
     dedup_window_days: int = 1
     max_buys_per_run: int = 1
+    # 模拟运行: 除不发真实买入请求外，候选池/门禁/防重/条件检查/落库全部照常执行
+    simulation_mode: bool = False
 
     # [schedule]
     mode: str = "both"
@@ -125,6 +141,19 @@ class AutoBuyConfig:
             raise ValueError(f"[risk] max_buys_per_run 必须 >= 1: {self.max_buys_per_run}")
         if not self.base_url.startswith(("http://", "https://")):
             raise ValueError(f"[web] base_url 必须以 http(s):// 开头: {self.base_url!r}")
+        if self.min_price_to_ma20_deviation > self.max_price_to_ma20_deviation:
+            raise ValueError(
+                f"[filter] MA20 区间下界不得大于上界: "
+                f"{self.min_price_to_ma20_deviation} > {self.max_price_to_ma20_deviation}"
+            )
+        if self.recent_volume_ratio_days < 1:
+            raise ValueError(
+                f"[filter] recent_volume_ratio_days 必须 >= 1: {self.recent_volume_ratio_days}"
+            )
+        if self.volume_ratio_baseline_days < 1:
+            raise ValueError(
+                f"[filter] volume_ratio_baseline_days 必须 >= 1: {self.volume_ratio_baseline_days}"
+            )
 
 
 def _parse_daily_times(raw: str) -> list:
@@ -204,17 +233,38 @@ def load_config(cfg_path: str = DEFAULT_CFG_PATH) -> AutoBuyConfig:
     cfg.volume_unit_multiplier = gf("filter", "volume_unit_multiplier", cfg.volume_unit_multiplier)
     cfg.enable_volume_ratio = gb("filter", "enable_volume_ratio", cfg.enable_volume_ratio)
     cfg.min_volume_ratio = gf("filter", "min_volume_ratio", cfg.min_volume_ratio)
+    cfg.enable_recent_volume_ratio = gb(
+        "filter", "enable_recent_volume_ratio", cfg.enable_recent_volume_ratio
+    )
+    cfg.recent_volume_ratio_days = gi(
+        "filter", "recent_volume_ratio_days", cfg.recent_volume_ratio_days
+    )
+    cfg.min_recent_volume_ratio = gf(
+        "filter", "min_recent_volume_ratio", cfg.min_recent_volume_ratio
+    )
+    cfg.volume_ratio_baseline_days = gi(
+        "filter", "volume_ratio_baseline_days", cfg.volume_ratio_baseline_days
+    )
     cfg.enable_pct_change = gb("filter", "enable_pct_change", cfg.enable_pct_change)
     cfg.min_pct_change = gf("filter", "min_pct_change", cfg.min_pct_change)
     cfg.enable_ma8_uptrend = gb("filter", "enable_ma8_uptrend", cfg.enable_ma8_uptrend)
     cfg.enable_price_below_ma8_ratio = gb("filter", "enable_price_below_ma8_ratio", cfg.enable_price_below_ma8_ratio)
     cfg.max_price_to_ma8_ratio = gf("filter", "max_price_to_ma8_ratio", cfg.max_price_to_ma8_ratio)
+    cfg.enable_ma20_range = gb("filter", "enable_ma20_range", cfg.enable_ma20_range)
+    cfg.min_price_to_ma20_deviation = gf(
+        "filter", "min_price_to_ma20_deviation", cfg.min_price_to_ma20_deviation
+    )
+    cfg.max_price_to_ma20_deviation = gf(
+        "filter", "max_price_to_ma20_deviation", cfg.max_price_to_ma20_deviation
+    )
     cfg.skip_limit_up = gb("filter", "skip_limit_up", cfg.skip_limit_up)
+    cfg.skip_st = gb("filter", "skip_st", cfg.skip_st)
 
     # [risk]
     cfg.dedup_by_position = gb("risk", "dedup_by_position", cfg.dedup_by_position)
     cfg.dedup_window_days = gi("risk", "dedup_window_days", cfg.dedup_window_days)
     cfg.max_buys_per_run = gi("risk", "max_buys_per_run", cfg.max_buys_per_run)
+    cfg.simulation_mode = gb("risk", "simulation_mode", cfg.simulation_mode)
 
     # [schedule]
     cfg.mode = g("schedule", "mode", cfg.mode).strip().lower()

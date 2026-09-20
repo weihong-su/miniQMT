@@ -3,10 +3,13 @@ miniqmt_autobuy 买入条件检查。
 
 复用 data_manager 取行情/历史K线，自算指标(不改 config.MA_PERIODS):
   - 换手率 = 当日成交量(股) / 流通股本
-  - 量比   = 当日成交量 / 前5个完整交易日均量
+  - 量比   = 当日成交量 / 前5个完整交易日均量   (盘中累计口径，默认关闭)
+  - 近N日量比 = 近 N 个【已收盘】交易日的收盘量比须全部 >= 阈值
   - 涨幅   = (现价 - 前收) / 前收            (可选)
   - MA8 方向 = ma8[-1] > ma8[-2]
   - 价格相对 MA8 = 现价 / ma8 <= 阈值
+  - 价格相对 MA20 = 现价/ma20 - 1 落在 [min, max] 偏离区间内
+  - ST/退市整理股防护 (按证券名称前缀，非 InstrumentStatus)
   - 涨停/停牌防护 (借 xt.get_instrument_detail，复用 grid 思路)
 
 check() 返回 (passed, reason_dict)，reason 含每项条件实际值与通过判定，供复盘。
@@ -21,6 +24,8 @@ logger = get_autobuy_logger("autobuy.filter")
 
 # 涨跌停价比较容差
 _PRICE_EPS = 0.001
+# 偏离度比较容差: 10.5/10.0-1 = 0.050000000000000044，直接比较会误拒恰好在界上的价格
+_DEVIATION_EPS = 1e-9
 MARKET_INDEX_CODES = ("999999", "399001", "399005")
 _MARKET_INDEX_XT_CODES = {
     "999999": "999999.SH",
@@ -48,6 +53,20 @@ def _first_positive(detail: dict, keys) -> float | None:
     return None
 
 
+def is_st_name(name) -> bool:
+    """按证券名称判断是否为 ST / *ST / 退市整理股。
+
+    不能用 InstrumentStatus 判定 —— 实测多数 ST 股该字段同样为 0
+    (*ST美丽/*ST皇庭/ST海王/ST晨鸣 均为 0)，与正常股无区别。
+
+    名称可能含空格或全角字符(如 '万 科Ａ')，故先剔除空白再做前缀匹配。
+    """
+    if not name:
+        return False
+    s = str(name).replace(" ", "").replace("　", "").upper()
+    return s.startswith(("ST", "*ST", "S*ST", "SST")) or "退" in s
+
+
 def _has_valid_index_history(df) -> bool:
     return (
         df is not None
@@ -55,6 +74,34 @@ def _has_valid_index_history(df) -> bool:
         and "close" in df.columns
         and len(df) >= 6
     )
+
+
+def _recent_volume_ratios(df, days: int, baseline: int):
+    """近 `days` 个已收盘交易日的收盘量比，按【由远及近】返回。
+
+    第 i 日量比 = 第 i 日成交量 / 该日【之前】 `baseline` 个交易日的均量，
+    每日各自独立回看，互不重叠。
+
+    df 需含 volume 列；date 列存在时内部按升序排列后再取，因此对调用方传入的
+    是升序(回测)还是降序(data_manager.download_history_data 返回最新在前)都正确。
+    数据不足或任一基准均量 <= 0 时返回 None（由调用方判定为不通过）。
+    """
+    if df is None or getattr(df, "empty", True) or "volume" not in df.columns:
+        return None
+    if days < 1 or baseline < 1 or len(df) < days + baseline:
+        return None
+
+    ordered = df.sort_values("date") if "date" in df.columns else df
+    vols = ordered["volume"].astype(float).tolist()
+    ratios = []
+    for offset in range(days - 1, -1, -1):        # 由远及近
+        idx = len(vols) - 1 - offset              # 目标日下标
+        window = vols[idx - baseline: idx]        # 该日之前 baseline 根
+        avg = sum(window) / len(window)
+        if avg <= 0:
+            return None
+        ratios.append(vols[idx] / avg)
+    return ratios
 
 
 def download_market_index_history(data_manager, code: str):
@@ -115,6 +162,14 @@ class BuyConditionFilter:
 
         detail = self._instrument_detail(code)
 
+        # --- ST/退市整理股防护 (放在最前: 判定最便宜且一票否决) ---
+        if cfg.skip_st:
+            inst_name = detail.get("InstrumentName") or detail.get("证券名称")
+            if is_st_name(inst_name):
+                reason["instrument_name"] = inst_name
+                reason["failed"].append(f"ST股({inst_name})")
+                return False, reason
+
         # --- 涨停/停牌防护 ---
         if cfg.skip_limit_up:
             up_limit = _first_positive(detail, ("UpStopPrice", "upStopPrice", "HighLimit", "涨停价"))
@@ -141,7 +196,7 @@ class BuyConditionFilter:
                 reason["turnover_rate"] = None
                 reason["failed"].append("换手率无法计算(缺流通股本或成交量)")
 
-        # --- 量比 (当日量 / 前5个完整交易日均量；盘中为累计量比，未按时间折算) ---
+        # --- 盘中累计量比 (当日量 / 前5个完整交易日均量；未按时间折算，默认关闭) ---
         if cfg.enable_volume_ratio:
             if "volume" in df.columns and len(df) >= 6 and today_volume > 0:
                 avg5 = float(df["volume"].iloc[-6:-1].mean())
@@ -156,6 +211,26 @@ class BuyConditionFilter:
             else:
                 reason["volume_ratio"] = None
                 reason["failed"].append("量比无法计算(历史数据不足)")
+
+        # --- 近 N 个已收盘交易日的收盘量比须全部达标 ---
+        # 每日量比各自独立回看: 第 i 日量比 = 第 i 日量 / 其【之前】 baseline 日均量。
+        # 相比盘中累计量比，分子分母时间跨度对等，且盘中不随时间漂移。
+        if cfg.enable_recent_volume_ratio:
+            ratios = _recent_volume_ratios(
+                df, cfg.recent_volume_ratio_days, cfg.volume_ratio_baseline_days
+            )
+            if ratios is None:
+                reason["recent_volume_ratios"] = None
+                reason["failed"].append("近N日量比无法计算(历史数据不足或基准均量为0)")
+            else:
+                reason["recent_volume_ratios"] = [round(r, 3) for r in ratios]
+                below = [r for r in ratios if r < cfg.min_recent_volume_ratio]
+                if below:
+                    shown = "/".join(f"{r:.2f}" for r in ratios)
+                    reason["failed"].append(
+                        f"近{cfg.recent_volume_ratio_days}日量比{shown}"
+                        f"未全部>={cfg.min_recent_volume_ratio}"
+                    )
 
         # --- 涨幅 (可选) ---
         if cfg.enable_pct_change:
@@ -189,6 +264,25 @@ class BuyConditionFilter:
             else:
                 reason["ma8"] = None
                 reason["failed"].append("MA8无法计算(历史数据不足)")
+
+        # --- MA20 区间: 买入点须落在 MA20 的 [min, max] 偏离区间内 ---
+        # 偏离度 = 现价/MA20 - 1。下界拦"跌离均线太远"(趋势走坏)，
+        # 上界拦"追高偏离太多"(回踩风险)，与 MA8 的单边上限互补。
+        if cfg.enable_ma20_range:
+            ma20 = df["close"].rolling(20).mean()
+            ma20_now = float(ma20.iloc[-1]) if len(ma20) >= 20 else float("nan")
+            if ma20_now == ma20_now and ma20_now > 0:  # 非 NaN 且为正
+                deviation = price / ma20_now - 1
+                reason["ma20"] = round(ma20_now, 3)
+                reason["price_to_ma20_deviation"] = round(deviation, 4)
+                lo, hi = cfg.min_price_to_ma20_deviation, cfg.max_price_to_ma20_deviation
+                if not (lo - _DEVIATION_EPS <= deviation <= hi + _DEVIATION_EPS):
+                    reason["failed"].append(
+                        f"现价偏离MA20 {deviation:+.2%} 不在[{lo:+.1%},{hi:+.1%}]"
+                    )
+            else:
+                reason["ma20"] = None
+                reason["failed"].append("MA20无法计算(历史数据不足)")
 
         passed = len(reason["failed"]) == 0
         return passed, reason

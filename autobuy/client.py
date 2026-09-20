@@ -52,13 +52,32 @@ class WebClient:
         return success, resp.status_code, data
 
     def get_held_codes(self) -> set | None:
-        """查询当前持仓的规范化代码集合(用于防重)。查询失败返回 None。"""
+        """查询当前持仓的规范化代码集合(用于防重)。查询失败返回 None。
+
+        返回 None 会让调用方跳过本轮买入(fail-safe)，因此"服务端报错"必须与
+        "确实空仓"严格区分: 除网络异常外，非 200 响应(401 Token 失败 /
+        500 服务端异常)与 status != success 一律判为查询失败。
+        """
         url = f"{self.base_url}/api/positions"
         try:
             resp = requests.get(url, params={"version": -1}, headers=self._headers(), timeout=self.timeout)
-            data = resp.json()
-        except (requests.RequestException, ValueError) as e:
+        except requests.RequestException as e:
             logger.warning(f"查询持仓失败: {e}")
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(f"查询持仓失败: HTTP {resp.status_code}")
+            return None
+
+        try:
+            data = resp.json()
+        except ValueError as e:
+            logger.warning(f"查询持仓失败(响应非JSON): {e}")
+            return None
+
+        # 服务端以 200 返回业务错误时同样视为失败，避免误判为空仓
+        if isinstance(data, dict) and data.get("status") == "error":
+            logger.warning(f"查询持仓失败: {data.get('message') or data}")
             return None
 
         # 兼容多种返回结构: {'data':{'positions':[...]}} / {'positions':[...]} / [...]

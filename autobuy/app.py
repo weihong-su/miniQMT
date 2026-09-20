@@ -55,11 +55,13 @@ class AutoBuyApp:
     # ------------------------------------------------------------------
     def run_once(self, trigger: str) -> None:
         run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"===== 触发自动买入 [{trigger}] {run_time} =====")
+        mode_tag = " [模拟运行]" if self.cfg.simulation_mode else ""
+        logger.info(f"===== 触发自动买入 [{trigger}]{mode_tag} {run_time} =====")
 
         codes = read_candidates(self.cfg)
         status = {
             "last_run": run_time, "trigger": trigger,
+            "simulation_mode": self.cfg.simulation_mode,
             "candidates": len(codes), "checked": 0, "passed": 0, "bought": [],
         }
         if not codes:
@@ -122,13 +124,22 @@ class AutoBuyApp:
             self._write_status(status)
             return
 
-        # 下单 (复用 web 买入 API)
+        # 下单 (复用 web 买入 API; 模拟运行时跳过真实请求)
+        simulated = self.cfg.simulation_mode
         for code in chosen:
-            success, http_status, result = self.client.buy(code)
-            self.store.record_buy(code, trigger, success, http_status, result, amount=None)
+            if simulated:
+                success, http_status, result = True, None, {"simulated": True}
+                logger.info(f"  [模拟] 应买入 {code}，未发送真实下单请求")
+            else:
+                success, http_status, result = self.client.buy(code)
+            self.store.record_buy(
+                code, trigger, success, http_status, result,
+                amount=None, is_simulation=simulated,
+            )
             if success:
                 status["bought"].append(code)
-                logger.info(f"  下单成功: {code} (后续止盈止损交由主程序)")
+                if not simulated:
+                    logger.info(f"  下单成功: {code} (后续止盈止损交由主程序)")
             else:
                 logger.warning(f"  下单失败: {code} -> {result}")
 
@@ -199,6 +210,8 @@ class AutoBuyApp:
             logger.error(f"本轮执行异常 [{trigger}]: {e}", exc_info=True)
 
     def run_loop(self) -> None:
+        if self.cfg.simulation_mode:
+            logger.info("⚠️  模拟运行模式: 不会发送真实买入请求，其余逻辑照常执行")
         logger.info(
             f"自动买入调度启动: mode={self.cfg.mode} "
             f"daily={self.cfg.daily_times} interval={self.cfg.interval_minutes}min "
@@ -240,6 +253,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="miniQMT 自动买入服务")
     parser.add_argument("--config", default=DEFAULT_CFG_PATH, help="配置文件路径")
     parser.add_argument("--once", action="store_true", help="立即执行一轮后退出(用于测试/手动触发)")
+    parser.add_argument(
+        "--simulate", action="store_true",
+        help="模拟运行: 不发送真实买入请求，其余逻辑照常(覆盖配置 risk.simulation_mode)",
+    )
     args = parser.parse_args()
 
     try:
@@ -247,6 +264,9 @@ def main() -> int:
     except (FileNotFoundError, ValueError) as e:
         logger.error(f"加载配置失败: {e}")
         return 1
+
+    if args.simulate:
+        cfg.simulation_mode = True
 
     app = AutoBuyApp(cfg)
 
@@ -262,6 +282,8 @@ def main() -> int:
 
     try:
         if args.once:
+            if cfg.simulation_mode:
+                logger.info("⚠️  模拟运行模式: 不会发送真实买入请求，其余逻辑照常执行")
             app.run_once("manual-once")
         else:
             app.run_loop()
