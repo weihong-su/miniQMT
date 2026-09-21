@@ -943,6 +943,12 @@ GRID_SELL_COOLDOWN = 300  # 0=不限制；建议实盘设为 300
 # 网格实盘委托运行期对账：成交/委托推送漏掉时，定期用券商当日委托兜底确认 pending 订单。
 GRID_ORDER_RECONCILE_INTERVAL = 15  # 秒；0=禁用运行期对账
 GRID_ORDER_RECONCILE_STALE_SECONDS = 5  # pending 创建后超过该时间才参与运行期对账
+
+# 网格会话巡检：持仓监控线程只遍历当前持仓，且 check_grid_signals 对 enabled=False 的
+# 会话在退出检测前就返回，导致「已清仓」和「已暂停」的会话拿不到到期/清仓判定。
+# 该巡检独立于持仓列表运行，兜底停止这类滞留会话。
+GRID_SESSION_SWEEP_INTERVAL = 60  # 秒；0=禁用会话巡检
+
 ENABLE_GRID_PENDING_ORDER_AUTO_CANCEL = True  # 网格实盘pending委托超时自动撤单
 GRID_PENDING_ORDER_TIMEOUT_SECONDS = 90  # 网格pending委托超时阈值（秒）
 GRID_PENDING_ORDER_AUTO_REORDER = True  # 网格pending撤单完成后是否自动重挂

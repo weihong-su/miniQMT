@@ -457,6 +457,7 @@ class GridTradingManager:
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
         self.reconcile_lock = threading.Lock()  # 防止运行期 pending 对账并发进入
         self.last_order_reconcile_time = 0.0
+        self.last_session_sweep_time = 0.0  # 会话巡检节流，见 sweep_stale_sessions()
 
         # 初始化:从数据库加载活跃会话
         logger.info(f"[网格] 初始化网格交易管理器")
@@ -982,6 +983,101 @@ class GridTradingManager:
             return self._reconcile_open_grid_orders(reason=reason, min_age_seconds=min_age)
         finally:
             self.reconcile_lock.release()
+
+    def sweep_stale_sessions(self, force: bool = False, reason: str = "会话巡检") -> dict:
+        """巡检持仓监控覆盖不到的会话，兜底处理「到期」与「已清仓」退出。
+
+        check_grid_signals() 只在两个前提都成立时才做退出检测：股票当前有持仓
+        （持仓监控线程按持仓列表遍历），且会话 enabled=True（否则提前 return）。
+        这让两类会话永远等不到退出判定：
+          1. 已清仓的股票——清仓本身是退出条件，但清仓后就不再被轮询，形成自锁；
+          2. 被暂停的会话——如清仓止盈后自动暂停的会话，有效期过了也停不掉。
+        本方法独立于持仓列表运行，补上这两个缺口。
+
+        刻意只做「到期」和「清仓」两项：二者都不需要实时行情，判定确定性强。
+        偏离度/盈亏退出依赖现价，仍由持仓路径负责。
+
+        暂停会话只参与到期检测，不参与清仓退出——暂停语义是「保留现场待人工
+        复核后原样恢复」（见 ENABLE_PAUSE_GRID_AFTER_TAKE_PROFIT_FULL），
+        清仓退出会直接销毁会话，与该意图冲突；有效期到了则是硬约束，不冲突。
+
+        Returns:
+            {'checked': N, 'expired': N, 'cleared': N}
+        """
+        result = {'checked': 0, 'expired': 0, 'cleared': 0}
+
+        interval = float(getattr(config, 'GRID_SESSION_SWEEP_INTERVAL', 60))
+        if not force and interval <= 0:
+            return result
+        now = time.time()
+        if not force and now - self.last_session_sweep_time < interval:
+            return result
+        self.last_session_sweep_time = now
+
+        # 锁内只取快照，避免持锁调用 position_manager（与 check_grid_signals 的
+        # 锁外预取同因：position_manager 内部可能反向请求 grid_manager.lock）
+        with self.lock:
+            candidates = [
+                {
+                    'id': self._session_field(s, 'id'),
+                    'stock_code': self._session_field(s, 'stock_code', ''),
+                    'enabled': bool(self._session_field(s, 'enabled', True)),
+                    'end_time': self._session_field(s, 'end_time'),
+                }
+                for s in self.sessions.values()
+                if self._session_field(s, 'status', '') == 'active'
+            ]
+
+        if not candidates:
+            return result
+
+        now_dt = datetime.now()
+        to_stop = []  # [(session_id, stock_code, reason)]
+        need_position_check = []
+
+        for item in candidates:
+            result['checked'] += 1
+            end_time = item['end_time']
+            if end_time and now_dt > end_time:
+                to_stop.append((item['id'], item['stock_code'], 'expired'))
+                continue
+            # 暂停会话不做清仓退出，理由见方法文档
+            if item['enabled']:
+                need_position_check.append(item)
+
+        # 锁外查持仓
+        for item in need_position_check:
+            stock_code = item['stock_code']
+            try:
+                position = self.position_manager.get_position(stock_code)
+            except Exception as e:
+                logger.warning(f"[网格] {reason}: {stock_code} 持仓查询失败，跳过清仓判定: {e}")
+                continue
+            volume = position.get('volume', 0) if position else 0
+            if position and volume:
+                with self.lock:
+                    self._position_cleared_confirmations.pop(
+                        self._normalize_code(stock_code), None)
+                continue
+            with self.lock:
+                session = self._find_session_by_id(item['id'])
+                if not session:
+                    continue
+                if not self._confirm_position_cleared(session):
+                    continue
+            to_stop.append((item['id'], stock_code, 'position_cleared'))
+
+        for session_id, stock_code, exit_reason in to_stop:
+            logger.info(f"[网格] {reason}: {stock_code} 触发退出 reason={exit_reason}, 会话={session_id}")
+            try:
+                self.stop_grid_session(session_id, exit_reason)
+                result['expired' if exit_reason == 'expired' else 'cleared'] += 1
+            except ValueError as e:
+                logger.warning(f"[网格] {reason}: 停止会话时会话已不存在（可能已被并发停止）: {e}")
+            except Exception as e:
+                logger.error(f"[网格] {reason}: 停止会话 {session_id} 失败: {e}")
+
+        return result
 
     def _reconcile_open_grid_orders(self, reason: str = "启动对账", min_age_seconds: float = 0) -> dict:
         """用券商当日委托/成交补偿本地未完成网格委托。"""
@@ -2287,7 +2383,7 @@ class GridTradingManager:
         logger.info(
             f"[网格] 已登记待成交委托 股票代码={session.stock_code}, 委托号={normalized_order_id}, "
             f"会话={session.id}, 方向={config.TRADE_SIDE_LABELS.get(side, side)}, "
-            f"数量={volume}, 委托价={expected_price:.2f}"
+            f"数量={volume}, 触发价={expected_price:.2f}"
         )
 
     def _record_confirmed_grid_trade(self, session: GridSession, signal: dict, side: str,

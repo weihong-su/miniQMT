@@ -59,7 +59,8 @@
         "test.test_grid_trade_rebuild",
         "test.test_grid_order_lifecycle_and_ledger",
         "test.test_grid_live_order_confirmation",
-        "test.test_grid_counterparty_price_and_limit_guard"
+        "test.test_grid_counterparty_price_and_limit_guard",
+        "test.test_trade_log_terminology"
       ],
       "priority": "high"
     },
@@ -79,7 +80,8 @@
         "test.test_grid_exit_profit_loss",
         "test.test_grid_exit_time",
         "test.test_grid_exit_position_cleared",
-        "test.test_grid_exit_integration"
+        "test.test_grid_exit_integration",
+        "test.test_grid_session_sweep"
       ],
       "priority": "high"
     },
@@ -332,6 +334,7 @@
         "test.test_grid_live_order_confirmation",
         "test.test_grid_counterparty_price_and_limit_guard",
         "test.test_grid_exit_deviation",
+        "test.test_grid_session_sweep",
         "test.test_grid_validation_params",
         "test.test_trader_callback",
         "test.test_config_env_overrides",

@@ -245,6 +245,24 @@ def _is_blank_asset(total_asset, market_value, cash, frozen_cash):
     return all(v is None or abs(v) < 1e-9 for v in values)
 
 
+def _is_partial_asset(total_asset, market_value, cash, frozen_cash, tolerance):
+    """判断是否为 cash 字段缺失的「半残读数」。
+
+    _is_blank_asset 只拦整行 0，拦不住启动瞬间 QMT 返回的部分字段缺失，例如
+    2026-09-14 17:09 实际落库过一条 cash=0 / mv=194558 / total=514063 的快照
+    （真实 cash 约 319490），净值表的 cash 列就此被污染。
+
+    判据不能只看 cash==0——真满仓时 cash 合法地等于 0。但满仓意味着
+    total≈mv，所以「cash 与 frozen 同时为 0，而 total 与 mv 差额超出容差」
+    只能是 cash 丢了，不可能是合法账户状态。
+    """
+    if None in (total_asset, market_value, cash):
+        return False
+    if abs(cash) >= 1e-9 or abs(frozen_cash or 0.0) >= 1e-9:
+        return False
+    return abs(total_asset - market_value) > tolerance
+
+
 # ============================== 每日净值 ==============================
 
 def write_equity_snapshot(position_manager, snapshot_type,
@@ -278,6 +296,8 @@ def write_equity_snapshot(position_manager, snapshot_type,
     frozen_cash = _num(info.get('frozen_cash'))
     source = 'qmt_api' if not config.ENABLE_SIMULATION_MODE else 'simulation'
 
+    identity_tolerance = _cfg('SETTLEMENT_ASSET_IDENTITY_TOLERANCE', 1.0)
+
     # QMT 未连接 / 未登录时 balance() 会返回一整行 0，那是**无效读数**不是真净值。
     # 恒等式校验拦不住它（0 == 0+0+0 恒成立），必须单独判掉 ——
     # 否则净值曲线会凭空出现归零点，而 source 还写着 qmt_api，比没有数据更糟。
@@ -293,12 +313,33 @@ def write_equity_snapshot(position_manager, snapshot_type,
                   db_path=db_path)
         return False
 
+    # 半残读数：cash 丢失但其余字段有值。同样拒绝落库 —— 写进去的是一条
+    # 看着合理、实则 cash 归零的净值，比缺一条数据更难事后发现。
+    if _is_partial_asset(total_asset, market_value, cash, frozen_cash,
+                         identity_tolerance):
+        logger.warning(
+            f"净值读数不完整（cash=0 但 total={total_asset:.2f} 与 "
+            f"mv={market_value:.2f} 不符，可用资金字段多半未返回），"
+            f"拒绝落库 {snapshot_date} {snapshot_type}")
+        log_event('asset_write_failed', 'ERROR',
+                  {'stage': 'validate', 'snapshot_type': snapshot_type,
+                   'date': snapshot_date, 'total_asset': total_asset,
+                   'market_value': market_value, 'cash': cash,
+                   'frozen_cash': frozen_cash,
+                   'reason': 'partial_asset_reading'},
+                  db_path=db_path)
+        return False
+
     # 恒等式校验：差额说明账户里还有别的资产项（逆回购/理财/未交收资金），
     # 归因时必须排除，否则"亏损"里会混进非股票损益。
+    #
+    # 实测差额在 ±15 ~ ±1310 间随机变号，且收盘后（价格静止）几乎归零、
+    # 09:25 集合竞价时刻最大——说明它主要来自 QMT 内部 total_asset 与
+    # market_value 的估值时点偏斜，不是账务错误。所以这里只告警不拒绝落库。
     if None not in (total_asset, market_value, cash):
         expected = cash + (frozen_cash or 0.0) + market_value
         diff = total_asset - expected
-        if abs(diff) > _cfg('SETTLEMENT_ASSET_IDENTITY_TOLERANCE', 1.0):
+        if abs(diff) > identity_tolerance:
             logger.warning(
                 f"资产恒等式不成立: total={total_asset:.2f} != "
                 f"cash({cash:.2f})+frozen({frozen_cash or 0:.2f})+mv({market_value:.2f}), 差额={diff:.2f}")

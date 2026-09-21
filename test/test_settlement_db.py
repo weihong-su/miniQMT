@@ -325,6 +325,57 @@ class TestEquitySnapshot(SettlementDBTestBase):
             pm, sdb.SNAPSHOT_CLOSE, snapshot_date='2026-09-12', db_path=self.db))
         self.assertEqual(len(self.query("SELECT * FROM account_equity_daily")), 1)
 
+    def test_partial_reading_missing_cash_is_rejected(self):
+        """启动瞬间 QMT 返回 cash 缺失的半残读数 —— 同样不得落库。
+
+        回归实况（2026-09-14 17:09 与 17:55 各写了一次）：
+            total=514063.63, mv=194558.00, cash=0.00, frozen=0.00
+        真实 cash 约 319490，但 _is_blank_asset 只拦整行 0，这条被放行，
+        account_equity_daily 的 cash 列就此写成 0。
+        """
+        pm = FakePositionManager(
+            account_info=self._info(514063.63, 194558.00, 0.0, 0.0))
+        ok = sdb.write_equity_snapshot(pm, sdb.SNAPSHOT_CLOSE,
+                                       snapshot_date='2026-09-14', db_path=self.db)
+        self.assertFalse(ok)
+        self.assertEqual(self.query("SELECT * FROM account_equity_daily"), [],
+                         "cash 缺失的半残读数不得落库")
+        events = self.query("SELECT * FROM run_events WHERE event_type=?",
+                            ('asset_write_failed',))
+        self.assertEqual(len(events), 1)
+        self.assertIn('partial_asset_reading', events[0]['detail'])
+
+    def test_fully_invested_account_with_zero_cash_is_accepted(self):
+        """满仓时 cash 合法地等于 0，且 total≈mv —— 不得被半残判定误杀。"""
+        pm = FakePositionManager(
+            account_info=self._info(194558.00, 194558.00, 0.0, 0.0))
+        self.assertTrue(sdb.write_equity_snapshot(
+            pm, sdb.SNAPSHOT_CLOSE, snapshot_date='2026-09-14', db_path=self.db),
+            "满仓 cash=0 是正常账户状态")
+        self.assertEqual(len(self.query("SELECT * FROM account_equity_daily")), 1)
+
+    def test_zero_cash_with_frozen_is_accepted(self):
+        """cash=0 但有冻结资金（挂单中）时不算半残读数。"""
+        pm = FakePositionManager(
+            account_info=self._info(200000.00, 194558.00, 0.0, 5442.00))
+        self.assertTrue(sdb.write_equity_snapshot(
+            pm, sdb.SNAPSHOT_CLOSE, snapshot_date='2026-09-14', db_path=self.db))
+        self.assertEqual(len(self.query("SELECT * FROM account_equity_daily")), 1)
+
+    def test_identity_mismatch_still_writes(self):
+        """恒等式差额来自 QMT 估值时点偏斜，只告警不拒绝落库。
+
+        实测差额在 ±15 ~ ±1310 间随机变号，收盘后趋近 0、09:25 最大。
+        若因此拒绝落库，净值曲线会在每个开盘日缺一条 open 快照。
+        """
+        pm = FakePositionManager(
+            account_info=self._info(520932.04, 66094.00, 456148.04, 0.0))
+        self.assertTrue(sdb.write_equity_snapshot(
+            pm, sdb.SNAPSHOT_OPEN, snapshot_date='2026-09-21', db_path=self.db),
+            "time-skew 差额不应阻断落库")
+        row = self.query("SELECT * FROM account_equity_daily")[0]
+        self.assertEqual(row['cash'], 456148.04)
+
 
 class TestBlankAssetDetection(unittest.TestCase):
     def test_detects_all_zero(self):
@@ -339,6 +390,43 @@ class TestBlankAssetDetection(unittest.TestCase):
     def test_any_nonzero_is_valid(self):
         self.assertFalse(sdb._is_blank_asset(50000.0, 0.0, 50000.0, 0.0))
         self.assertFalse(sdb._is_blank_asset(0.0, 0.0, 0.01, 0.0))
+
+
+class TestPartialAssetDetection(unittest.TestCase):
+    """cash 字段缺失的半残读数判定（_is_blank_asset 的补充）。"""
+
+    TOL = 1.0
+
+    def test_detects_missing_cash(self):
+        # 实况：total 与 mv 差 319505，cash 却是 0
+        self.assertTrue(sdb._is_partial_asset(
+            514063.63, 194558.00, 0.0, 0.0, self.TOL))
+
+    def test_fully_invested_is_not_partial(self):
+        # 满仓：cash 合法为 0，total≈mv
+        self.assertFalse(sdb._is_partial_asset(
+            194558.00, 194558.00, 0.0, 0.0, self.TOL))
+
+    def test_within_tolerance_is_not_partial(self):
+        self.assertFalse(sdb._is_partial_asset(
+            194558.50, 194558.00, 0.0, 0.0, self.TOL))
+
+    def test_nonzero_cash_is_not_partial(self):
+        self.assertFalse(sdb._is_partial_asset(
+            514063.63, 194558.00, 319490.00, 0.0, self.TOL))
+
+    def test_frozen_cash_present_is_not_partial(self):
+        self.assertFalse(sdb._is_partial_asset(
+            514063.63, 194558.00, 0.0, 319505.63, self.TOL))
+
+    def test_none_values_are_not_partial(self):
+        self.assertFalse(sdb._is_partial_asset(None, 1.0, 0.0, 0.0, self.TOL))
+        self.assertFalse(sdb._is_partial_asset(1.0, None, 0.0, 0.0, self.TOL))
+        self.assertFalse(sdb._is_partial_asset(1.0, 1.0, None, 0.0, self.TOL))
+
+    def test_all_zero_is_left_to_blank_check(self):
+        """全零由 _is_blank_asset 负责，这里不重复拦（差额为 0）。"""
+        self.assertFalse(sdb._is_partial_asset(0.0, 0.0, 0.0, 0.0, self.TOL))
 
 
 class TestCloseSnapshotGate(unittest.TestCase):

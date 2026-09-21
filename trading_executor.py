@@ -2048,7 +2048,10 @@ class TradingExecutor:
                                     'amount': price * volume
                                 }
                                 
-                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号={order_id}, 委托价={price:.2f}, 数量={volume}, 价格类型={price_type}")
+                                # 这里的 price 是传给 qmt_trader 的报价基准；实际报出去的委托价
+                                # 由 easy_qmt_trader.select_slippage() 加滑点后得到，两者并不相等，
+                                # 准确的委托价以 easy_qmt_trader 的「卖出请求提交」日志为准。
+                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号={order_id}, 报价基准={price:.2f}, 数量={volume}, 价格类型={price_type}")
 
                                 # 🔑 新增：跟踪委托单（用于超时管理，仅卖出信号）
                                 if signal_type and signal_info and not is_simulation:

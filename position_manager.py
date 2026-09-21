@@ -4941,6 +4941,14 @@ class PositionManager:
                     last_loop_time = time.time()
                     continue
 
+                # 网格会话巡检：必须放在 positions_df.empty 之前。下面的信号检测按持仓
+                # 列表遍历，已清仓股票的会话永远轮不到，到期/清仓退出会一直触发不了。
+                if self.grid_manager and config.ENABLE_GRID_TRADING:
+                    try:
+                        self.grid_manager.sweep_stale_sessions()
+                    except Exception as e:
+                        logger.error(f"[网格] 会话巡检异常: {e}")
+
                 if positions_df.empty:
                     logger.debug("当前没有持仓，无需监控")
                     time.sleep(60)
