@@ -912,11 +912,15 @@ class TestRecordTrade(SettlementDBTestBase):
         self.assertIsNone(row['deal_time'], "拿不到成交时间就留空，不许用 now() 冒充")
 
     def test_commission_source_inferred(self):
+        # QMT 成交回报没有手续费字段，实盘拿到的恒为 0 —— 按费率估算兜底
+        # 并标 estimated，而不是落 0/unknown 让交割单把费用算成 0。
         self.assertEqual(sdb.record_trade(self._record(commission=0.0), db_path=self.db),
                          'inserted')
-        self.assertEqual(
-            self.query("SELECT commission_source FROM trade_records")[0]['commission_source'],
-            'unknown')
+        row = self.query(
+            "SELECT commission, commission_source FROM trade_records")[0]
+        self.assertEqual(row['commission_source'], 'estimated')
+        self.assertAlmostEqual(row['commission'],
+                               sdb.estimate_trade_cost(61100.0, 'BUY')[0], places=4)
         rec2 = self._record(trade_id='X2', commission=12.34, commission_source='broker')
         sdb.record_trade(rec2, db_path=self.db)
         row = self.query("SELECT commission_source FROM trade_records WHERE trade_id='X2'")[0]
@@ -1084,7 +1088,9 @@ class TestDealKeyNoSilentLoss(SettlementDBTestBase):
         sdb.record_trade(dict(self.base, commission=0.0), db_path=self.db)
         self.assertEqual(self._count(), 1)
         row = self.query("SELECT commission, commission_source FROM trade_records")[0]
-        self.assertEqual(row['commission_source'], 'unknown')
+        self.assertEqual(row['commission_source'], 'estimated')
+        self.assertGreater(row['commission'], 0,
+                           "QMT 回报的 0 必须按费率估算，否则交割单费用恒为 0")
 
     def test_repeat_delivery_across_seconds_still_rejected(self):
         """同一条 deal 隔几秒再投递（回调重复）也必须被判重。"""

@@ -24,25 +24,30 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import config            # noqa: E402
 import db_migrate        # noqa: E402
 import settlement_db as sdb  # noqa: E402
 
 
 # 旧版代码写死的估算费率（trading_executor 与 position_manager 里的字面量）。
 # 用它来判定某个非零手续费到底是"可证实的旧估算"还是"来源不明的真实值"。
+# ⚠ 这是**历史事实**，不随 config 费率变化，改配置时不要跟着改。
 LEGACY_ESTIMATE_RATE = 0.0003
-LEGACY_ESTIMATE_TOLERANCE = 1e-6
+# 估算值落库时按 round(x, 4) 量化，与精确乘积最大差半个单位（5e-5）。
+# 容差必须大于它，否则 amount×rate 尾数落在第 5 位的行会认不出自己写的估算
+# 值而被误判为"来源不明"（实测 147/240 行受影响）。仍远小于任何真实扣费差异。
+LEGACY_ESTIMATE_TOLERANCE = 1e-4
 
 
-def classify_commission(amount, trade_type, commission):
+def classify_commission(amount, trade_type, commission, commission_rate=None):
     """判定一条已有手续费的来源与应采取的处置。
 
     返回 (new_commission, commission_source, commission_rate, should_update)。
 
-    四种情形：
+    五种情形：
     - 值为 0/NULL          → 按现行税费估算，标 estimated
     - 值 == 现行费率估算值   → 已经是本脚本写的（**保证重复运行幂等**），标 estimated
+    - 值 == amount×已记录费率 → 本系统此前按**另一套费率**写的估算（费率校准前的
+                             存量），由 commission_rate 列自证，按现行费率重算
     - 值 == amount×0.0003  → **可证实**是旧版写死的估算（卖出还漏了印花税），
                              用现行费率重算并标 estimated
     - 其它非零值            → 来源不可知，**一律不动**，标 unknown
@@ -50,8 +55,7 @@ def classify_commission(amount, trade_type, commission):
     先判定再计算，避免"非零就不动"把已知错误的旧估算也保留下来。
     """
     amount = float(amount or 0)
-    current = estimate_commission(amount, trade_type)
-    rate_label = commission_rate_label(trade_type)
+    current, rate_label = sdb.estimate_trade_cost(amount, trade_type)
 
     if commission is None or abs(float(commission)) < 1e-12:
         return (current, 'estimated', rate_label, True)
@@ -60,22 +64,45 @@ def classify_commission(amount, trade_type, commission):
     if amount > 0 and abs(value - current) < LEGACY_ESTIMATE_TOLERANCE:
         return (value, 'estimated', rate_label, True)
 
+    # commission_rate 列是本系统写估算时留下的自证：值能被它还原出来，
+    # 就确定是估算而非真实扣费。没有这条，费率一经校准，此前按旧费率
+    # 估算的存量行会全部掉进下面的 unknown 分支并保留过时的值。
+    if amount > 0 and _matches_recorded_rate(value, amount, commission_rate):
+        return (current, 'estimated', rate_label, True)
+
     if amount > 0 and abs(value - amount * LEGACY_ESTIMATE_RATE) < LEGACY_ESTIMATE_TOLERANCE:
         return (current, 'estimated', rate_label, True)
 
-    return (value, 'unknown', None, True)
+    return (value, sdb.COMMISSION_SOURCE_UNKNOWN, None, True)
+
+
+def _matches_recorded_rate(value, amount, commission_rate):
+    """value 是否等于 amount × commission_rate 列记录的费率。
+
+    commission_rate 可能是纯费率字符串（'0.00060'），也可能是最低佣金
+    生效时的显式形式（'minfee5.00+0.00050'），两种都要能还原。
+    """
+    text = str(commission_rate or '').strip()
+    if not text:
+        return False
+    try:
+        if text.startswith('minfee'):
+            min_fee, _, rest = text[len('minfee'):].partition('+')
+            expected = float(min_fee) + amount * float(rest)
+        else:
+            expected = amount * float(text)
+    except (TypeError, ValueError):
+        return False
+    return abs(value - expected) < LEGACY_ESTIMATE_TOLERANCE
 
 
 def estimate_commission(amount, trade_type):
-    """按现行税费估算手续费。买入无印花税。"""
-    amount = float(amount or 0)
-    if amount <= 0:
-        return 0.0
-    rate = (config.SETTLEMENT_COMMISSION_RATE
-            + config.SETTLEMENT_TRANSFER_FEE_RATE)
-    if str(trade_type).upper() == 'SELL':
-        rate += config.SETTLEMENT_STAMP_DUTY_RATE
-    return round(amount * rate, 4)
+    """按现行税费估算手续费。买入无印花税。
+
+    实现收口在 settlement_db.estimate_trade_cost() —— 回填与实盘落库
+    必须用同一套算法，否则回填结果和新成交的口径对不上。
+    """
+    return sdb.estimate_trade_cost(amount, trade_type)[0]
 
 
 def describe_plan(conn, account):
@@ -172,10 +199,11 @@ def backfill_commission(conn):
     """
     updated = 0
     rows = conn.execute(
-        "SELECT id, amount, trade_type, commission FROM trade_records "
+        "SELECT id, amount, trade_type, commission, commission_rate FROM trade_records "
         "WHERE COALESCE(commission_source,'') <> 'broker'").fetchall()
-    for row_id, amount, trade_type, commission in rows:
-        value, source, rate, _ = classify_commission(amount, trade_type, commission)
+    for row_id, amount, trade_type, commission, commission_rate in rows:
+        value, source, rate, _ = classify_commission(
+            amount, trade_type, commission, commission_rate)
         cur = conn.execute(
             "UPDATE trade_records SET commission=?, commission_source=?, "
             "commission_rate=? WHERE id=? AND COALESCE(commission_source,'')<>'broker'",
@@ -185,11 +213,12 @@ def backfill_commission(conn):
     return updated
 
 
-def commission_rate_label(trade_type):
-    rate = config.SETTLEMENT_COMMISSION_RATE + config.SETTLEMENT_TRANSFER_FEE_RATE
-    if str(trade_type).upper() == 'SELL':
-        rate += config.SETTLEMENT_STAMP_DUTY_RATE
-    return '%.5f' % rate
+def commission_rate_label(trade_type, amount=10000.0):
+    """估算所用费率的文本标签，与 estimate_commission 同源。
+
+    标签依赖成交额 —— 最低佣金是否生效取决于金额，所以不能用固定值取标签。
+    """
+    return sdb.estimate_trade_cost(amount, trade_type)[1]
 
 
 def backfill_fills(conn):

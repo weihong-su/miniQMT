@@ -510,8 +510,45 @@ TIME_SOURCE_LOCAL = 'local_fallback'
 TIME_SOURCE_RECONCILE = 'reconcile_backfill'
 TIME_SOURCE_BROKER = 'broker'
 
+COMMISSION_SOURCE_ESTIMATED = 'estimated'
+COMMISSION_SOURCE_UNKNOWN = 'unknown'
+COMMISSION_SOURCE_BROKER = 'broker'
+
 # 合理成交时间窗口：早于此视为解析失败，宁可标 local_fallback 也不用脏值
 _MIN_PLAUSIBLE_EPOCH = 1577808000   # 2020-01-01
+
+
+def estimate_trade_cost(amount, trade_type):
+    """按 config 费率估算单笔成交的总费用。返回 (费用, 费率标签)。
+
+    **全项目唯一的手续费估算实现** —— 实盘落库兜底、模拟成交、历史回填
+    三条路径都走这里。此前它们各自硬编码 0.0003 / 0.0013 三套字面量，
+    彼此不一致且都与实际扣费对不上。
+
+    构成：佣金（双边，受最低佣金约束）+ 印花税（仅卖出）+ 过户费（双边）。
+    最低佣金只约束佣金部分，不约束税费 —— 这是券商的实际计费方式。
+
+    费率的实证校准过程见 config.SETTLEMENT_COMMISSION_RATE 处的注释。
+    """
+    amount = float(amount or 0)
+    if amount <= 0:
+        # 撤单占位等无成交金额的行，不收任何费用（更不该触发最低佣金）
+        return 0.0, None
+
+    comm_rate = _cfg('SETTLEMENT_COMMISSION_RATE', 0.0001)
+    stamp_rate = _cfg('SETTLEMENT_STAMP_DUTY_RATE', 0.0005) \
+        if str(trade_type).upper() == 'SELL' else 0.0
+    xfer_rate = _cfg('SETTLEMENT_TRANSFER_FEE_RATE', 0.0)
+    min_fee = _cfg('SETTLEMENT_COMMISSION_MIN_FEE', 0.0)
+
+    commission = amount * comm_rate
+    if min_fee and commission < min_fee:
+        # 最低佣金生效：费率不再能表达实际计费，标签改用显式形式
+        total = round(min_fee + amount * (stamp_rate + xfer_rate), 4)
+        return total, 'minfee%.2f+%.5f' % (min_fee, stamp_rate + xfer_rate)
+
+    total_rate = comm_rate + stamp_rate + xfer_rate
+    return round(amount * total_rate, 4), '%.5f' % total_rate
 
 
 def strategy_label_for(strategy):
@@ -678,8 +715,21 @@ def record_trade(record, conn=None, db_path=None):
 
         commission = record.get('commission')
         commission_source = record.get('commission_source')
+        commission_rate = record.get('commission_rate')
         if commission_source is None:
-            commission_source = 'unknown' if commission in (None, 0, 0.0) else 'estimated'
+            if commission in (None, 0, 0.0):
+                # QMT 的成交回报没有手续费字段（XtTrade 结构体里就没有），
+                # 实盘路径拿到的恒为 0/None。此前直接落 0 并标 unknown，
+                # 导致交割单把每笔的费用算成 0、盈亏被系统性高估。
+                # 这里按配置费率估算兜底，如实标 estimated —— 导入券商
+                # 对账单后会被 broker_import 覆盖为真实值并改标 'broker'。
+                commission, estimated_rate = estimate_trade_cost(
+                    record.get('amount'), record.get('trade_type'))
+                commission_source = COMMISSION_SOURCE_ESTIMATED
+                if commission_rate is None:
+                    commission_rate = estimated_rate
+            else:
+                commission_source = COMMISSION_SOURCE_ESTIMATED
 
         account_used = record.get('account') or get_account_id()
         order_id_used = (str(record.get('order_id'))
@@ -702,7 +752,7 @@ def record_trade(record, conn=None, db_path=None):
             deal_time_str,
             commission,
             commission_source,
-            record.get('commission_rate'),
+            commission_rate,
             record.get('side_source') or 'deal',
             record.get('trade_id_source') or (
                 'placeholder' if str(trade_id).startswith('ORDER_')

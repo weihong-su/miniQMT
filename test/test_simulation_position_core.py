@@ -5,7 +5,7 @@ L1 — 模拟交易核心链路测试
 
 直接验证 position_manager.simulate_buy_position / simulate_sell_position：
     - 加权平均成本计算
-    - 买入/卖出手续费精度 (0.0003 / 0.0013)
+    - 买入/卖出手续费精度（费率见 config.SETTLEMENT_*_RATE）
     - SIMULATION_BALANCE 资金增减
     - 双层存储隔离（内存 positions / SQLite trade_records）
     - 边界与异常（超卖、零量、负量、available 不足、未持仓）
@@ -27,11 +27,23 @@ sys.path.insert(0, PROJECT_ROOT)
 os.environ.setdefault("MINIQMT_DISABLE_DOTENV", "1")
 
 import config
+import settlement_db as sdb
 from test.test_base import TestBase
 from position_manager import PositionManager
 
-BUY_FEE_RATE = 0.0003    # position_manager.simulate_buy_position
-SELL_FEE_RATE = 0.0013   # position_manager.simulate_sell_position（含印花税）
+
+def buy_cost(amount):
+    """模拟买入的资金扣减额（含手续费）。
+
+    口径与生产代码同源（settlement_db.estimate_trade_cost）——
+    此处曾硬编码 0.0003 / 0.0013，费率校准后测试反而成了错误值的守门人。
+    """
+    return amount + sdb.estimate_trade_cost(amount, 'BUY')[0]
+
+
+def sell_revenue(amount):
+    """模拟卖出的资金到账额（已扣手续费与印花税）。"""
+    return amount - sdb.estimate_trade_cost(amount, 'SELL')[0]
 
 
 class SimulationCoreTestBase(TestBase):
@@ -145,14 +157,14 @@ class TestSimulationBuy(SimulationCoreTestBase):
         self.assertIsNotNone(pos['open_date'], "新建仓应写入 open_date")
 
     def test_L1_02_buy_commission_precision(self):
-        """L1-02 买入手续费精度：cost = price * volume * (1 + 0.0003)"""
+        """L1-02 买入手续费精度：cost = 成交额 + 按配置费率估算的手续费"""
         before = config.SIMULATION_BALANCE
         self.pm.simulate_buy_position('000001.SZ', 1000, 10.0)
 
-        expected_cost = 10.0 * 1000 * (1 + BUY_FEE_RATE)   # 10003.00
+        expected_cost = buy_cost(10.0 * 1000)
         self.assertAlmostEqual(
             before - config.SIMULATION_BALANCE, expected_cost, places=2,
-            msg="扣减金额必须精确匹配 0.0003 费率")
+            msg="扣减金额必须与 settlement_db.estimate_trade_cost 同源")
 
     def test_L1_03_weighted_average_cost(self):
         """L1-03 加仓走加权平均成本"""
@@ -246,7 +258,7 @@ class TestSimulationBuy(SimulationCoreTestBase):
         self.pm.simulate_buy_position('000001.SZ', 1000, 10.0)
         self.pm.simulate_buy_position('600036.SH', 500, 20.0)
 
-        expected = (10.0 * 1000 + 20.0 * 500) * (1 + BUY_FEE_RATE)
+        expected = buy_cost(10.0 * 1000) + buy_cost(20.0 * 500)
         self.assertAlmostEqual(before - config.SIMULATION_BALANCE, expected, places=2)
 
     def test_L1_18_stock_name_source(self):
@@ -275,17 +287,17 @@ class TestSimulationSell(SimulationCoreTestBase):
         self.assertTrue(ok, "前置建仓应成功")
 
     def test_L1_09_full_sell_revenue_and_clear(self):
-        """L1-09 全部卖出：手续费 0.0013 + 持仓清零"""
+        """L1-09 全部卖出：按配置费率扣手续费 + 持仓清零"""
         self._seed()
         before = config.SIMULATION_BALANCE
 
         ok = self.pm.simulate_sell_position('000001.SZ', 1000, 11.0, sell_type='full')
         self.assertTrue(ok)
 
-        expected_revenue = 11.0 * 1000 * (1 - SELL_FEE_RATE)   # 10985.70
+        expected_revenue = sell_revenue(11.0 * 1000)
         self.assertAlmostEqual(config.SIMULATION_BALANCE - before,
                                expected_revenue, places=2,
-                               msg="到账金额必须精确匹配 0.0013 费率")
+                               msg="到账金额必须与 settlement_db.estimate_trade_cost 同源")
         self.assertIsNone(self._memory_position('000001.SZ'),
                           "全仓卖出后持仓记录应被删除")
 
@@ -305,10 +317,10 @@ class TestSimulationSell(SimulationCoreTestBase):
         self.assertEqual(self._num(pos['volume']), 600)
         self.assertEqual(self._num(pos['available']), 600)
 
-        # revenue      = 11.0*400*(1-0.0013) = 4394.28
-        # sell_profit  = revenue - 400*10.0  =  394.28
-        # final_cost   = (600*10.0 - 394.28)/600 = 9.3428... → 9.34
-        revenue = 11.0 * 400 * (1 - SELL_FEE_RATE)
+        # revenue      = 11.0*400 扣手续费后的到账额
+        # sell_profit  = revenue - 400*10.0
+        # final_cost   = (600*10.0 - sell_profit)/600
+        revenue = sell_revenue(11.0 * 400)
         expected_cost = round((600 * 10.0 - (revenue - 400 * 10.0)) / 600, 2)
         self.assertAlmostEqual(self._num(pos['cost_price']), expected_cost, places=2,
                                msg="首次部分卖出应把获利摊入剩余持仓")

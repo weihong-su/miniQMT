@@ -2580,8 +2580,10 @@ class GridTradingManager:
         if not callable(save_trade_record):
             return
 
-        if commission is None:
-            commission = amount * 0.0003
+        # commission 为 None/0 时不在这里填 —— 统一由 settlement_db.record_trade()
+        # 按 config 费率估算并标 commission_source='estimated'。
+        # 此处曾硬编码 amount*0.0003，既与实际费率不符，又因 QMT 回调传的是 0.0
+        # 而非 None 而从未生效，结果所有实盘网格成交的手续费都落库为 0。
 
         try:
             saved = save_trade_record(

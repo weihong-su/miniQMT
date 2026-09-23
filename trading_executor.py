@@ -1709,7 +1709,7 @@ class TradingExecutor:
                                     volume=volume,
                                     amount=price * volume,
                                     trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
-                                    commission=price * volume * 0.0003,  # 预估手续费
+                                    commission=None,  # 由 settlement_db 按配置费率统一估算
                                     strategy=strategy
                                 )
                             if trade_saved:
@@ -1915,7 +1915,7 @@ class TradingExecutor:
                         volume=volume,
                         amount=price * volume,
                         trade_id=sim_order_id,
-                        commission=price * volume * 0.0013,  # 模拟手续费(含印花税)
+                        commission=None,  # 由 settlement_db 按配置费率统一估算
                         strategy=strategy if strategy != 'default' else 'simu'  # 如果没有指定策略，则使用'simu'
                     )
 
@@ -2032,7 +2032,7 @@ class TradingExecutor:
                                     volume=volume,
                                     amount=price * volume,
                                     trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
-                                    commission=price * volume * 0.0003,  # 预估手续费
+                                    commission=None,  # 由 settlement_db 统一估算（卖出会计入印花税）
                                     strategy=strategy
                                 )
 

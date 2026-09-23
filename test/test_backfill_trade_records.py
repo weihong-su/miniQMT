@@ -75,6 +75,77 @@ class TestClassifyCommission(unittest.TestCase):
         self.assertEqual(source, 'unknown')
         self.assertIsNone(rate)
 
+    def test_rounding_quantisation_still_recognised(self):
+        """落库的 round(x,4) 量化误差不能让估算值认不出自己。
+
+        取自生产库 id=612：28925×0.00081 = 23.42925，落库存成 23.4292，
+        差 5e-5。容差若小于该量化误差，147/240 行会被误判为 unknown 并
+        永久卡在过时的估算值上。
+        """
+        _, source, _, _ = bf.classify_commission(
+            28925.0, 'SELL', 23.4292, commission_rate='0.00081')
+        self.assertEqual(source, 'estimated')
+
+    def test_idempotent_across_rounded_values(self):
+        """估算→落库→再分类，任意金额都必须稳定判为 estimated。"""
+        for amount in (28925.0, 1130.0, 8897.0, 3603.0, 45123.0, 7592.0):
+            for side in ('BUY', 'SELL'):
+                value = bf.estimate_commission(amount, side)
+                label = bf.commission_rate_label(side, amount)
+                stored = round(value, 4)
+                again, source, _, _ = bf.classify_commission(
+                    amount, side, stored, commission_rate=label)
+                self.assertEqual(source, 'estimated',
+                                 f'amount={amount} side={side} 应保持 estimated')
+                self.assertAlmostEqual(again, stored, places=4)
+
+    def test_tolerance_does_not_swallow_real_charges(self):
+        """容差放宽后仍须把明显不同的真实扣费判为 unknown。"""
+        estimated = bf.estimate_commission(10000, 'SELL')
+        _, source, _, _ = bf.classify_commission(
+            10000, 'SELL', estimated + 0.01, commission_rate='0.00060')
+        self.assertEqual(source, 'unknown')
+
+    def test_recorded_rate_self_certifies_old_estimate(self):
+        """费率校准后，按旧费率估算的存量行要能被 commission_rate 列自证。
+
+        没有这条，2026-09 把佣金率从万三校准到万一之后，此前按
+        amount×0.00031 估算的 205 行会全部掉进 unknown 分支并保留过时的值。
+        """
+        stale = 10000 * 0.00031          # 旧费率（佣金万三 + 过户费）估算的买入
+        value, source, rate, _ = bf.classify_commission(
+            10000, 'BUY', stale, commission_rate='0.00031')
+        self.assertAlmostEqual(value, bf.estimate_commission(10000, 'BUY'), places=4)
+        self.assertEqual(source, 'estimated')
+        self.assertIsNotNone(rate)
+
+    def test_recorded_rate_mismatch_stays_unknown(self):
+        """费率列对不上金额时不能认作估算 —— 那更可能是真实扣费。"""
+        _, source, _, _ = bf.classify_commission(
+            10000, 'BUY', 7.77, commission_rate='0.00031')
+        self.assertEqual(source, 'unknown')
+
+    def test_recorded_rate_garbage_is_ignored(self):
+        """费率列是脏值时安全退化，不抛异常。"""
+        for bad in ('', None, 'n/a', 'minfee', 'minfee+x'):
+            _, source, _, _ = bf.classify_commission(
+                10000, 'BUY', 7.77, commission_rate=bad)
+            self.assertEqual(source, 'unknown', f'rate={bad!r}')
+
+    def test_minfee_label_self_certifies(self):
+        """最低佣金生效时写的显式标签同样要能还原。"""
+        recorded = 5.0 + 10000 * 0.0005
+        value, source, _, _ = bf.classify_commission(
+            10000, 'SELL', recorded, commission_rate='minfee5.00+0.00050')
+        self.assertAlmostEqual(value, bf.estimate_commission(10000, 'SELL'), places=4)
+        self.assertEqual(source, 'estimated')
+
+    def test_broker_value_with_rate_column_not_misread(self):
+        """真实扣费恰好没有 commission_rate 时走原有判定，行为不变。"""
+        value, source, _, _ = bf.classify_commission(10000, 'BUY', 7.77, None)
+        self.assertEqual(value, 7.77)
+        self.assertEqual(source, 'unknown')
+
 
 class TestClassifyTradeIdSource(unittest.TestCase):
     def test_shapes(self):

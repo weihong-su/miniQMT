@@ -496,7 +496,24 @@ python scripts/backfill_trade_records.py --accounts all --dry-run   # 先看
 python scripts/backfill_trade_records.py --accounts all
 ```
 `time_source` 一律标 `local_fallback` —— **绝不伪装 `exchange`**；手续费来源按证据判定
-（`amount×0.0003` 可证实是旧版写死的估算会被重算，来源不明的标 `unknown` 且不动）。
+（`amount×0.0003` 可证实是旧版写死的估算会被重算；能被 `commission_rate` 列还原出来的
+同样是本系统写的估算，费率校准后会按新费率重算；来源不明的标 `unknown` 且不动）。
+
+**手续费估算** —— QMT 的 `XtTrade` 没有手续费字段，成交回报拿到的恒为 0。
+`settlement_db.estimate_trade_cost()` 是**全项目唯一实现**（实盘落库兜底 / 模拟成交 /
+历史回填三条路径共用），在 `record_trade()` 内对 `commission` 为 0/None 的行自动兜底
+并标 `commission_source='estimated'`。费率见 [config.py](config.py)：
+
+| 配置项 | 值 | 说明 |
+|--------|----|------|
+| `SETTLEMENT_COMMISSION_RATE` | 0.0001 | 佣金万分之一，双边 |
+| `SETTLEMENT_STAMP_DUTY_RATE` | 0.0005 | 印花税，仅卖出 |
+| `SETTLEMENT_COMMISSION_MIN_FEE` | 0.0 | 最低佣金，**实测未生效**故置 0 |
+| `SETTLEMENT_TRANSFER_FEE_RATE` | 0.0 | 过户费，**实测未收**故置 0 |
+
+⚠️ 这四个值由 2026-09 实盘资金流反推校准（五个交易日残差 ≤ 0.04 元），**不是通用 A 股费率**。
+改动前必须跑 `test/test_commission_estimate.py` 的 `TestRealWorldFeeRegression` 重新校准 ——
+它用真实扣费数据把费率钉死，改错会立刻失败。
 
 **券商对账单导入**（历史成交时间的**唯一**来源 —— xttrader 没有历史成交查询接口）:
 ```bash

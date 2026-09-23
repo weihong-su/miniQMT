@@ -3716,8 +3716,11 @@ class PositionManager:
                 return False
             
             # 计算买入成本（扣除手续费）
-            commission_rate = 0.0003  # 买入手续费率
-            cost = buy_price * buy_volume * (1 + commission_rate)
+            # 费用口径与落库的 commission 必须同源，否则模拟账户"扣的钱"
+            # 和流水"记的费"对不上，回测盈亏无法自洽。
+            buy_amount = buy_price * buy_volume
+            commission, _ = settlement_db.estimate_trade_cost(buy_amount, 'BUY')
+            cost = buy_amount + commission
             
             if position:
                 # 已有持仓，计算加权平均成本价
@@ -3972,9 +3975,10 @@ class PositionManager:
                 logger.error(f"[模拟交易] 保存交易记录失败: {stock_code}")
                 return False
             
-            # 计算卖出收入（扣除手续费）
-            commission_rate = 0.0013  # 卖出手续费率（含印花税）
-            revenue = sell_price * sell_volume * (1 - commission_rate)
+            # 计算卖出收入（扣除手续费，含印花税）
+            sell_amount = sell_price * sell_volume
+            commission, _ = settlement_db.estimate_trade_cost(sell_amount, 'SELL')
+            revenue = sell_amount - commission
             
             if sell_type == 'full' or sell_volume >= current_volume:
                 # 全仓卖出，从内存数据库删除持仓记录
@@ -4115,7 +4119,9 @@ class PositionManager:
         try:
             # 获取股票名称
             stock_name = self.data_manager.get_stock_name(stock_code)
-            commission = amount * 0.0013 if trade_type == 'SELL' else amount * 0.0003  # 模拟手续费
+            # 模拟成交按与实盘同一套费率估算，口径一致才能横向比对策略收益
+            commission, commission_rate = settlement_db.estimate_trade_cost(
+                amount, trade_type)
 
             result = settlement_db.record_trade({
                 'stock_code': stock_code,
@@ -4127,8 +4133,8 @@ class PositionManager:
                 'amount': amount,
                 'trade_id': trade_id,
                 'commission': commission,
-                'commission_source': 'estimated',
-                'commission_rate': '0.0013' if trade_type == 'SELL' else '0.0003',
+                'commission_source': settlement_db.COMMISSION_SOURCE_ESTIMATED,
+                'commission_rate': commission_rate,
                 'strategy': strategy,
                 'is_simulation': True,
                 'time_source': settlement_db.TIME_SOURCE_LOCAL,

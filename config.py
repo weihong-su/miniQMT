@@ -689,12 +689,27 @@ SETTLEMENT_ASSET_IDENTITY_TOLERANCE = 1.0
 SETTLEMENT_ASSET_JUMP_RATIO = 0.02
 SETTLEMENT_ASSET_JUMP_ABSOLUTE = 5000.0
 
-# 手续费估算费率（现行 A 股税费，用于数据库无真实手续费时的回填）。
+# 手续费估算费率（用于数据库无真实手续费时的估算与回填）。
 # QMT 的 XtTrade 结构体没有手续费字段，成交回报路径拿不到真实值，
 # 只能按费率估算并标 commission_source='estimated'，导入券商对账单后改 'broker'。
-SETTLEMENT_COMMISSION_RATE = 0.0003     # 佣金 0.03%（买卖双边）
+#
+# 以下取值由 2026-09 实盘资金流反推校准，不是照搬"通用 A 股费率"：
+# 用 account_equity_daily 的当日现金变动减去当日净成交额得到实扣费用，
+# 在 09-16 / 09-17 / 09-21 / 09-22 / 09-23 五个交易日上与本模型逐日比对，
+# 残差 ≤ 0.04 元（唯一超差的 09-14 因收盘快照记于 17:55 跨清算时点，已排除）。
+# 校验脚本见 test/test_commission_estimate.py 的 TestRealWorldFeeRegression。
+# 换券商或费率调整后必须重跑该测试重新校准。
+SETTLEMENT_COMMISSION_RATE = 0.0001     # 佣金 0.01%（买卖双边）
 SETTLEMENT_STAMP_DUTY_RATE = 0.0005     # 印花税 0.05%（仅卖出方缴纳）
-SETTLEMENT_TRANSFER_FEE_RATE = 0.00001  # 过户费 0.001%（买卖双边）
+# 最低佣金：券商常见"单笔不足 5 元按 5 元收"，但本账户实测**未生效**——
+# 09-21 两笔 7103/6874 元成交佣金实收 0.71/0.69 元，未被抬到 5 元。
+# 保留此开关以便日后券商政策变更时只改配置、不改代码。
+SETTLEMENT_COMMISSION_MIN_FEE = 0.0     # 单笔最低佣金(元)，0=不设下限
+# 过户费：2022-04 起沪深名义上统一按 0.001% 双边收取，但本账户实测未收——
+# 计入后 5 个交易日残差由 ≤0.04 元恶化到 +0.89~+1.08 元，故置 0。
+# ⚠ 校准样本全为深市(000/001/002/300/301)，无沪市成交可验证；
+#   若日后沪市成交出现系统性残差，优先怀疑这里。
+SETTLEMENT_TRANSFER_FEE_RATE = 0.0      # 过户费（实测未收，见上）
 
 # ============ xtquant接口鲁棒性配置 ============
 XTQUANT_RECONNECT_INTERVAL = 30   # xtquant重连冷却间隔(秒)，防止重连风暴
