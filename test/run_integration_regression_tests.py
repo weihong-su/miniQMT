@@ -47,7 +47,6 @@ import unittest
 import json
 import argparse
 import glob
-import shutil
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
@@ -60,14 +59,13 @@ sys.path.insert(0, PROJECT_ROOT)
 # import config 之前设置。
 os.environ.setdefault("MINIQMT_DISABLE_DOTENV", "1")
 
-# 修复 Windows 控制台编码问题（GBK 不支持 emoji/Unicode 字符）
-if sys.platform == 'win32' and hasattr(sys.stderr, 'buffer'):
-    import io
-    try:
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-    except Exception:
-        pass
+# 调整现有输出流的编码，重复导入时不创建共享底层句柄的新包装器。
+if sys.platform == 'win32':
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+        except (AttributeError, ValueError, OSError):
+            pass
 
 # 配置文件路径
 CONFIG_FILE = os.path.join(PROJECT_ROOT, 'test', 'integration_test_config.json')
@@ -155,15 +153,15 @@ def prepare_test_environment(clean_db: bool = True, backup_db: bool = True, verb
     # 1. 备份生产数据库
     if backup_db:
         print(f"\n{Colors.OKCYAN}[1/3] 备份生产数据库...{Colors.ENDC}")
-        production_dbs = ['trading.db', 'positions.db']
+        production_dbs = [os.path.join(data_dir, name) for name in ('trading.db', 'positions.db')]
+        production_dbs.extend(sorted(glob.glob(os.path.join(PROJECT_ROOT, 'data_*', 'trading.db'))))
 
-        for db_name in production_dbs:
-            db_path = os.path.join(data_dir, db_name)
+        for db_path in production_dbs:
+            db_name = os.path.relpath(db_path, PROJECT_ROOT)
             if os.path.exists(db_path) and os.path.getsize(db_path) > 0:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                backup_path = os.path.join(data_dir, f'{db_name}.backup_{timestamp}')
                 try:
-                    shutil.copy2(db_path, backup_path)
+                    from runtime_retention import create_regression_backup
+                    backup_path = create_regression_backup(db_path)
                     results['backed_up_files'].append(backup_path)
                     if verbose:
                         print(f"  [OK] 已备份: {db_name} -> {os.path.basename(backup_path)}")
@@ -174,6 +172,11 @@ def prepare_test_environment(clean_db: bool = True, backup_db: bool = True, verb
 
         if not results['backed_up_files'] and verbose:
             print(f"  {Colors.OKBLUE}[i] 没有需要备份的生产数据库{Colors.ENDC}")
+
+    if results['errors']:
+        # 未完成一致性备份时，停止后续清理及测试。
+        results['backup_failed'] = True
+        return results
 
     # 2. 清理测试数据库
     if clean_db:
@@ -598,6 +601,9 @@ def main():
             backup_db=not args.no_backup,
             verbose=args.verbose
         )
+        if env_result.get('backup_failed'):
+            print(f"{Colors.FAIL}一致性备份失败，已中止清理和测试{Colors.ENDC}")
+            return 1
         # 如果环境准备有严重错误（超过5个），提示用户
         if len(env_result['errors']) > 5:
             print(f"\n{Colors.WARNING}警告: 环境准备过程中出现 {len(env_result['errors'])} 个问题{Colors.ENDC}")

@@ -1,9 +1,12 @@
 """无人值守维护任务：日志轮转与 SQLite 历史数据清理。"""
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime, timedelta
 
 import config
@@ -71,6 +74,101 @@ def _delete_older_than(
     return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
 
 
+def _delete_expired_batches(conn, table, column, cutoff, extra_where=""):
+    """新增历史清理使用短事务，保留截止时间相等的记录。"""
+    if not _table_exists(conn, table):
+        return 0
+    if config.DB_RETENTION_BATCH_SIZE < 1:
+        raise ValueError("DB_RETENTION_BATCH_SIZE 必须大于零")
+    total = 0
+    condition = "datetime(%s) < datetime(?)" % column
+    if extra_where:
+        condition += " AND (%s)" % extra_where
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = conn.execute(
+                "SELECT rowid FROM %s WHERE %s LIMIT ?" % (table, condition),
+                (cutoff.strftime("%Y-%m-%d %H:%M:%S"), config.DB_RETENTION_BATCH_SIZE),
+            ).fetchall()
+            conn.executemany("DELETE FROM %s WHERE rowid=?" % table, rows)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        total += len(rows)
+        if len(rows) < config.DB_RETENTION_BATCH_SIZE:
+            return total
+
+
+def _archive_run_events(conn, db_path, now):
+    """事件归档先持久化并逐条核对，再删除在线数据，重试保持幂等。"""
+    from runtime_retention import checked_path
+
+    if not _table_exists(conn, "run_events"):
+        return 0
+    if min(config.DB_RETENTION_BATCH_SIZE, config.RUN_EVENT_RETENTION_DAYS,
+           config.RUN_EVENT_ARCHIVE_RETENTION_DAYS) < 1:
+        raise ValueError("运行事件保留参数必须大于零")
+    parent = Path(db_path).absolute().parent
+    directory = checked_path(parent / "archive" / "run_events", parent)
+    cutoff = (now - timedelta(days=config.RUN_EVENT_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    protect = "COALESCE(event_type,'') LIKE 'asset_%'"
+    if _table_exists(conn, "account_equity_daily"):
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(account_equity_daily)")}
+        if {"account", "validation_status"} <= columns:
+            protect += """ AND EXISTS (
+                SELECT 1 FROM account_equity_daily e
+                WHERE COALESCE(e.account,'')=COALESCE(run_events.account,'')
+                  AND COALESCE(e.validation_status,'unverified') IN ('pending_review','unverified')
+            )"""
+    condition = "datetime(event_time) < datetime(?) AND NOT (%s)" % protect
+    total = 0
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = conn.execute(
+                "SELECT * FROM run_events WHERE %s ORDER BY id LIMIT ?" % condition,
+                (cutoff, config.DB_RETENTION_BATCH_SIZE),
+            )
+            columns = [item[0] for item in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            if not rows:
+                conn.commit()
+                break
+            directory.mkdir(parents=True, exist_ok=True)
+            by_month = {}
+            for row in rows:
+                month = datetime.fromisoformat(row["event_time"]).strftime("%Y-%m")
+                by_month.setdefault(month, []).append(row)
+            for month, events in by_month.items():
+                archive_path = checked_path(directory / ("%s.run_events_%s.sqlite" % (Path(db_path).name, month)), parent)
+                with closing(sqlite3.connect(str(archive_path), timeout=config.RUNTIME_DB_TIMEOUT_SECONDS)) as archive:
+                    archive.execute("PRAGMA synchronous=FULL")
+                    archive.execute("CREATE TABLE IF NOT EXISTS run_events (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)")
+                    for event in events:
+                        payload = json.dumps(event, ensure_ascii=False, sort_keys=True)
+                        archive.execute("INSERT OR IGNORE INTO run_events VALUES (?,?)", (event["id"], payload))
+                        actual = archive.execute("SELECT payload FROM run_events WHERE id=?", (event["id"],)).fetchone()
+                        if actual != (payload,):
+                            raise ValueError("事件归档内容不一致，保留在线记录: %s" % event["id"])
+                    archive.commit()
+            conn.executemany("DELETE FROM run_events WHERE id=?", [(row["id"],) for row in rows])
+            conn.commit()
+            total += len(rows)
+        except Exception:
+            conn.rollback()
+            raise
+    if directory.exists():
+        archive_cutoff = now - timedelta(days=config.RUN_EVENT_ARCHIVE_RETENTION_DAYS)
+        for path in directory.glob(Path(db_path).name + ".run_events_????-??.sqlite"):
+            month = datetime.strptime(path.stem[-7:], "%Y-%m")
+            next_month = month.replace(year=month.year + 1, month=1) if month.month == 12 else month.replace(month=month.month + 1)
+            if next_month <= archive_cutoff:
+                checked_path(path, parent).unlink()
+    return total
+
+
 def cleanup_trading_db(db_path: str | None = None, now: datetime | None = None) -> dict:
     """清理主交易库中的追加型历史表。"""
     db_path = db_path or config.DB_PATH
@@ -81,6 +179,8 @@ def cleanup_trading_db(db_path: str | None = None, now: datetime | None = None) 
         "grid_sessions": 0,
         "premarket_sync_history": 0,
         "config_history": 0,
+        "run_events": 0,
+        "trade_records_sim": 0,
         "vacuum": False,
     }
 
@@ -123,6 +223,11 @@ def cleanup_trading_db(db_path: str | None = None, now: datetime | None = None) 
             summary["grid_sessions"] = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
 
         conn.commit()
+        summary["run_events"] = _archive_run_events(conn, db_path, now)
+        summary["trade_records_sim"] = _delete_expired_batches(
+            conn, "trade_records_sim", "trade_time",
+            now - timedelta(days=config.SIM_TRADE_RETENTION_DAYS),
+        )
         deleted = sum(v for k, v in summary.items() if k not in ("db_path", "vacuum") and isinstance(v, int))
         if (
             deleted >= getattr(config, "DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS", 1000)
@@ -142,7 +247,7 @@ def cleanup_autobuy_db(db_path: str | None = None, now: datetime | None = None) 
 
     db_path = db_path or DEFAULT_DB_PATH
     now = now or datetime.now()
-    summary = {"db_path": db_path, "decision_log": 0, "vacuum": False}
+    summary = {"db_path": db_path, "decision_log": 0, "buy_history": 0, "vacuum": False}
     if not os.path.exists(db_path):
         return summary
 
@@ -156,8 +261,17 @@ def cleanup_autobuy_db(db_path: str | None = None, now: datetime | None = None) 
             now - timedelta(days=config.AUTOBUY_DECISION_LOG_RETENTION_DAYS),
         )
         conn.commit()
+        if _table_exists(conn, "buy_history"):
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(buy_history)")}
+            condition = "success = 0"
+            if "is_simulation" in columns:
+                condition += " OR is_simulation = 1"
+            summary["buy_history"] = _delete_expired_batches(
+                conn, "buy_history", "buy_time",
+                now - timedelta(days=config.AUTOBUY_ATTEMPT_RETENTION_DAYS), condition,
+            )
         if (
-            summary["decision_log"] >= getattr(config, "DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS", 1000)
+            summary["decision_log"] + summary["buy_history"] >= getattr(config, "DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS", 1000)
             and getattr(config, "DB_MAINTENANCE_ENABLE_VACUUM", True)
         ):
             conn.execute("VACUUM")
@@ -218,6 +332,13 @@ def schedule_database_maintenance(stop_event=None) -> None:
             try:
                 rotate_xqm_log()
                 run_database_maintenance(now)
+                from runtime_retention import cleanup_runtime_artifacts
+                artifacts = cleanup_runtime_artifacts(Path(__file__).resolve().parent, apply=True, now=now)
+                failures = [item for item in artifacts if item.get("error")]
+                if failures:
+                    raise RuntimeError("部分运行产物清理失败: %s" % failures)
+                logger.info("运行产物维护完成: 清理 %s 项, 目标大小 %s 字节",
+                            len(artifacts), sum(item["bytes"] for item in artifacts))
                 last_run_date = now.date()
             except Exception as exc:
                 logger.error(f"数据库维护任务失败: {exc}", exc_info=True)

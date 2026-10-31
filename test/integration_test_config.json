@@ -231,6 +231,7 @@
       "modules": [
         "test.test_db_op_safety_verification",
         "test.test_maintenance",
+        "test.test_runtime_retention",
         "test.test_grid_db_lock_safety"
       ],
       "priority": "critical"
@@ -362,6 +363,7 @@
         "test.test_baostock_helper",
         "test.test_db_op_safety_verification",
         "test.test_maintenance",
+        "test.test_runtime_retention",
         "test.test_grid_db_lock_safety",
         "test.test_dual_layer_storage",
         "test.test_web_api_complete",

@@ -634,6 +634,20 @@ GRID_SESSION_RETENTION_DAYS = 365        # 已停止网格会话保留1年
 AUTOBUY_DECISION_LOG_RETENTION_DAYS = 90 # 自动买入决策明细保留90天
 PREMARKET_HISTORY_RETENTION_DAYS = 365   # 盘前同步历史保留1年
 CONFIG_HISTORY_RETENTION_DAYS = 365      # 配置变更审计保留1年
+REGRESSION_BACKUP_KEEP = 10             # 每个源库保留的回归备份份数
+RUNTIME_DB_TIMEOUT_SECONDS = 30         # 备份和归档的数据库等待上限
+RUN_EVENT_RETENTION_DAYS = 365          # 运行事件在线保留1年
+RUN_EVENT_ARCHIVE_RETENTION_DAYS = 1095  # 运行事件归档保留3年
+SIM_TRADE_RETENTION_DAYS = 90            # 模拟成交保留90天
+AUTOBUY_ATTEMPT_RETENTION_DAYS = 90      # 失败和模拟买入尝试保留90天
+DB_RETENTION_BATCH_SIZE = 1000          # 新增保留任务每批处理行数
+RUNTIME_ARTIFACT_KEEP = 5               # 已完成测试任务的完整产物份数
+RUNTIME_ARTIFACT_RETENTION_DAYS = 30     # 完整测试产物保留天数
+RUNTIME_REPORT_RETENTION_DAYS = 180      # 测试报告和复现证据保留天数
+RUNTIME_ARTIFACT_PREFIXES = (
+    "regression_", "grid_callback_fix_", "partial_fill_fix_",
+    "runtime_optimization_", "sellability_", "availability_hover_", "web1_css_smoke_",
+)
 
 # ======================= 功能配置 =======================
 # 可下单时间配置：实盘包含 09:25-09:30 早盘预挂和 11:30-13:00 午休预挂。
