@@ -1,5 +1,7 @@
 # web1.0 说明
 
+当前发布版本：**v3.9.6（2026-10-31）**，统一读取根目录 `release_version.json`。
+
 web1.0 是 miniQMT 当前的 Flask 直连监控界面，由 `web_server.py` 启动并托管 `web1.0/index.html`、`script.js`、`static/tailwind.min.css` 等静态资源。默认监听 `127.0.0.1:5000`；多账号启动时端口按账号顺序递增为 `5000`、`5001`、……
 
 ## 适用场景
@@ -35,7 +37,7 @@ web1.0 是 miniQMT 当前的 Flask 直连监控界面，由 `web_server.py` 启�
 
 ## 认证
 
-写操作通过 `QMT_API_TOKEN` 对应的 `WEB_API_TOKEN` 控制。未设置 Token 时 Flask 直连默认放行；设置后需在请求头 `X-API-Token` 或 URL 参数 `?token=` 中携带令牌。不要把 Token 写进仓库文件。
+配置 `QMT_API_TOKEN` 后，所有 `/api/*`（包括 GET 查询与 SSE）均需认证，推荐使用 `X-API-Token` 请求头；不要在 URL 中传播令牌。未配置 Token 且 `WEB_PUBLIC_MODE=false` 时默认放行，仅适合本机访问；`WEB_PUBLIC_MODE=true` 时缺少 Token 也会拒绝请求。不要把 Token 写进仓库文件。
 
 ## 前端开关语义
 
@@ -44,6 +46,13 @@ web1.0 是 miniQMT 当前的 Flask 直连监控界面，由 `web_server.py` 启�
 - “允许自动网格”对应 `ENABLE_GRID_TRADING`，控制网格模块自动执行。
 - 单只网格会话的“自动/暂停”对应 `grid_trading_sessions.enabled`，暂停后保留会话但不再发新网格单。
 
+
+## v3.9.6 持仓与委托说明
+
+- “可用”显示当前可卖股数，悬浮数字可查看不可卖数量、受限原因与核对时间；缺乏证据时显示原因待确认，不能把所有受限股份当作 T+1。
+- 部分成交后委托继续跟踪；撤单后只重挂未成交余量，首次止盈标记等待目标成交量确认完成。
+- 对手价用于选择限价委托的报价；在途数量、撤废状态应与委托队列和后台日志一起核对。
+- 网页清空日志不会清理旧备份或测试目录。运行数据维护使用默认预览的 `scripts/cleanup_runtime_artifacts.py`，详见[无人值守说明](../docs/site/miniqmt/unattended.md#runtime-retention)。
 
 ## 本地样式构建
 

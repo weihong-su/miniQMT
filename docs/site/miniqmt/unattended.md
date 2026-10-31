@@ -194,35 +194,47 @@ if not config.is_trade_time():
 
 ---
 
-## 数据库维护与日志轮转
+## 数据库维护与运行产物保留 {#runtime-retention}
 
-主程序启动时会根据 `ENABLE_DB_MAINTENANCE` 启动数据库维护线程。默认每天 `00:10:00` 附近执行一次，且 `DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME = True` 时只在非交易时段运行，避免盘中对 SQLite 做重维护。
+主程序根据 `ENABLE_DB_MAINTENANCE` 启动维护线程，默认每天 `00:10:00` 后执行一次；错过目标时间会补执行，且默认仅在非交易时段运行。参数统一在 `config.py`，详见[配置参考](configuration.md#runtime-maintenance)。
 
-维护内容：
+| 对象 | 默认规则 |
+|------|----------|
+| 实盘 `trade_records` | 保留 1095 天 |
+| 已结束网格会话 | 非 active 会话保留 365 天，按外键级联处理关联记录；活跃与暂停中的 active 会话保留 |
+| `run_events` | 在线 365 天，按月写入 `data_<账号>/archive/run_events/`；核对归档内容成功后才删除在线记录，归档按事件月份保留 1095 天 |
+| 资产待复核事件 | 仍关联待复核净值的资产事件暂缓归档，保留排查证据 |
+| `trade_records_sim` | 保留 90 天 |
+| 自动买入 `decision_log` | 保留 90 天 |
+| 自动买入 `buy_history` | 失败或模拟尝试保留 90 天；成功实盘记录继续用于永久防重 |
+| 盘前同步 / 配置变更历史 | 保留 365 天 |
+| 回归备份 | 每个源库最新 10 份有效备份，覆盖默认库与账号库；按文件名的生成时间排序 |
+| 已完成测试任务 | 完整工作副本最多 5 次且不超过 30 天；报告和必要复现证据保留 180 天 |
 
-- 清理 `trade_records`、非 active 的 `grid_trading_sessions`、`premarket_sync_history`、`config_history` 等追加型历史表
-- 清理自动买入复盘库 `data/autobuy.db` 中过期的 `decision_log`
-- 删除行数达到 `DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS` 且 `DB_MAINTENANCE_ENABLE_VACUUM = True` 时执行 `VACUUM`
-- 按 `XQM_LOG_MAX_SIZE` / `XQM_LOG_BACKUP_COUNT` 轮转 `logs/xqm_manager.log`
+回归备份使用 SQLite `Connection.backup()`，包含 WAL 中已提交的记录；新备份校验成功后才淘汰旧备份。备份失败时回归运行器中止后续清理和测试。不要只复制正在使用的 `.db` 文件，也不要手动删除运行数据库的 `-wal` / `-shm`。
 
-保留策略集中在 `config.py`：
+测试产物仅处理配置白名单前缀的任务目录，要求存在合法 `full_regression.exitcode` 且未发现存活 PID。运行中、完成状态不明或包含链接的目录受到保护；源码工作副本先保存复现证据，原始 `source.zip` 保留供人工核实。该规则不会递归清空所有 `logs/` 子目录。
 
-```python
-TRADE_RECORD_RETENTION_DAYS = 1095
-GRID_SESSION_RETENTION_DAYS = 365
-AUTOBUY_DECISION_LOG_RETENTION_DAYS = 90
-PREMARKET_HISTORY_RETENTION_DAYS = 365
-CONFIG_HISTORY_RETENTION_DAYS = 365
+主日志按 10 MiB 大小轮转，保留 5 份备份；账号启动模式写入 `logs/account_<账号>.log`。顶层日志过期清理默认按文件修改时间保留 30 天，不逐条裁剪持续更新的日志。XtQuantManager 普通重定向日志另按 `XQM_LOG_*` 轮转。
+
+### 手动预览与清理
+
+从项目根目录先生成预览：
+
+```bash
+python scripts/cleanup_runtime_artifacts.py --report logs/cleanup_preview.json
 ```
 
-如需临时手动执行，可在确认非交易时段后运行：
+核对清单后，在非交易时段执行：
 
-```python
-from maintenance import run_database_maintenance, rotate_xqm_log
-
-rotate_xqm_log()
-run_database_maintenance()
+```bash
+python scripts/cleanup_runtime_artifacts.py --apply --snapshots --maintain-databases --report logs/cleanup_applied.json
 ```
+
+- 默认预览不删除数据；`--apply` 执行产物清理，`--snapshots` 先创建一致性备份，`--maintain-databases` 再维护默认库、账号库和自动买入库。
+- 报告包含处理路径、规则、大小、错误及数据库表的前后摘要；未成功处理的项目保留错误记录。文件逻辑大小与磁盘实际释放空间可能不同。
+- 当前持仓、持仓/净值快照、行情和指标缓存不因本轮新增规则被删除；不要把网页“清空下单日志”当作该维护工具。
+- 删除达到阈值且配置允许时才执行 `VACUUM`；只有数 MiB 的库通常无需单独安排压缩。
 
 ---
 
@@ -280,13 +292,13 @@ python -m unittest test.test_qmt_connection -v
 
 ```bash
 # 只看交易执行与持仓（Windows PowerShell）
-Select-String -Path logsccount_*.log -Pattern 'miniQMT\.(tra|pos)'
+Select-String -Path logs/account_*.log -Pattern 'miniQMT\.(tra|pos)'
 
 # 只看错误
-Select-String -Path logsccount_*.log -Pattern '\[E\]'
+Select-String -Path logs/account_*.log -Pattern '\[E\]'
 
 # 按模块统计错误分布（定位故障源头最快的一招）
-Select-String -Path logsccount_*.log -Pattern '\[E\].*miniQMT\.(\w+)' |
+Select-String -Path logs/account_*.log -Pattern '\[E\].*miniQMT\.(\w+)' |
   ForEach-Object { $_.Matches.Groups[1].Value } | Group-Object | Sort-Object Count -Descending
 ```
 

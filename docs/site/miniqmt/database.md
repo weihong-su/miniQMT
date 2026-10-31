@@ -113,6 +113,16 @@ QMT 未连接时 `balance()` 返回整行 0，而**资产恒等式拦不住它**
 
 ---
 
+## 数据保留与归档（v3.9.6）
+
+- 实盘 `trade_records` 继续保留 1095 天；独立 `trade_records_sim` 保留 90 天。
+- `run_events` 在线保留 365 天，过期后按事件月份写入数据库所在目录的 `archive/run_events/`。每份归档包含 `id` 与完整 JSON `payload`，核对归档内容一致后才删除在线记录；按事件月份保留 1095 天。
+- 仍有待复核净值的资产事件保留在线证据；归档不可写或内容冲突时保留原记录，后续维护可重试。
+- 自动买入库仅淘汰过期决策明细及失败/模拟尝试，成功实盘买入历史继续用于永久防重。
+- 持仓/净值快照及活跃网格账本保留；非 active 网格会话沿用 365 天保留规则，按外键依赖处理关联记录。
+
+参数与手动预览入口见[维护配置](configuration.md#runtime-maintenance)及[无人值守运行](unattended.md#runtime-retention)。
+
 ## 网格交易表
 
 ### grid_trading_sessions（网格会话表）

@@ -434,9 +434,9 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 
 ---
 
-## 数据库维护与日志轮转参数
+## 数据库维护与日志轮转参数 {#runtime-maintenance}
 
-维护任务由 `maintenance.py` 执行，主程序启动时在后台线程调度。默认每天非交易时段清理追加型历史数据，并按大小轮转 XtQuantManager 批处理重定向日志。
+维护任务由 `maintenance.py` 调度，结合 `runtime_retention.py` 管理回归备份和已完成测试产物。默认每天非交易时段归档、清理追加型历史数据，并按大小轮转 XtQuantManager 重定向日志。完整规则和手动预览命令见[无人值守运行](unattended.md#runtime-retention)。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -451,6 +451,17 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 | `AUTOBUY_DECISION_LOG_RETENTION_DAYS` | `90` | 自动买入 `decision_log` 保留天数 |
 | `PREMARKET_HISTORY_RETENTION_DAYS` | `365` | 盘前同步历史保留天数 |
 | `CONFIG_HISTORY_RETENTION_DAYS` | `365` | 配置变更审计保留天数 |
+| `REGRESSION_BACKUP_KEEP` | `10` | 每个源库保留的有效回归备份份数 |
+| `RUNTIME_DB_TIMEOUT_SECONDS` | `30` | 一致性备份与归档的数据库等待上限（秒） |
+| `RUN_EVENT_RETENTION_DAYS` | `365` | 运行事件在线保留天数 |
+| `RUN_EVENT_ARCHIVE_RETENTION_DAYS` | `1095` | 运行事件归档按事件月份保留天数 |
+| `SIM_TRADE_RETENTION_DAYS` | `90` | 模拟成交保留天数 |
+| `AUTOBUY_ATTEMPT_RETENTION_DAYS` | `90` | 失败或模拟买入尝试保留天数；成功实盘历史继续保留 |
+| `DB_RETENTION_BATCH_SIZE` | `1000` | 新增历史保留任务每批处理行数 |
+| `RUNTIME_ARTIFACT_KEEP` | `5` | 已确认完成任务的完整工作副本最多保留次数 |
+| `RUNTIME_ARTIFACT_RETENTION_DAYS` | `30` | 完整测试工作副本保留天数 |
+| `RUNTIME_REPORT_RETENTION_DAYS` | `180` | 测试报告与必要复现证据保留天数 |
+| `RUNTIME_ARTIFACT_PREFIXES` | 见 `config.py` 元组 | 自动清理任务目录的名称前缀白名单 |
 | `XQM_LOG_FILE` | `"logs/xqm_manager.log"` | XtQuantManager 批处理重定向日志路径 |
 | `XQM_LOG_MAX_SIZE` | `10 MB` | XtQuantManager 日志轮转阈值 |
 | `XQM_LOG_BACKUP_COUNT` | `5` | XtQuantManager 日志备份数量 |
@@ -517,7 +528,7 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 
 ## 发布版本号
 
-发布版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`（**运行时**注入，改完重启即生效）；web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符（**构建时**注入，必须重新 `npm run build` 才生效）。
+当前发布版本为 **v3.9.6（2026-10-31）**，版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`（**运行时**注入，改完重启即生效）；web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符（**构建时**注入，必须重新 `npm run build` 才生效）。
 
 !!! warning "发布清单不止两个文件"
     此处原先写的是「只需要同步更新 `release_version.json` 和 `CHANGELOG.md`」，据此执行已经

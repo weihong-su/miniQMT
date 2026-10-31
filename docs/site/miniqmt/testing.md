@@ -2,14 +2,15 @@
 
 ## 概述
 
-项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 37 个测试组（含 `fast` 快速子集）。
+项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 38 个测试组（含 `fast` 快速子集）。
 
-v3.9.5 发布前于 2026-10-15 使用 Anaconda `python39` 执行 `--all-with-fast` 实测：**37 组、160 模块、3496 用例、3496 通过、0 失败、0 错误、0 跳过，成功率 100%**，耗时 684.42 秒。
+v3.9.6 发布前于 2026-10-31 使用 Anaconda `python39` 在隔离副本执行 `--all-with-fast`：**38 组、172 次模块执行、3867 次用例执行，3867 通过、0 失败、0 错误、0 跳过，成功率 100%**，耗时 1177.21 秒。次数包含 fast 与专项组的重复覆盖。
 
 ## 测试统计速查
 
 | 版本 | 日期 | 回归规模（含 fast） | 通过用例 | 通过率 |
 |------|------|----------|--------|--------|
+| v3.9.6 | 2026-10-31 | 38 组, 172 次模块执行, 3867 次用例执行 | 3867 | 100% |
 | v3.9.5 | 2026-10-15 | 37 组, 160 模块, 3496 用例 | 3496 | 100% |
 | v3.9.4 | 2026-09-30 | 37 组, 159 模块, 3450 用例 | 3450 | 100% |
 | v3.9.3 | 2026-09-19 | 37 组, 154 模块, 3248 用例 | 3248 | 100% |
@@ -71,6 +72,12 @@ python test/run_integration_regression_tests.py --group multi_account_isolation
 python test/run_integration_regression_tests.py --group launcher_deployment
 ```
 
+### 数据与备份隔离
+
+完整回归会生成、清理和恢复测试数据库，应在不含生产配置和运行数据的独立源码副本中运行，并设置 `ENABLE_SIMULATION_MODE=true`、`MINIQMT_DISABLE_DOTENV=1`。`--skip-env-prep` 只跳过运行器环境准备，不能保证各测试类不再操作数据库，也不等于生产数据隔离。
+
+运行器默认对实际存在的默认库和账号库创建 SQLite 一致性备份，每个源库保留最新 10 份；备份失败会中止后续清理及测试。Windows 下重复导入运行器保留标准输出流的归属，完整组汇总不会因重复包装句柄而关闭输出流。运行产物的预览清理见[无人值守运行](unattended.md#runtime-retention)。
+
 ### 其他选项
 
 ```bash
@@ -131,7 +138,7 @@ python test/run_all_grid_tests.py
 | `web_api` | critical | RESTful API 功能测试 |
 | `multi_account_isolation` | critical | 多账号配置、数据目录、日志和端口隔离 |
 | `launcher_deployment` | high | 总控制台环境检查与配置校验 |
-| `db_thread_safety` | critical | 数据库线程安全验证 |
+| `db_thread_safety` | critical | 数据库线程安全、历史保留、事件归档与回归备份安全验证 |
 | `dual_layer_storage` | critical | 内存 + SQLite 双层存储一致性 |
 | `xtdata_data_source` | high | xtdata 动态订阅、Mootdx fallback、Tushare 休市空区间、股票名称解析、行情源健康评分 |
 | `indicator_calculator` | high | 技术指标计算器全方法验证 |
@@ -143,7 +150,8 @@ python test/run_all_grid_tests.py
 | `qmt_rpc` | high | 大QMT RPC 交易后端契约、只读门禁、回调和委托映射 |
 | `simulation_trading_e2e` | critical | 模拟交易模式端到端（核心链路 / Web 下单 / 策略四分支 / 模式切换） |
 | `p1_fixes` | high | 重连缓存刷新 / QMT 自恢复探测 / 信号保活与时效兜底 / 超时泄漏可观测 |
-| `fast` | critical | 5 分钟快速验证子集（当前 57 个模块、1415 个用例） |
+| `sellability` | critical | 可卖数量、持仓受限原因、自动补仓门控与网关兼容 |
+| `fast` | critical | 关键功能子集（当前 59 次模块执行、1487 次用例执行） |
 
 ---
 

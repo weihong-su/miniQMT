@@ -174,7 +174,7 @@ python test/run_integration_regression_tests.py --all --verbose        # 详细�
 
 测试报告：`test/integration_test_report.md`
 
-当前回归配置包含 37 个测试组（含 `fast` 快速子集）。`--all` 默认排除重复的 `fast` 组，`--all-with-fast` 会连同快速子集一起运行；v3.9.5 发布前于 2026-10-15 使用 Anaconda `python39` 实测为 37 组、160 个模块、3496 个用例，3496 通过、0 失败、0 错误、0 跳过，成功率 100%。
+当前版本为 **v3.9.6（2026-10-31）**，回归配置包含 38 个测试组（含 `fast` 快速子集）。`--all` 默认排除重复的 `fast` 组，`--all-with-fast` 包含快速子集；使用 Anaconda `python39` 在隔离副本实测为 38 组、172 次模块执行、3867 次用例执行全部通过，0 失败、0 错误、0 跳过。统计包含重复覆盖。
 
 ### 单个测试文件
 
@@ -200,6 +200,16 @@ tail -f logs/qmt_trading.log             # Git Bash / WSL
 ```
 
 ---
+
+### 运行数据维护（v3.9.6）
+
+先预览旧备份和已完成测试产物：
+
+```bash
+python scripts/cleanup_runtime_artifacts.py --report logs/cleanup_preview.json
+```
+
+默认不删除数据。执行清理前先检查清单，并使用一致性备份保护实际源库；完整规则及执行命令见[无人值守运行](docs/site/miniqmt/unattended.md#runtime-retention)。成功实盘买入历史继续保留以支持永久防重，运行数据库的 WAL/SHM 不作为普通日志手工删除。
 
 ## 7. 常见问题
 

@@ -2,6 +2,8 @@
 
 基于迅投 QMT API 的**无人值守量化交易系统**。
 
+当前版本：**v3.9.6（2026-10-31）**。本版完善委托与部分成交闭环、Web 持仓提示及运行数据保留，详见[变更日志](changelog.md)。
+
 <div class="grid cards" markdown>
 
 -   :material-robot: **miniQMT 核心系统**

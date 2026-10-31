@@ -631,6 +631,13 @@ if profit_ratio > config.INITIAL_TAKE_PROFIT_RATIO:
     ...
 ```
 
+### 运行数据维护（v3.9.6）
+
+- `runtime_retention.py` 负责 SQLite 一致性备份和回归/测试产物的有限保留；源库备份成功校验后才淘汰旧备份。
+- `maintenance.py` 对过期运行事件先归档校验再删除，清理模拟成交及失败/模拟买入尝试；成功实盘买入历史继续保留以保护永久防重。
+- `scripts/cleanup_runtime_artifacts.py` 默认预览；执行前核对清单，需要数据库维护时先用 `--snapshots` 创建一致性备份。
+- 全部参数集中在 `config.py`；完整规则、归档位置及操作命令见[无人值守运行](docs/site/miniqmt/unattended.md#runtime-retention)。
+
 ### 2. 日志级别与交易日志术语
 
 - `logger.debug()` - 详细调试信息(变量值、执行路径)
@@ -915,7 +922,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 32 个测试组（含 `fast` 快速子集）。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 38 个测试组（含 `fast` 快速子集）。
 
 ### 测试基础设施
 
@@ -947,7 +954,8 @@ thread_monitor.get_status()
 | `web_api` | critical | RESTful API功能测试（含Bug修复回归） |
 | `multi_account_isolation` | critical | 多账号配置/数据目录/端口隔离 |
 | `launcher_deployment` | high | 总控制台环境检查/配置校验 |
-| `db_thread_safety` | critical | 数据库线程安全与Web缓存验证 |
+| `db_thread_safety` | critical | 数据库线程安全、Web缓存及运行数据保留验证 |
+| `sellability` | critical | 可卖数量、持仓受限状态与各交易通道安全门控 |
 | `dual_layer_storage` | critical | 内存+SQLite双层存储一致性 |
 | `xtdata_data_source` | high | xtdata动态订阅与fallback路径 |
 | `indicator_calculator` | high | 技术指标计算器全方法验证 |
@@ -959,9 +967,9 @@ thread_monitor.get_status()
 | `qmt_rpc` | high | 大QMT RPC 交易后端（契约兼容、只读门禁、回调/委托映射） |
 | `simulation_trading_e2e` | critical | 模拟交易模式端到端（核心链路/Web下单/策略四分支/模式切换） |
 | `p1_fixes` | high | 重连缓存刷新/QMT自恢复探测/信号保活与时效兜底/超时泄漏可观测 |
-| `fast` | critical | 快速验证子集（当前配置 57 个模块、1415 个用例） |
+| `fast` | critical | 快速验证子集（当前配置 59 次模块执行、1487 次用例执行） |
 
-**测试统计（当前配置）**: 37组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；v3.9.5 发布前于 2026-10-15 使用 Anaconda `python39` 执行 `--all-with-fast`，实测为37组、160个模块、3496个用例，3496通过、0失败、0错误、0跳过，成功率100%；具体以本地运行报告为准。
+**测试统计（当前配置）**: 38组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；v3.9.6 发布前于 2026-10-31 使用 Anaconda `python39` 在隔离副本执行 `--all-with-fast`，实测为38组、172次模块执行、3867次用例执行，全部通过、0失败、0错误、0跳过，成功率100%；统计包含 fast 与专项组的重复覆盖。
 
 ### 编写新测试的规范
 

@@ -157,6 +157,12 @@ python -m autobuy.app --simulate            # 持续调度试跑
 - `decision_log` — 每轮**已检查**标的的条件明细(`reason_json` 记录各项实际值与通过判定)。
   注:惰性求值下只记录实际检查过的标的(命中即停),非全候选池
 
+## 运行数据保留（v3.9.6）
+
+主程序的定时维护默认保留 `decision_log` 90 天，失败或模拟买入尝试同样保留 90 天。成功实盘买入历史继续保留，确保 `dedup_window_days=-1` 的永久防重语义不变。
+
+这些参数位于根目录 `config.py`，不属于自动买入筛选配置。单独运行自动买入时仍应安排主程序维护或使用默认预览的 `scripts/cleanup_runtime_artifacts.py` 核对，完整步骤见[无人值守运行](../docs/site/miniqmt/unattended.md#runtime-retention)。
+
 ## 端到端验证
 
 1. 编辑 `autobuy/miniqmt_autobuy.cfg`:确认 `chan.db` 路径与 `stg_chan/zs_pool` 表存在

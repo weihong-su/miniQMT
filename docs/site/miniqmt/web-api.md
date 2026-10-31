@@ -104,6 +104,20 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 | POST | `/api/initialize_positions` | 初始化持仓数据 🔑 需 Token | ❌ |
 | POST | `/api/holdings/init` | 初始化持股配置（返回体含 `status`，供 web1.0 按钮判定成败） 🔑 需 Token | ❌ |
 
+### 持仓受限字段（v3.9.6）
+
+`/api/positions` 与 `/api/positions-all` 中的持仓记录可包含以下字段，Web 两端用于“可用”列的悬浮提示：
+
+| 字段 | 含义 |
+|------|------|
+| `available` / `volume` | 当前可卖数量 / 总持仓数量；缺失可卖量时不能退回总量 |
+| `unavailable_volume` | 不可卖数量，缺乏有效数量时不伪造为 0 |
+| `restriction_reason` | `t1` / `sell_order` / `mixed` / `unknown` |
+| `restriction_detail` | 依据成交、委托和持仓快照形成的中文说明 |
+| `position_asof` | 持仓核对时间，用于识别过期证据 |
+
+网关兼容路径使用同一口径；未知或过期状态不表示已解冻。
+
 ### `/api/orders` 字段
 
 交易记录只含**已成交**，看不到挂单中的止盈卖单——这是监控视图的盲区，`/api/orders` 用于补齐。
@@ -123,7 +137,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 !!! note "交易记录口径"
     实盘网格在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时，`/api/trade-records` 只返回真实成交确认后的 `trade_records`。已报未成交的网格委托只体现在 `grid_orders` / 网格会话状态中，不会以 `ORDER_xxx` 形式伪装成成交。
-    动态止盈止损的实盘卖出委托也遵循成交确认语义：首次止盈半仓提交成功不等于 `profit_triggered=True`，成交回报到达后才更新持仓状态与持久化字段。
+    动态止盈止损的实盘卖出委托也遵循成交确认语义：首次止盈半仓提交成功或仅收到第一笔部分成交，均不等于 `profit_triggered=True`；v3.9.6 持续跟踪到目标成交量确认完成，撤单后仅重挂未成交余量。网格按委托聚合展示，保留真实分笔的时间、成交编号与分笔数用于审计。
 
 !!! note "对账补记流水  [v3.9.5]"
     推送通道失效或外部成交（QMT 客户端策略单/手工单）时，流水由**持仓同步处的当日成交对账**
@@ -173,10 +187,10 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
     - **股票代码后缀**：模拟模式经 `Methods.add_xt_suffix` **补全**后缀（`000001` → `000001.SZ`）；实盘模式则**去除**后缀。
     - **交易时间**：模拟模式强制放行，不受 `config.is_trade_time()` 限制，非交易时段也能下单。
-    - **策略标识**：写入 `trade_records.strategy` 的值为 `M_simu`（实盘为 `M_real`）；Web 界面分别显示为「模买」「手买」（存储值不变，仅显示层映射）。
+    - **策略标识**：写入 `trade_records_sim.strategy` 的值为 `M_simu`（实盘为 `M_real`）；Web 界面分别显示为「模买」「手买」（存储值不变，仅显示层映射）。
 
     `ENABLE_ALLOW_BUY=False` 时，模拟与实盘同样在 `manual_buy` 层被拦截，返回 `success_count=0`。
-    模拟成交只写内存持仓与 SQLite `trade_records`，不落 SQLite `positions` 表。
+    模拟成交写入内存持仓与独立的 SQLite `trade_records_sim`，不落 SQLite `positions` 表。
 
 ---
 
@@ -293,6 +307,8 @@ web1.0 网格悬停卡片直接使用该接口。为避免前端重复换算，�
 | POST | `/api/logs/clear` | 清空日志 | ❌ |
 | POST | `/api/data/clear_buysell` | 清空买入/卖出日志（`DELETE FROM trade_records`，**不影响持仓数据**） | ❌ |
 | POST | `/api/data/import` | 导入数据 | ❌ |
+
+旧备份、运行事件及测试产物的有限保留通过后台维护和 `scripts/cleanup_runtime_artifacts.py` 管理，以上网页接口不提供同等能力。手动操作先预览，详见[无人值守运行](unattended.md#runtime-retention)。
 
 ---
 

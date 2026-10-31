@@ -319,6 +319,13 @@ web2.0 通过 xtquant_manager 网关连接时，以下功能为**只读展示**�
 
 ## 7. 后续更新部署
 
+### v3.9.6 版本号与浏览器缓存
+
+miniQMT 发布版本由仓库根目录 `release_version.json` 提供，当前为 **v3.9.6**。它在 Vite 构建阶段注入页面标题；更新源码后必须重新 `npm run build` 并部署新的 `dist/`，只改 JSON 不会更新已部署页面。
+
+`web2.0/package.json` 的 `2.0.0` 是前端包元数据，不用于 miniQMT 发布版本。部署后检查浏览器标题为 `MiniQMT Web2 - v3.9.6`；已安装 PWA 的用户应关闭旧页面并重新打开，必要时刷新以接收新的 Service Worker。web2.0 仍保持只读，配置、交易和运行数据清理使用各自操作入口。
+
+
 ### 方式 A: GitHub 自动部署（推荐）
 
 ```bash
