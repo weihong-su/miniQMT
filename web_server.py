@@ -361,6 +361,7 @@ def _build_default_account_info():
         'frozen_cash': 0.0,
         'market_value': 0.0,
         'total_asset': 0.0,
+        'valuation': {'status': 'unavailable', 'reason': '账户信息待更新', 'quote_market_value': None},
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
@@ -442,7 +443,17 @@ def get_account_info_cached(max_age: float = None):
 
     if not cached:
         return _build_default_account_info()
-    return cached
+    result = dict(cached)
+    if isinstance(cached.get('valuation'), dict):
+        # 只重算缓存证据；资金查询失败时也不能继续把过期行情标成有效。
+        try:
+            valuation = get_position_manager_instance().get_account_valuation(result)
+            if isinstance(valuation, dict):
+                result['valuation'] = valuation
+        except Exception:
+            result['valuation'] = dict(cached['valuation'], status='unavailable',
+                                       reason='账户估值证据待刷新', quote_market_value=None)
+    return result
 
 # 实时推送线程
 push_thread = None
@@ -552,6 +563,8 @@ def get_status():
             'availableBalance': account_info.get('available', 0.0),
             'maxHoldingValue': account_info.get('market_value', 0.0),
             'totalAssets': account_info.get('total_asset', 0.0),
+            'frozenCash': account_info.get('frozen_cash', 0.0),
+            'valuation': account_info.get('valuation'),
             'timestamp': account_info.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         }
         
@@ -1756,7 +1769,10 @@ def sse():
                     'account_info': {
                         'available': account_info.get('available', 0),
                         'market_value': account_info.get('market_value', 0),
-                        'total_asset': account_info.get('total_asset', 0)
+                        'total_asset': account_info.get('total_asset', 0),
+                        'frozen_cash': account_info.get('frozen_cash', 0),
+                        'timestamp': account_info.get('timestamp'),
+                        'valuation': account_info.get('valuation')
                     },
                     'monitoring': {
                         'isMonitoring': config.ENABLE_AUTO_OPERATION,

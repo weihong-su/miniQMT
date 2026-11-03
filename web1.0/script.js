@@ -780,6 +780,28 @@
         updateSimulationModeUI();
     }
 
+    function updateAccountValuation(valuation, brokerValue, totalAssets) {
+        const validAsset = Number.isFinite(Number(totalAssets)) && Number(totalAssets) > 0;
+        const quote = valuation?.quote_market_value;
+        const useQuote = valuation && valuation.status !== 'unavailable'
+            && typeof quote === 'number' && Number.isFinite(quote) && quote >= 0;
+        const value = useQuote ? quote : Number(brokerValue);
+        elements.maxHoldingValue.textContent = validAsset && Number.isFinite(value) ? value.toFixed(2) : '--';
+        const label = document.getElementById('accountMarketValueLabel');
+        if (label) label.textContent = useQuote ? (valuation.status === 'static' ? '静态估值' : '行情估值') : '柜台市值';
+        const detail = [valuation?.reason, '柜台市值: ' + brokerValue,
+            valuation?.quote_asof ? '行情时间: ' + valuation.quote_asof : '',
+            valuation?.asset_asof ? '资金取数时间: ' + valuation.asset_asof : ''].filter(Boolean).join('；');
+        elements.maxHoldingValue.title = validAsset ? detail : '账户信息待更新';
+        const hint = document.getElementById('accountValuationHint');
+        if (hint) {
+            const diff = valuation?.broker_identity_diff;
+            hint.textContent = validAsset && typeof diff === 'number' && diff !== 0
+                ? '原始资产差额 ' + diff.toFixed(2) + ' 元' : '';
+            hint.title = detail;
+        }
+    }
+
     // 修改后的updateStatusDisplay函数 - 关键修改在这里
     function updateStatusDisplay(statusData) {
         // 检查数据是否实际变化
@@ -798,9 +820,10 @@
     
         // 账户信息更新
         elements.accountId.textContent = statusData.account?.id ?? '--';
-        elements.availableBalance.textContent = statusData.account?.availableBalance?.toFixed(2) ?? '--';
-        elements.maxHoldingValue.textContent = statusData.account?.maxHoldingValue?.toFixed(2) ?? '--';
-        elements.totalAssets.textContent = statusData.account?.totalAssets?.toFixed(2) ?? '--';
+        const validAsset = Number.isFinite(statusData.account?.totalAssets) && statusData.account.totalAssets > 0;
+        elements.availableBalance.textContent = validAsset ? statusData.account.availableBalance.toFixed(2) : '--';
+        elements.totalAssets.textContent = validAsset ? statusData.account.totalAssets.toFixed(2) : '--';
+        updateAccountValuation(statusData.account?.valuation, statusData.account?.maxHoldingValue, statusData.account?.totalAssets);
         elements.lastUpdateTimestamp.textContent = statusData.account?.timestamp ?? new Date().toLocaleString('zh-CN');
         
         // 获取后端状态，三个自动开关都按“用户意图优先，否则以后端为准”同步
@@ -897,8 +920,9 @@
 
     // 轻量级账户信息更新，用于SSE
     function updateQuickAccountInfo(accountInfo) {
+        const validAsset = Number(accountInfo.total_asset) > 0;
         if (accountInfo.available !== undefined) {
-            elements.availableBalance.textContent = parseFloat(accountInfo.available).toFixed(2);
+            elements.availableBalance.textContent = validAsset ? parseFloat(accountInfo.available).toFixed(2) : '--';
             // 添加闪烁效果
             elements.availableBalance.classList.add('highlight-update');
             setTimeout(() => {
@@ -907,7 +931,7 @@
         }
 
         if (accountInfo.market_value !== undefined) {
-            elements.maxHoldingValue.textContent = parseFloat(accountInfo.market_value).toFixed(2);
+            updateAccountValuation(accountInfo.valuation, accountInfo.market_value, accountInfo.total_asset);
             elements.maxHoldingValue.classList.add('highlight-update');
             setTimeout(() => {
                 elements.maxHoldingValue.classList.remove('highlight-update');
@@ -915,7 +939,7 @@
         }
 
         if (accountInfo.total_asset !== undefined) {
-            elements.totalAssets.textContent = parseFloat(accountInfo.total_asset).toFixed(2);
+            elements.totalAssets.textContent = validAsset ? parseFloat(accountInfo.total_asset).toFixed(2) : '--';
             elements.totalAssets.classList.add('highlight-update');
             setTimeout(() => {
                 elements.totalAssets.classList.remove('highlight-update');

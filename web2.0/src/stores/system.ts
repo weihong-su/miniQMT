@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import * as flaskApi from '../api/flask'
 import { loadAccounts, saveAccounts, getCurrentAccountId, setCurrentAccountId, discoverAccounts } from '../api/accounts'
 import type { AccountEntry } from '../api/accounts'
+import type { AccountInfo } from '../types'
+import { accountValuationDisplay } from '../utils/valuation'
 
 /** 三态开关：true/false 为后端真实值，null 表示后端未提供（网关模式常见）。 */
 export type TriState = boolean | null
@@ -11,7 +13,7 @@ export const useSystemStore = defineStore('system', () => {
   const connected = ref(false)
   const accounts = ref<AccountEntry[]>(loadAccounts())
   const currentAccountId = ref(getCurrentAccountId())
-  const account = ref({
+  const account = ref<AccountInfo>({
     id: '--', availableBalance: 0, maxHoldingValue: 0, totalAssets: 0, timestamp: '--'
   })
 
@@ -24,6 +26,7 @@ export const useSystemStore = defineStore('system', () => {
   const simulationMode = ref<TriState>(null)
   const positionMonitorRunning = ref<TriState>(null)
 
+  const valuationDisplay = computed(() => accountValuationDisplay(account.value))
   const lastUpdateTime = ref('')
   const statusUpdatedAt = ref(0)
   const connectionUpdatedAt = ref(0)
@@ -102,7 +105,7 @@ export const useSystemStore = defineStore('system', () => {
   }
 
   return {
-    connected, accounts, currentAccountId, currentAccount, account,
+    connected, accounts, currentAccountId, currentAccount, account, valuationDisplay,
     isMonitoring, autoTrading, gridTrading, allowBuy, allowSell,
     simulationMode, positionMonitorRunning, lastUpdateTime,
     statusUpdatedAt, connectionUpdatedAt,

@@ -565,7 +565,19 @@ class DataManager:
             purpose=purpose,
             stock_code=stock_code,
         ).get("score")
+        lock = getattr(self, '_quote_snapshot_lock', None)
+        if lock is not None and purpose == 'realtime':
+            with lock:
+                self._quote_snapshots[str(stock_code).split('.')[0]] = dict(decorated)
         return decorated
+
+    def get_cached_quotes(self):
+        """读取已采集行情副本，估值接口不触发外部查询。"""
+        lock = getattr(self, '_quote_snapshot_lock', None)
+        if lock is None:
+            return {}
+        with lock:
+            return {code: dict(quote) for code, quote in self._quote_snapshots.items()}
 
     def _connect_db(self):
         """连接SQLite数据库"""

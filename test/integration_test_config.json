@@ -1,6 +1,12 @@
 {
   "python_env": "C:\\Users\\PC\\Anaconda3\\envs\\python39",
   "test_groups": {
+    "priority_optimization": {
+      "name": "订单身份与资产估值回归",
+      "description": "验证跨日同号隔离、成交终态、迁移审计和行情估值",
+      "modules": ["test.test_priority_optimization"],
+      "priority": "critical"
+    },
     "autobuy": {
       "name": "自动买入模块测试",
       "description": "验证 miniqmt_autobuy 候选池筛选/条件检查/防重/HTTP下单",

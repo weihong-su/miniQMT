@@ -702,6 +702,8 @@ SETTLEMENT_SNAPSHOT_HEALTH_LOOKBACK = 7      # 快照完整性回溯天数
 # 恒等式 total_asset = cash + frozen_cash + market_value 的容差（元）。
 # 差额说明账户含非股票资产项（逆回购/理财/未交收资金），归因时必须排除。
 SETTLEMENT_ASSET_IDENTITY_TOLERANCE = 1.0
+ASSET_VALUATION_MAX_AGE_SECONDS = 60  # 盘中资产、持仓及行情快照允许的最大年龄（秒）
+GRID_ORDER_AMOUNT_TOLERANCE = 0.01  # 修复订单错误时双账本成交金额的核对容差（元）
 SETTLEMENT_ASSET_RECHECK_COUNT = 1  # 净值恒等式异常时最多额外查询一次
 SETTLEMENT_ASSET_RECHECK_DELAY_SECONDS = 0.2  # 等待 QMT 估值字段同步
 # 资产跳变告警阈值：超过 max(总资产*比例, 绝对值) 即告警。

@@ -18,7 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import config
 import settlement_db
 from logger import get_logger
-from order_utils import classify_position_restriction, position_quantities
+from order_utils import classify_position_restriction, position_quantities, format_order_time
+from db_migrate import grid_order_date
 
 logger = get_logger(__name__)
 
@@ -818,6 +819,38 @@ class GridTradingManager:
             logger.error(f"[网格] 加载活跃会话失败: {str(e)}")
             return 0
 
+    def _update_grid_order(self, order_id, updates, pending=None):
+        """内部写入沿用原委托的证券代码和交易日。"""
+        context = pending or self.pending_grid_orders.get(str(order_id)) or {}
+        scope = {}
+        if context.get('stock_code'):
+            scope['stock_code'] = context['stock_code']
+        submitted = context.get('created_at') or context.get('submitted_at')
+        if submitted:
+            scope['trading_date'] = grid_order_date(submitted)
+        self.db.update_grid_order(order_id, updates, **scope)
+
+    def _callback_matches_order(self, callback, context):
+        """回报有身份字段时严格校验，缺失字段要求唯一匹配。"""
+        code = self._get_attr_or_key(callback, ('stock_code', 'm_strInstrumentID'))
+        if code and self._normalize_code(code) != self._normalize_code(context['stock_code']):
+            return False
+        when = self._get_attr_or_key(callback, ('order_time', 'm_nOrderTime', 'traded_time'))
+        formatted = format_order_time(when)
+        submitted = context.get('created_at') or context.get('submitted_at')
+        if formatted and submitted and formatted[:10] != grid_order_date(submitted):
+            return False
+        side = self._get_attr_or_key(callback, ('order_type',))
+        if side in (23, 24) and ('BUY' if side == 23 else 'SELL') != context.get('side'):
+            return False
+        return True
+
+    def _audit_order_conflict(self, order_id, reason, status=None):
+        detail = {'reason': reason, 'broker_status': status}
+        logger.warning(f"[网格] 委托回报待核对 委托号={order_id}, 原因={reason}, 状态={status}")
+        if hasattr(self.db, 'record_grid_order_event'):
+            self.db.record_grid_order_event(order_id, detail)
+
     def _load_open_grid_orders(self) -> int:
         """系统启动时恢复尚未终结的网格委托"""
         if not hasattr(self.db, 'get_open_grid_orders'):
@@ -833,16 +866,24 @@ class GridTradingManager:
         for order in open_orders:
             stock_code = order.get('stock_code')
             session_id = order.get('session_id')
+            if order.get('trading_date') and order['trading_date'] != datetime.now().date().isoformat():
+                self._update_grid_order(order['order_id'], {
+                    'status': 'orphaned', 'last_error': 'previous trading day order requires review'
+                }, pending=order)
+                cached = self.pending_grid_orders.get(str(order['order_id']))
+                if cached and grid_order_date(cached['created_at']) == order['trading_date']:
+                    self.pending_grid_orders.pop(str(order['order_id']), None)
+                continue
             session = (
                 self.sessions.get(self._normalize_code(stock_code))
                 or self.sessions.get(stock_code)
             )
             if not session or session.id != session_id or session.status != 'active':
                 try:
-                    self.db.update_grid_order(order['order_id'], {
+                    self._update_grid_order(order['order_id'], {
                         'status': 'orphaned',
                         'last_error': 'active session not found during recovery'
-                    })
+                    }, pending=order)
                 except Exception:
                     pass
                 logger.warning(
@@ -1221,7 +1262,7 @@ class GridTradingManager:
             'cancel_requested_order_status': broker_status,
         })
         if hasattr(self.db, 'update_grid_order'):
-            self.db.update_grid_order(order_id, {
+            self._update_grid_order(order_id, {
                 'status': 'cancel_requested',
                 'cancel_requested_at': now_text,
                 'reorder_after_cancel': 1 if reorder_after_cancel else 0,
@@ -1338,7 +1379,7 @@ class GridTradingManager:
                 else:
                     current['status'] = 'cancel_failed'
                     if hasattr(self.db, 'update_grid_order'):
-                        self.db.update_grid_order(order_id, {
+                        self._update_grid_order(order_id, {
                             'status': 'cancel_failed',
                             'last_error': 'timeout cancel failed'
                         })
@@ -1562,7 +1603,7 @@ class GridTradingManager:
                     cancel_orders.append(order_id)
                     try:
                         if hasattr(self.db, 'update_grid_order'):
-                            self.db.update_grid_order(order_id, {
+                            self._update_grid_order(order_id, {
                                 'status': 'cancel_requested',
                                 'last_error': f'stop requested: {reason}'
                             })
@@ -1592,7 +1633,7 @@ class GridTradingManager:
                     if pending:
                         try:
                             if hasattr(self.db, 'update_grid_order'):
-                                self.db.update_grid_order(order_id, {
+                                self._update_grid_order(order_id, {
                                     'status': 'cancel_failed',
                                     'last_error': f'cancel failed during stop: {reason}'
                                 })
@@ -2419,6 +2460,14 @@ class GridTradingManager:
     def _register_pending_grid_order(self, order_id: str, session: GridSession, signal: dict,
                                      side: str, volume: int, expected_price: float) -> None:
         normalized_order_id = str(order_id)
+        existing = self.pending_grid_orders.get(normalized_order_id)
+        if existing:
+            same_identity = (self._normalize_code(existing['stock_code']) == self._normalize_code(session.stock_code)
+                             and existing['side'] == side
+                             and grid_order_date(existing['created_at']) == datetime.now().date().isoformat())
+            if same_identity:
+                return  # 重复登记保留已累积的分笔成交与预占。
+            raise ValueError(f'活跃委托号身份冲突，等待对账: {normalized_order_id}')
         pending_info = {
             'order_id': normalized_order_id,
             'session_id': session.id,
@@ -2540,7 +2589,8 @@ class GridTradingManager:
             'trade_id': trade_id,
             'trade_time': datetime.now().isoformat(),
             'grid_center_before': session.current_center_price,
-            'grid_center_after': price
+            'grid_center_after': price,
+            'order_trading_date': signal.get('order_trading_date')
         }
 
         updates = {
@@ -2572,7 +2622,7 @@ class GridTradingManager:
                 self.db.record_grid_trade(trade_data)
                 self.db.update_grid_session(session.id, updates)
                 if order_id and order_updates and hasattr(self.db, 'update_grid_order'):
-                    self.db.update_grid_order(order_id, order_updates)
+                    self._update_grid_order(order_id, order_updates)
         except Exception as db_err:
             logger.error(f"[网格] confirmed trade DB写入失败，回滚内存统计: {db_err}")
             session.trade_count = old_trade_count
@@ -2691,6 +2741,19 @@ class GridTradingManager:
             pending = self.pending_grid_orders.get(order_id)
             if not pending:
                 return False
+            if not pending.get('created_at'):
+                # 兼容旧内存记录：从唯一数据库订单恢复日期，不用处理日期代填。
+                try:
+                    stored = self.db.get_grid_order(order_id, stock_code=pending['stock_code'])
+                except (ValueError, TypeError):
+                    stored = None
+                if not isinstance(stored, dict) or not stored.get('submitted_at'):
+                    self._audit_order_conflict(order_id, '成交回报缺少唯一委托日期')
+                    return False
+                pending['created_at'] = stored['submitted_at']
+            if not self._callback_matches_order(trade, pending):
+                self._audit_order_conflict(order_id, '成交回报身份不匹配')
+                return False
 
             price = self._get_attr_or_key(trade, ('traded_price', 'm_dPrice', 'price'))
             volume = self._get_attr_or_key(trade, ('traded_volume', 'm_nVolume', 'volume'))
@@ -2727,7 +2790,8 @@ class GridTradingManager:
             if trade_id in confirmed_trade_ids:
                 logger.warning(f"[网格] 重复成交回报已忽略 成交编号={trade_id}, 委托号={order_id}")
                 return False
-            if hasattr(self.db, 'grid_trade_exists') and self.db.grid_trade_exists(trade_id):
+            if hasattr(self.db, 'grid_trade_exists') and self.db.grid_trade_exists(
+                    trade_id, pending['stock_code'], grid_order_date(pending['created_at'])):
                 logger.warning(f"[网格] 成交已在DB落账，忽略重复回报 成交编号={trade_id}, 委托号={order_id}")
                 confirmed_trade_ids.add(trade_id)
                 return False
@@ -2755,9 +2819,9 @@ class GridTradingManager:
             confirmed_trade_ids.add(trade_id)
 
             # 更新 grid_orders 表状态（部分成交也写入，便于重启恢复 pendings）
-            if order_id and hasattr(self.db, 'update_grid_order'):
+            if order_status == 'partial_filled' and order_id and hasattr(self.db, 'update_grid_order'):
                 try:
-                    self.db.update_grid_order(order_id, {
+                    self._update_grid_order(order_id, {
                         'status': order_status,
                         'filled_volume': new_filled_volume,
                         'filled_amount': new_filled_amount
@@ -2775,7 +2839,7 @@ class GridTradingManager:
 
             # ── 全部成交：一次性落账（聚合） ──
             side = pending['side']
-            signal = pending['signal']
+            signal = dict(pending['signal'], order_trading_date=grid_order_date(pending['created_at']))
             total_volume = pending['filled_volume']
             total_amount = pending['filled_amount']
             avg_price = pending['filled_weighted_price_sum'] / total_volume if total_volume > 0 else price
@@ -2797,7 +2861,8 @@ class GridTradingManager:
                 order_updates={
                     'status': 'filled',
                     'filled_volume': total_volume,
-                    'filled_amount': total_amount
+                    'filled_amount': total_amount,
+                    'last_error': None
                 },
                 commission=total_commission,
                 deal_meta=deal_meta,
@@ -2853,18 +2918,31 @@ class GridTradingManager:
                 db_order = None
                 try:
                     if hasattr(self.db, 'get_grid_order'):
-                        db_order = self.db.get_grid_order(order_id)
+                        code = self._get_attr_or_key(order, ('stock_code', 'm_strInstrumentID'))
+                        when = format_order_time(self._get_attr_or_key(order, ('order_time', 'm_nOrderTime')))
+                        scope = {}
+                        if code:
+                            scope['stock_code'] = code
+                        if when:
+                            scope['trading_date'] = when[:10]
+                        db_order = self.db.get_grid_order(order_id, **scope)
                 except Exception as db_err:
                     logger.warning(f"[网格] 读取历史委托失败 委托号={order_id}, err={db_err}")
                 if not db_order:
                     return False
+                if not self._callback_matches_order(order, db_order):
+                    self._audit_order_conflict(order_id, '历史委托回报身份不匹配', status)
+                    return False
+                if db_order.get('status') == 'filled':
+                    self._audit_order_conflict(order_id, '已成交终态忽略撤废回报', status)
+                    return True
                 # 同一终态会被推送两次（QMT 重复回报），仅首次生效可避免重复重挂
                 already_terminal = str(db_order.get('status') or '') == terminal_status_map[status]
                 try:
-                    self.db.update_grid_order(order_id, {
+                    self._update_grid_order(order_id, {
                         'status': terminal_status_map[status],
                         'last_error': f'order terminal status {status}'
-                    })
+                    }, pending=db_order)
                 except Exception as db_err:
                     logger.warning(f"[网格] 更新历史委托状态失败 委托号={order_id}, err={db_err}")
                 if status == 57 and not already_terminal:
@@ -2890,6 +2968,9 @@ class GridTradingManager:
                                     f"[网格] 启动废单重挂线程失败 委托号={order_id}, err={reorder_err}"
                                 )
                 return True
+            if not self._callback_matches_order(order, pending):
+                self._audit_order_conflict(order_id, '未完成委托回报身份不匹配', status)
+                return False
             if pending.get('status') == 'reordering':
                 return True
 
@@ -2903,7 +2984,7 @@ class GridTradingManager:
 
             try:
                 if hasattr(self.db, 'update_grid_order'):
-                    self.db.update_grid_order(order_id, {
+                    self._update_grid_order(order_id, {
                         'status': new_status,
                         'filled_volume': filled_volume,
                         'filled_amount': float(pending.get('filled_amount') or 0.0),
@@ -3117,7 +3198,7 @@ class GridTradingManager:
                     'status': 'submitted',
                 })
             if hasattr(self.db, 'update_grid_order'):
-                self.db.update_grid_order(str(order_id), {
+                self._update_grid_order(str(order_id), {
                     'parent_order_id': parent_order_id,
                     'reorder_count': reorder_count + 1,
                     'reorder_after_cancel': 0,
@@ -3136,7 +3217,7 @@ class GridTradingManager:
                 pending = self.pending_grid_orders.get(cancel_after_accept)
                 if pending:
                     pending['status'] = 'cancel_failed'
-                    self.db.update_grid_order(cancel_after_accept, {
+                    self._update_grid_order(cancel_after_accept, {
                         'status': 'cancel_failed',
                         'last_error': 'cancel failed after stop requested during reorder'
                     })
@@ -3567,7 +3648,7 @@ class GridTradingManager:
                         cancel_after_accept = str(order_id)
                         try:
                             if hasattr(self.db, 'update_grid_order'):
-                                self.db.update_grid_order(cancel_after_accept, {
+                                self._update_grid_order(cancel_after_accept, {
                                     'status': 'cancel_requested',
                                     'last_error': f"stop requested: {pending.get('stop_reason')}"
                                 })
@@ -3608,7 +3689,7 @@ class GridTradingManager:
                     with self.lock:
                         try:
                             if hasattr(self.db, 'update_grid_order'):
-                                self.db.update_grid_order(cancel_after_accept, {
+                                self._update_grid_order(cancel_after_accept, {
                                     'status': 'cancel_failed',
                                     'last_error': 'cancel failed after stop requested'
                                 })

@@ -35,6 +35,9 @@ export function useSSE() {
             system.account.availableBalance = msg.account_info.available
             system.account.maxHoldingValue = msg.account_info.market_value
             system.account.totalAssets = msg.account_info.total_asset
+            system.account.frozenCash = msg.account_info.frozen_cash
+            system.account.valuation = msg.account_info.valuation ?? null
+            system.account.timestamp = msg.account_info.timestamp ?? msg.timestamp
           }
           if (msg.monitoring) {
             system.autoTrading = msg.monitoring.autoTradingEnabled ?? system.autoTrading

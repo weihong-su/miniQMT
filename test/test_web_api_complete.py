@@ -467,6 +467,48 @@ class TestStaticAndIndex(WebAPITestBase):
 # 2. 系统状态 & 连接检查
 # =====================================================================
 class TestSystemStatus(WebAPITestBase):
+    def test_asset_valuation_is_identical_in_http_and_sse(self):
+        """状态轮询与 SSE 传递同一诊断，柜台原值始终保留。"""
+        valuation = {'status': 'explained', 'quote_market_value': 62134,
+                     'broker_identity_diff': -6909, 'quote_identity_diff': 0}
+        raw = dict(account_id='TEST', available=431612.83, frozen_cash=0,
+                   market_value=69043, total_asset=493746.83,
+                   timestamp='2026-11-02 14:09:44', valuation=valuation)
+        with patch.object(web_server, 'get_account_info_cached', return_value=raw):
+            response = self.client.get('/api/status')
+            account = response.get_json()['account']
+            self.assertEqual(account['maxHoldingValue'], 69043)
+            self.assertEqual(account['valuation'], valuation)
+            stream = self.client.get('/api/sse', buffered=False)
+            try:
+                payload = next(iter(stream.response)).decode('utf-8')
+                info = json.loads(payload.split('data: ', 1)[1])['account_info']
+                self.assertEqual(info['valuation'], account['valuation'])
+                self.assertEqual(info['market_value'], account['maxHoldingValue'])
+                self.assertEqual(info['frozen_cash'], 0)
+            finally:
+                stream.close()
+
+    def test_cached_valuation_is_rechecked_even_if_asset_refresh_times_out(self):
+        """旧账户缓存的质量标记需重算，且不能修改原始缓存对象。"""
+        stale = {'total_asset': 10000, 'market_value': 4000,
+                 'valuation': {'status': 'explained', 'quote_market_value': 3900}}
+        unavailable = {'status': 'unavailable', 'reason': '行情过期', 'quote_market_value': None}
+        with patch.object(web_server, '_account_info_cache', {'data': stale, 'ts': 0}), \
+                patch.object(web_server, '_schedule_account_info_refresh'), \
+                patch.object(mock_pm, 'get_account_valuation', return_value=unavailable):
+            result = web_server.get_account_info_cached()
+        self.assertEqual(result['valuation'], unavailable)
+        self.assertEqual(stale['valuation']['status'], 'explained')
+        self.assertEqual(result['market_value'], 4000)
+
+    def test_initial_account_cache_marks_assets_unavailable(self):
+        """尚未取到资金时提供质量标记，前端可显示待更新。"""
+        data = web_server._build_default_account_info()
+        self.assertEqual(data['valuation']['status'], 'unavailable')
+        self.assertIsNone(data['valuation']['quote_market_value'])
+
+
     """测试系统状态接口"""
 
     def test_01_connection_status(self):

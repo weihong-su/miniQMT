@@ -14,6 +14,9 @@ import { formatAge, freshnessOf, freshnessClass } from '../utils/freshness'
 const { show: showAdvice, hide: hideAdvice } = useAdviceTooltip()
 
 const system = useSystemStore()
+const assetMoney = (value: number | null | undefined) =>
+  system.valuationDisplay.validAccount && typeof value === 'number' && Number.isFinite(value)
+    ? value.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) : '--'
 const positions = usePositionsStore()
 const { healthy: sseHealthy } = useSSE()
 
@@ -126,17 +129,21 @@ onUnmounted(() => {
 
       <!-- Assets (right) -->
       <div class="hidden sm:flex items-center gap-2 md:gap-3 ml-auto">
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">可用</span> <strong class="text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></div>
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">市值</span> <strong class="text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></div>
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">总资产</span> <strong class="text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">可用</span> <strong class="text-slate-700">¥{{ assetMoney(system.account.availableBalance) }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400" :title="system.valuationDisplay.detail">{{ system.valuationDisplay.label }}</span> <strong class="text-slate-700">¥{{ assetMoney(system.valuationDisplay.value) }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">总资产</span> <strong class="text-slate-700">¥{{ assetMoney(system.account.totalAssets) }}</strong></div>
       </div>
     </div>
 
     <!-- Mobile asset bar -->
     <div class="sm:hidden touch-strip no-scrollbar px-3 pb-1 text-[11px] text-slate-500">
-      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">可用 <strong class="block truncate text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></span>
-      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">市值 <strong class="block truncate text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></span>
-      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">总资产 <strong class="block truncate text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></span>
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">可用 <strong class="block truncate text-slate-700">¥{{ assetMoney(system.account.availableBalance) }}</strong></span>
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5" :title="system.valuationDisplay.detail">{{ system.valuationDisplay.label }} <strong class="block truncate text-slate-700">¥{{ assetMoney(system.valuationDisplay.value) }}</strong></span>
+      <span class="metric-tile !min-w-[112px] !px-2.5 !py-1.5">总资产 <strong class="block truncate text-slate-700">¥{{ assetMoney(system.account.totalAssets) }}</strong></span>
+    </div>
+
+    <div v-if="system.account.valuation?.broker_identity_diff" class="px-3 md:px-6 pb-1 text-[11px] text-amber-700" :title="system.valuationDisplay.detail">
+      原始资产差额 ¥{{ assetMoney(system.account.valuation.broker_identity_diff) }} · {{ system.account.valuation.reason }}
     </div>
 
     <!-- Row 2: 只读状态徽章 + 连接/新鲜度指示 -->

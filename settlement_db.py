@@ -317,6 +317,7 @@ def write_equity_snapshot(position_manager, snapshot_type,
                     or _is_partial_asset(*values, identity_tolerance)):
                 continue
             total_asset, market_value, cash, frozen_cash = values
+            info = candidate
             observed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             diff = total_asset - cash - (frozen_cash or 0.0) - market_value
         except Exception as e:
@@ -349,6 +350,12 @@ def write_equity_snapshot(position_manager, snapshot_type,
                 'total_asset': total_asset, 'cash': cash,
                 'frozen_cash': frozen_cash, 'market_value': market_value,
                 'diff': round(diff, 2)}, db_path=db_path)
+
+    if isinstance(info.get('valuation'), dict):
+        log_event('asset_valuation_diagnostic', 'INFO', {
+            'snapshot_type': snapshot_type, 'date': snapshot_date,
+            'valuation': info['valuation'], 'validation_status': validation_status
+        }, db_path=db_path)
 
     daily_pnl, unexplained = _derive_pnl(
         account, snapshot_date, snapshot_type, total_asset, db_path)

@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 from typing import Optional, List, Dict
 import config
+from db_migrate import migrate_grid_order_scope, normalize_grid_order_code, grid_order_date
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -401,6 +402,8 @@ class DatabaseManager:
                 else:
                     raise
 
+        migrate_grid_order_scope(self.conn)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grid_lots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -714,111 +717,121 @@ class DatabaseManager:
             return trade_id
 
     def create_grid_order(self, order_data: dict) -> None:
-        """持久化网格委托，用于重启恢复和撤废单处理"""
+        """登记逻辑委托；同一身份重复登记不能覆盖已确认进度。"""
+        data = {
+            'order_id': str(order_data['order_id']),
+            'session_id': order_data['session_id'],
+            'stock_code': normalize_grid_order_code(order_data['stock_code']),
+            'side': order_data['side'],
+            'status': order_data.get('status', 'submitted'),
+            'requested_volume': int(order_data['requested_volume']),
+            'expected_price': float(order_data['expected_price']),
+            'reserved_price': float(order_data.get('reserved_price') or order_data['expected_price']),
+            'filled_volume': int(order_data.get('filled_volume', 0)),
+            'filled_amount': float(order_data.get('filled_amount', 0)),
+            'last_error': order_data.get('last_error'),
+            'submitted_at': order_data.get('submitted_at', datetime.now().isoformat()),
+            'raw_signal': order_data.get('raw_signal'),
+            'reorder_after_cancel': int(bool(order_data.get('reorder_after_cancel'))),
+            'reorder_count': int(order_data.get('reorder_count', 0)),
+            'parent_order_id': order_data.get('parent_order_id'),
+            'cancel_requested_at': order_data.get('cancel_requested_at'),
+        }
+        data['trading_date'] = grid_order_date(data['submitted_at'])
         with self.lock:
             should_commit = not self.conn.in_transaction
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT INTO grid_orders
-                (order_id, session_id, stock_code, side, status,
-                 requested_volume, expected_price, reserved_price, filled_volume, filled_amount,
-                 submitted_at, raw_signal, reorder_after_cancel, reorder_count,
-                 parent_order_id, cancel_requested_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(order_id) DO UPDATE SET
-                    session_id=excluded.session_id,
-                    stock_code=excluded.stock_code,
-                    side=excluded.side,
-                    status=excluded.status,
-                    requested_volume=excluded.requested_volume,
-                    expected_price=excluded.expected_price,
-                    reserved_price=excluded.reserved_price,
-                    filled_volume=excluded.filled_volume,
-                    filled_amount=excluded.filled_amount,
-                    submitted_at=excluded.submitted_at,
-                    raw_signal=excluded.raw_signal,
-                    reorder_after_cancel=excluded.reorder_after_cancel,
-                    reorder_count=excluded.reorder_count,
-                    parent_order_id=excluded.parent_order_id,
-                    cancel_requested_at=excluded.cancel_requested_at,
-                    updated_at=CURRENT_TIMESTAMP
-            """, (
-                str(order_data['order_id']),
-                order_data['session_id'],
-                order_data['stock_code'],
-                order_data['side'],
-                order_data.get('status', 'submitted'),
-                int(order_data['requested_volume']),
-                float(order_data['expected_price']),
-                float(order_data.get('reserved_price') or order_data['expected_price']),
-                int(order_data.get('filled_volume', 0)),
-                float(order_data.get('filled_amount', 0.0)),
-                order_data.get('submitted_at', datetime.now().isoformat()),
-                order_data.get('raw_signal'),
-                1 if order_data.get('reorder_after_cancel') else 0,
-                int(order_data.get('reorder_count', 0)),
-                order_data.get('parent_order_id'),
-                order_data.get('cancel_requested_at')
-            ))
+            columns = list(data)
+            self.conn.execute(
+                'INSERT INTO grid_orders_scoped (' + ','.join(columns) + ') VALUES (' +
+                ','.join('?' for _ in columns) +
+                ') ON CONFLICT(trading_date, stock_code, order_id) DO NOTHING',
+                [data[name] for name in columns])
             if should_commit:
                 self.conn.commit()
 
-    def update_grid_order(self, order_id: str, updates: dict) -> None:
-        """更新网格委托状态"""
+    def update_grid_order(self, order_id: str, updates: dict, stock_code=None, trading_date=None) -> None:
+        """按完整身份更新委托；身份不唯一时拒绝猜测。"""
         allowed_fields = {
             'status', 'filled_volume', 'filled_amount', 'last_error', 'raw_signal',
             'reorder_after_cancel', 'reorder_count', 'parent_order_id', 'cancel_requested_at'
         }
-        invalid_fields = set(updates.keys()) - allowed_fields
+        invalid_fields = set(updates) - allowed_fields
         if invalid_fields:
             raise ValueError(f"update_grid_order: 非法字段名 {invalid_fields}")
         if not updates:
             return
-
         with self.lock:
+            row = self.get_grid_order(order_id, stock_code, trading_date)
+            if row is None:
+                return
+            if row['status'] == 'filled' and updates.get('status', 'filled') != 'filled':
+                logger.warning(f"[网格库] 已成交委托忽略状态回退 委托号={order_id}, 新状态={updates.get('status')}")
+                return
             should_commit = not self.conn.in_transaction
-            set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
-            values = list(updates.values()) + [str(order_id)]
-            cursor = self.conn.cursor()
-            cursor.execute(f"""
-                UPDATE grid_orders
-                SET {set_clause}, updated_at=CURRENT_TIMESTAMP
-                WHERE order_id=?
-            """, values)
+            self.conn.execute(
+                'UPDATE grid_orders_scoped SET ' + ','.join(name + '=?' for name in updates) +
+                ', updated_at=CURRENT_TIMESTAMP WHERE trading_date=? AND stock_code=? AND order_id=?',
+                list(updates.values()) + [row['trading_date'], row['stock_code'], str(order_id)])
             if should_commit:
                 self.conn.commit()
 
-    def get_grid_order(self, order_id: str):
-        """获取网格委托"""
+    def get_grid_order(self, order_id: str, stock_code=None, trading_date=None):
+        """读取唯一匹配；调用方可提供证券代码与交易日限制范围。"""
+        clauses, values = ['order_id=?'], [str(order_id)]
+        if stock_code:
+            clauses.append('stock_code=?')
+            values.append(normalize_grid_order_code(stock_code))
+        if trading_date:
+            clauses.append('trading_date=?')
+            values.append(grid_order_date(trading_date))
         with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT * FROM grid_orders WHERE order_id=?
-            """, (str(order_id),))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            rows = self.conn.execute(
+                'SELECT * FROM grid_orders_scoped WHERE ' + ' AND '.join(clauses), values).fetchall()
+            if len(rows) > 1:
+                raise ValueError(f"委托身份不唯一，必须指定交易日和股票: {order_id}")
+            return dict(rows[0]) if rows else None
 
-    def grid_trade_exists(self, trade_id: str) -> bool:
-        """检查成交回报是否已经落账，用于重启后的幂等保护"""
+    def grid_trade_exists(self, trade_id: str, stock_code=None, trading_date=None) -> bool:
+        """成交去重同时限定股票和交易日，防止短委托号跨日复用。"""
         if not trade_id:
             return False
+        clauses, values = ['trade_id=?'], [str(trade_id)]
+        if stock_code:
+            clauses.append('substr(stock_code,1,6)=?')
+            values.append(str(stock_code)[:6])
+        if trading_date:
+            clauses.append('substr(trade_time,1,10)=?')
+            values.append(grid_order_date(trading_date))
         with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT 1 FROM grid_trades WHERE trade_id=? LIMIT 1
-            """, (str(trade_id),))
-            return cursor.fetchone() is not None
+            return self.conn.execute(
+                'SELECT 1 FROM grid_trades WHERE ' + ' AND '.join(clauses) + ' LIMIT 1',
+                values).fetchone() is not None
+
+    def record_grid_order_event(self, order_id, detail):
+        """在同一数据库记录原始冲突证据，避免清理当前错误后失去审计线索。"""
+        from db_migrate import DDL_RUN_EVENTS
+        import json
+        with self.lock:
+            should_commit = not self.conn.in_transaction
+            self.conn.execute(DDL_RUN_EVENTS)
+            self.conn.execute(
+                "INSERT INTO run_events(account,event_time,level,event_type,order_id,detail) "
+                "VALUES (?,?,?,?,?,?)",
+                (config.ACCOUNT_CONFIG.get('account_id'), datetime.now().isoformat(),
+                 'WARNING', 'grid_order_conflict', str(order_id),
+                 json.dumps(detail, ensure_ascii=False)))
+            if should_commit:
+                self.conn.commit()
 
     def get_open_grid_orders(self) -> list:
-        """获取尚未终结的网格委托"""
+        """恢复未终结订单，保留每条记录的完整身份。"""
         with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT * FROM grid_orders
+            rows = self.conn.execute("""
+                SELECT * FROM grid_orders_scoped
                 WHERE status IN ('submitted', 'partial_filled', 'cancel_requested', 'cancel_failed')
                 ORDER BY submitted_at ASC
-            """)
-            return [dict(row) for row in cursor.fetchall()]
+            """).fetchall()
+            return [dict(row) for row in rows]
 
     def get_unmatched_grid_sell_volume(self, session_id: int) -> int:
         """获取尚未被买回动作回补的先卖出数量。"""
@@ -1037,7 +1050,9 @@ class DatabaseManager:
                 self.update_grid_session(trade_data['session_id'], session_updates)
 
                 if order_id and order_updates:
-                    self.update_grid_order(order_id, order_updates)
+                    self.update_grid_order(
+                        order_id, order_updates, stock_code=trade_data['stock_code'],
+                        trading_date=trade_data.get('order_trading_date') or grid_order_date(trade_data['trade_time']))
 
                 self.conn.commit()
                 return grid_trade_id

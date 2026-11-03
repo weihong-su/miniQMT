@@ -705,6 +705,165 @@ def apply_trade_records_extension(db_path=None, do_backup=True, dry_run=False,
     return report
 
 
+
+# 新订单表保留旧表，避免生产表重建及跨日委托号覆盖。
+DDL_GRID_ORDERS_SCOPED = '''
+CREATE TABLE IF NOT EXISTS grid_orders_scoped (
+    trading_date TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    session_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    side TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'submitted',
+    requested_volume INTEGER NOT NULL,
+    expected_price REAL NOT NULL,
+    reserved_price REAL,
+    filled_volume INTEGER DEFAULT 0,
+    filled_amount REAL DEFAULT 0,
+    last_error TEXT,
+    submitted_at TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    raw_signal TEXT,
+    reorder_after_cancel INTEGER DEFAULT 0,
+    reorder_count INTEGER DEFAULT 0,
+    parent_order_id TEXT,
+    cancel_requested_at TEXT,
+    PRIMARY KEY (trading_date, stock_code, order_id)
+)
+'''
+
+
+def normalize_grid_order_code(value):
+    """统一订单股票代码，避免裸代码与市场后缀形成两条身份。"""
+    code = str(value or '').strip().upper()
+    if len(code) == 6 and code.isdigit():
+        market = 'BJ' if code.startswith(('4', '8', '92')) else 'SH' if code.startswith(('5', '6')) else 'SZ'
+        code += '.' + market
+    return code
+
+
+def grid_order_date(value):
+    """交易日必须来自委托自身日期，不能用迁移或回报处理日期代填。"""
+    return datetime.fromisoformat(str(value).replace('Z', '+00:00')).date().isoformat()
+
+
+def migrate_grid_order_scope(conn):
+    """幂等新建复合键订单表并完整复制旧表，旧表作为原始归档保留。"""
+    if table_exists(conn, 'grid_orders_scoped'):
+        return 0
+    conn.execute('SAVEPOINT grid_order_scope')
+    try:
+        conn.execute(DDL_GRID_ORDERS_SCOPED)
+        count = 0
+        if table_exists(conn, 'grid_orders'):
+            cursor = conn.execute('SELECT * FROM grid_orders')
+            names = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                data = dict(zip(names, row))
+                data['trading_date'] = grid_order_date(data['submitted_at'])
+                data['stock_code'] = normalize_grid_order_code(data['stock_code'])
+                columns = list(data)
+                conn.execute(
+                    'INSERT INTO grid_orders_scoped (' + ','.join(columns) + ') VALUES (' +
+                    ','.join('?' for _ in columns) + ')', [data[name] for name in columns])
+                count += 1
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_scoped_orders_status ON grid_orders_scoped(status)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_scoped_orders_session ON grid_orders_scoped(session_id)')
+        conn.execute('RELEASE SAVEPOINT grid_order_scope')
+        return count
+    except Exception:
+        conn.execute('ROLLBACK TO SAVEPOINT grid_order_scope')
+        conn.execute('RELEASE SAVEPOINT grid_order_scope')
+        raise
+
+def apply_grid_order_scope(db_path, dry_run=False, repair_errors=False, do_backup=True):
+    """迁移订单身份并按双账本证据修复当前错误；预览只操作一致性副本。"""
+    import json
+    import math
+    from pathlib import Path
+    report = {'db_path': str(db_path), 'dry_run': dry_run, 'copied': 0, 'repaired': []}
+    if dry_run:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = os.path.join(directory, 'grid_scope_test.db')
+            source = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
+            target = sqlite3.connect(temporary)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+                source.close()
+            result = apply_grid_order_scope(temporary, repair_errors=repair_errors, do_backup=False)
+            result.update(db_path=str(db_path), dry_run=True)
+            return result
+    if do_backup:
+        folder = Path(db_path).resolve().parent / 'backup' / 'migrations'
+        folder.mkdir(parents=True, exist_ok=True)
+        backup = folder / (Path(db_path).name + '.grid_scope_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+        source = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
+        target = sqlite3.connect(str(backup))
+        try:
+            source.backup(target)
+            if target.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                raise RuntimeError('订单迁移备份校验失败')
+        finally:
+            target.close()
+            source.close()
+        report['backup'] = str(backup)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        report['copied'] = migrate_grid_order_scope(conn)
+        if repair_errors:
+            candidates = conn.execute(
+                "SELECT * FROM grid_orders_scoped WHERE status='filled' "
+                "AND filled_volume=requested_volume AND requested_volume>0 "
+                "AND last_error IS NOT NULL AND last_error<>''").fetchall()
+            for row in candidates:
+                proof = []
+                for table in ('grid_trades', 'trade_records'):
+                    if not table_exists(conn, table):
+                        break
+                    columns = {item[1] for item in conn.execute('PRAGMA table_info(' + table + ')')}
+                    identity = '(trade_id=? OR order_id=?)' if 'order_id' in columns else 'trade_id=?'
+                    args = [row['order_id']] * (2 if 'order_id' in columns else 1)
+                    args += [row['stock_code'][:6], row['trading_date'], row['side']]
+                    active = " AND row_status='active'" if 'row_status' in columns else ''
+                    values = conn.execute(
+                        'SELECT COALESCE(SUM(volume),0),COALESCE(SUM(amount),0) FROM ' + table +
+                        ' WHERE ' + identity + ' AND substr(stock_code,1,6)=? '
+                        'AND substr(trade_time,1,10)=? AND trade_type=?' + active, args).fetchone()
+                    proof.append(tuple(values))
+                if len(proof) != 2 or any(
+                        volume != row['filled_volume'] or not math.isclose(
+                            amount, row['filled_amount'], abs_tol=config.GRID_ORDER_AMOUNT_TOLERANCE)
+                        for volume, amount in proof):
+                    continue
+                detail = dict(order_id=row['order_id'], trading_date=row['trading_date'],
+                              stock_code=row['stock_code'], old_error=row['last_error'],
+                              filled_volume=row['filled_volume'], filled_amount=row['filled_amount'])
+                conn.execute(DDL_RUN_EVENTS)
+                conn.execute(
+                    'INSERT INTO run_events(account,event_time,level,event_type,code,order_id,detail) '
+                    'VALUES (?,?,?,?,?,?,?)',
+                    (derive_account_id(db_path), datetime.now().isoformat(), 'INFO',
+                     'grid_order_error_repaired', row['stock_code'], row['order_id'],
+                     json.dumps(detail, ensure_ascii=False)))
+                conn.execute(
+                    'UPDATE grid_orders_scoped SET last_error=NULL '
+                    'WHERE trading_date=? AND stock_code=? AND order_id=?',
+                    (row['trading_date'], row['stock_code'], row['order_id']))
+                report['repaired'].append(detail)
+        report['rows'] = conn.execute('SELECT COUNT(*) FROM grid_orders_scoped').fetchone()[0]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return report
+
+
 # ============================== 账号发现 ==============================
 def discover_account_dbs(root=None):
     """发现所有账号库，返回 [(account_id, db_path, source), ...]。

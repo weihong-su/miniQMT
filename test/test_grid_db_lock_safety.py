@@ -145,7 +145,7 @@ class TestNestedTransactionAtomicity(unittest.TestCase):
         self.db.conn.rollback()
 
         n = self.db.conn.execute(
-            "SELECT COUNT(*) c FROM grid_orders WHERE order_id=?", ('1745879042',)
+            "SELECT COUNT(*) c FROM grid_orders_scoped WHERE order_id=?", ('1745879042',)
         ).fetchone()['c']
         self.assertEqual(n, 0, "回滚后委托记录仍在 → 内层commit已落库")
 

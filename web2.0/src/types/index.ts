@@ -46,11 +46,25 @@ export interface RawPositionMetrics {
 }
 
 // ===== 账户相关 =====
+export interface AccountValuation {
+  status: 'unavailable' | 'static' | 'consistent' | 'explained' | 'unexplained'
+  reason?: string
+  broker_market_value?: number | null
+  quote_market_value?: number | null
+  broker_identity_diff?: number | null
+  quote_identity_diff?: number | null
+  asset_asof?: string | null
+  position_asof?: string | null
+  quote_asof?: string | null
+}
+
 export interface AccountInfo {
   id: string
   availableBalance: number
   maxHoldingValue: number
   totalAssets: number
+  frozenCash?: number
+  valuation?: AccountValuation | null
   timestamp: string
 }
 
@@ -274,6 +288,9 @@ export interface SSEMessage {
     available: number
     market_value: number
     total_asset: number
+    frozen_cash?: number
+    timestamp?: string | null
+    valuation?: AccountValuation | null
   }
   monitoring?: {
     isMonitoring?: boolean

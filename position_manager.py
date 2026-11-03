@@ -2411,6 +2411,39 @@ class PositionManager:
         except Exception as e:
             logger.error(f"更新所有持仓价格时出错: {str(e)}")
 
+    def get_account_valuation(self, account_info):
+        """从内存持仓与缓存行情解释资金差额，不增加柜台或行情请求。"""
+        from asset_valuation import build_account_valuation
+        try:
+            with self.memory_conn_lock:
+                records = self.memory_conn.execute(
+                    "SELECT stock_code, volume FROM positions ORDER BY stock_code").fetchall()
+                positions = []
+                metadata = getattr(self, '_position_restrictions', {})
+                for row in records:
+                    code, volume = row[0], row[1]
+                    proof = metadata.get(str(code)[:6], {})
+                    positions.append(dict(stock_code=code, volume=volume,
+                                          position_asof=proof.get('position_asof') if
+                                          proof.get('quantities', (None,))[0] == volume else None))
+                signature = [(row[0], row[1]) for row in records]
+            quotes = self.data_manager.get_cached_quotes()
+            if not isinstance(quotes, dict):
+                quotes = {}
+            with self.memory_conn_lock:
+                current = self.memory_conn.execute(
+                    "SELECT stock_code, volume FROM positions ORDER BY stock_code").fetchall()
+                changed = signature != [(row[0], row[1]) for row in current]
+            result = build_account_valuation(account_info, positions, quotes)
+            if changed:
+                result.update(status='unavailable', reason='估值期间持仓发生变化',
+                              quote_market_value=None, quote_identity_diff=None)
+            return result
+        except Exception as exc:
+            logger.debug(f"账户估值证据暂不可用: {exc}")
+            return dict(status='unavailable', reason='账户估值证据暂不可用',
+                        quote_market_value=None)
+
     def get_account_info(self):
         """获取账户信息"""
         try:
@@ -2470,6 +2503,7 @@ class PositionManager:
                 'total_asset': float(account_df['总资产'].iloc[0]) if '总资产' in account_df.columns and not account_df['总资产'].empty else 0.0,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
+            account_info['valuation'] = self.get_account_valuation(account_info)
             return account_info
         except Exception as e:
             logger.error(f"获取账户信息时出错: {str(e)}")
