@@ -702,6 +702,10 @@ SETTLEMENT_SNAPSHOT_HEALTH_LOOKBACK = 7      # 快照完整性回溯天数
 # 恒等式 total_asset = cash + frozen_cash + market_value 的容差（元）。
 # 差额说明账户含非股票资产项（逆回购/理财/未交收资金），归因时必须排除。
 SETTLEMENT_ASSET_IDENTITY_TOLERANCE = 1.0
+# 恒等式告警开关（False=不告警、不做额外复查，identity_diff 仍照常计算落库）。
+# 关闭原因：柜台 market_value 字段长期陈旧，差额无法靠本系统消除，告警持续刷屏。
+# 重新开启会把 WARNING 日志与 run_events(asset_identity_mismatch, ERROR) 一并恢复。
+ENABLE_ASSET_IDENTITY_ALERT = False
 ASSET_VALUATION_MAX_AGE_SECONDS = 60  # 盘中资产、持仓及行情快照允许的最大年龄（秒）
 GRID_ORDER_AMOUNT_TOLERANCE = 0.01  # 修复订单错误时双账本成交金额的核对容差（元）
 SETTLEMENT_ASSET_RECHECK_COUNT = 1  # 净值恒等式异常时最多额外查询一次

@@ -131,7 +131,9 @@ class TestEquityQuality(unittest.TestCase):
         self.bad = dict(self.good, total_asset=10200)
 
     def write(self):
-        with patch.object(config, 'SETTLEMENT_ASSET_RECHECK_DELAY_SECONDS', 0, create=True):
+        # 本类验证的是告警开启时的复查/标记行为，显式打开开关（config.py 默认已关闭）
+        with patch.object(config, 'ENABLE_ASSET_IDENTITY_ALERT', True, create=True), \
+                patch.object(config, 'SETTLEMENT_ASSET_RECHECK_DELAY_SECONDS', 0, create=True):
             self.assertTrue(settlement_db.write_equity_snapshot(
                 self.pm, 'open', snapshot_date='2026-10-19', db_path=self.path))
         with closing(sqlite3.connect(self.path)) as conn, conn:

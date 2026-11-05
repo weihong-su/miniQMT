@@ -301,8 +301,11 @@ def write_equity_snapshot(position_manager, snapshot_type,
     observed_at = recorded_at
     diff = None if None in (total_asset, market_value, cash) else (
         total_asset - cash - (frozen_cash or 0.0) - market_value)
+    # 告警关闭时不做额外复查：复查只为给告警补充证据，纯属额外柜台查询 + 0.2 秒等待。
+    # 差额本身照常计算并落库，identity_diff / validation_status 语义不变。
+    identity_alert = _cfg('ENABLE_ASSET_IDENTITY_ALERT', True)
     observations = []
-    for _ in range(_cfg('SETTLEMENT_ASSET_RECHECK_COUNT', 1)):
+    for _ in range(_cfg('SETTLEMENT_ASSET_RECHECK_COUNT', 1) if identity_alert else 0):
         if diff is None or abs(diff) <= identity_tolerance:
             break
         observations.append(dict(total_asset=total_asset, market_value=market_value,
@@ -338,7 +341,8 @@ def write_equity_snapshot(position_manager, snapshot_type,
     # 实测差额在 ±15 ~ ±1310 间随机变号，且收盘后（价格静止）几乎归零、
     # 09:25 集合竞价时刻最大——说明它主要来自 QMT 内部 total_asset 与
     # market_value 的估值时点偏斜，不是账务错误。所以这里只告警不拒绝落库。
-    if None not in (total_asset, market_value, cash):
+    # ENABLE_ASSET_IDENTITY_ALERT=False 时连告警一起关闭（差额仍落 identity_diff）。
+    if identity_alert and None not in (total_asset, market_value, cash):
         expected = cash + (frozen_cash or 0.0) + market_value
         diff = total_asset - expected
         if abs(diff) > identity_tolerance:

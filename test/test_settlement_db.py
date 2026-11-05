@@ -206,12 +206,25 @@ class TestEquitySnapshot(SettlementDBTestBase):
     def test_identity_mismatch_logs_event(self):
         """差额说明账户里有非股票资产项，归因时必须排除。"""
         pm = FakePositionManager(account_info=self._info(150000, 60000, 40000, 0))
-        sdb.write_equity_snapshot(pm, sdb.SNAPSHOT_OPEN,
-                                  snapshot_date='2026-09-14', db_path=self.db)
+        with patch.object(sdb.config, 'ENABLE_ASSET_IDENTITY_ALERT', True, create=True):
+            sdb.write_equity_snapshot(pm, sdb.SNAPSHOT_OPEN,
+                                      snapshot_date='2026-09-14', db_path=self.db)
         events = self.query("SELECT * FROM run_events WHERE event_type=?",
                             ('asset_identity_mismatch',))
         self.assertEqual(len(events), 1)
         self.assertIn('50000', events[0]['detail'])
+
+    def test_identity_alert_disabled_logs_nothing_but_keeps_diff(self):
+        """开关关闭时只落 identity_diff，不写 WARNING 级事件、不做额外复查。"""
+        pm = FakePositionManager(account_info=self._info(150000, 60000, 40000, 0))
+        with patch.object(sdb.config, 'ENABLE_ASSET_IDENTITY_ALERT', False, create=True):
+            self.assertTrue(sdb.write_equity_snapshot(
+                pm, sdb.SNAPSHOT_OPEN, snapshot_date='2026-09-14', db_path=self.db))
+        self.assertEqual(self.query("SELECT * FROM run_events WHERE event_type=?",
+                                    ('asset_identity_mismatch',)), [])
+        row = self.query("SELECT * FROM account_equity_daily")[0]
+        self.assertEqual(row['identity_diff'], 50000)
+        self.assertEqual(row['validation_status'], 'pending_review')
 
     def test_frozen_cash_counted_in_identity(self):
         pm = FakePositionManager(account_info=self._info(100000, 60000, 35000, 5000))
