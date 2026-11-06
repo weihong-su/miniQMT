@@ -234,6 +234,38 @@ class TestValuationSnapshot(unittest.TestCase):
             self.assertEqual(self.pm.get_account_valuation(self.raw)['status'], 'unavailable')
 
 
+class TestQuoteSnapshotCache(unittest.TestCase):
+    """行情快照缓存必须由 DataManager.__init__ 创建。
+
+    资产估值只读缓存、不再查行情；缓存缺失时 get_cached_quotes() 恒为空，
+    asset_valuation 对有持仓账户永远返回 unavailable。此前测试把
+    get_cached_quotes 整体 Mock 掉，正好绕过了这条真实构造路径。
+    """
+
+    def setUp(self):
+        from data_manager import DataManager
+        self.dm = DataManager.__new__(DataManager)
+        with patch.object(DataManager, '_connect_db',
+                          side_effect=lambda: sqlite3.connect(':memory:')), \
+                patch.object(DataManager, '_create_tables'), \
+                patch.object(DataManager, '_init_xtquant'):
+            DataManager.__init__(self.dm)
+        self.addCleanup(self.dm.conn.close)
+
+    def test_init_creates_empty_cache(self):
+        self.assertEqual(self.dm.get_cached_quotes(), {})
+
+    def test_realtime_quote_is_cached(self):
+        self.dm._decorate_quote({'lastPrice': 13.22, 'time': 1793943070000},
+                                'xtdata', 'realtime', '603466.SH')
+        cached = self.dm.get_cached_quotes()
+        self.assertEqual(cached['603466']['lastPrice'], 13.22)
+
+    def test_non_realtime_quote_is_not_cached(self):
+        self.dm._decorate_quote({'lastPrice': 13.22}, 'mootdx', 'history', '603466.SH')
+        self.assertEqual(self.dm.get_cached_quotes(), {})
+
+
 class TestGridOrderMigration(unittest.TestCase):
     def setUp(self):
         import tempfile

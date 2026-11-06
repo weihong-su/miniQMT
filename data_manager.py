@@ -292,6 +292,12 @@ class DataManager:
         # 行情源健康评分（仅内存，不持久化）
         self.market_health = MarketDataHealthTracker()
 
+        # 已采集行情快照（估值接口只读此处，不在请求路径上再查行情）。
+        # 必须在 __init__ 创建：_decorate_quote / get_cached_quotes 用 getattr 读取，
+        # 缺省 None 会让缓存永远为空，asset_valuation 只能对有持仓账户返回 unavailable。
+        self._quote_snapshot_lock = threading.Lock()
+        self._quote_snapshots = {}
+
         # 历史数据更新节流与告警降噪状态
         self._history_update_attempts = {}
         self._history_invalid_date_warnings = {}
