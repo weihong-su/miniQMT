@@ -314,7 +314,8 @@
       "modules": [
         "test.test_qmt_ipc_trader",
         "test.test_qmt_ipc_executor",
-        "test.test_qmt_ipc_position_manager_integration"
+        "test.test_qmt_ipc_position_manager_integration",
+        "test.test_ipc_full_chain"
       ],
       "priority": "high"
     },

@@ -316,12 +316,14 @@ def schedule_database_maintenance(stop_event=None) -> None:
         return
 
     last_run_date = None
+    last_artifact_attempt_date = None
     interval = getattr(config, "DB_MAINTENANCE_CHECK_INTERVAL", 600)
     target_time = datetime.strptime(config.DB_MAINTENANCE_TIME, "%H:%M:%S").time()
 
     while stop_event is None or not stop_event.is_set():
         now = datetime.now()
-        should_run = now.time() >= target_time and last_run_date != now.date()
+        should_run = now.time() >= target_time and (
+            last_run_date != now.date() or last_artifact_attempt_date != now.date())
         if (
             should_run
             and (
@@ -329,19 +331,32 @@ def schedule_database_maintenance(stop_event=None) -> None:
                 or not config.is_market_hours()
             )
         ):
-            try:
-                rotate_xqm_log()
-                run_database_maintenance(now)
-                from runtime_retention import cleanup_runtime_artifacts
-                artifacts = cleanup_runtime_artifacts(Path(__file__).resolve().parent, apply=True, now=now)
-                failures = [item for item in artifacts if item.get("error")]
-                if failures:
-                    raise RuntimeError("部分运行产物清理失败: %s" % failures)
-                logger.info("运行产物维护完成: 清理 %s 项, 目标大小 %s 字节",
-                            len(artifacts), sum(item["bytes"] for item in artifacts))
-                last_run_date = now.date()
-            except Exception as exc:
-                logger.error(f"数据库维护任务失败: {exc}", exc_info=True)
+            if last_run_date != now.date():
+                try:
+                    rotate_xqm_log()
+                    run_database_maintenance(now)
+                    last_run_date = now.date()
+                except Exception as exc:
+                    logger.error(f"数据库维护任务失败: {exc}", exc_info=True)
+            if last_artifact_attempt_date != now.date():
+                # 产物失败保留原文件，下一维护日重试；数据库失败仍按原检查周期重试。
+                last_artifact_attempt_date = now.date()
+                try:
+                    from runtime_retention import cleanup_runtime_artifacts
+                    artifacts = cleanup_runtime_artifacts(Path(__file__).resolve().parent, apply=True, now=now)
+                    failures = [item for item in artifacts if item.get("error")]
+                    skipped = [item for item in artifacts if item.get("skipped")]
+                    if skipped:
+                        logger.warning("运行产物维护跳过 %s 项不支持的路径，保留原文件: %s",
+                                       len(skipped), [item["path"] for item in skipped])
+                        logger.debug("运行产物跳过原因: %s", skipped)
+                    if failures:
+                        raise RuntimeError("部分运行产物清理失败: %s" % failures)
+                    logger.info("运行产物维护完成: 清理 %s 项, 目标大小 %s 字节",
+                                sum(bool(item.get("applied")) for item in artifacts),
+                                sum(item["bytes"] for item in artifacts))
+                except Exception as exc:
+                    logger.error(f"运行产物维护任务失败，失败文件保留，下一维护日重试: {exc}", exc_info=True)
 
         if stop_event is not None:
             stop_event.wait(interval)

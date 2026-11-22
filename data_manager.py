@@ -39,6 +39,13 @@ def _create_xtdata():
             )
         )
         return XtDataAdapter(client)
+    elif getattr(config, "ENABLE_QMT_IPC_FALLBACK", False):
+        import sys
+        ipc_path = os.path.join(os.path.dirname(__file__), "qmt-trader")
+        if ipc_path not in sys.path:
+            sys.path.insert(0, ipc_path)
+        from qmt_ipc_data import QmtIpcDataAdapter
+        return QmtIpcDataAdapter()
     else:
         import xtquant.xtdata as _xtdata
         return _xtdata
@@ -536,6 +543,8 @@ class DataManager:
         return self._get_market_health().format_summary()
 
     def is_quote_tradable(self, stock_code, quote):
+        if quote and quote.get("_source") == "QMT_IPC" and quote.get("_tradable") is False:
+            return False
         if not getattr(config, "MARKET_HEALTH_ENABLED", True):
             return True
         if getattr(config, "MARKET_HEALTH_OBSERVE_ONLY", True):
@@ -2187,6 +2196,14 @@ class DataManager:
         """
         try:
             adjusted_code = self._adjust_stock(stock_code)
+            if getattr(config, "ENABLE_QMT_IPC_FALLBACK", False):
+                if self.xt is None:
+                    self.xt = _create_xtdata()
+                tick = self.xt.get_full_tick([adjusted_code]).get(adjusted_code)
+                valid = bool(tick and tick.get("lastPrice", 0) > 0)
+                self._record_market_health("QMT_IPC", "realtime", adjusted_code, valid,
+                                           reason="success" if valid else "unavailable")
+                return self._decorate_quote(tick, "QMT_IPC", "realtime", adjusted_code) if valid else None
 
             # 在交易时间内，优先使用实时数据管理器
             if config.is_trade_time():

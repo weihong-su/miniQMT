@@ -5,9 +5,9 @@
 # Python's UTF-8 source decoding. KEEP THIS FILE PURE ASCII.
 #
 # RECOMMENDED: use MODEL-TRADING mode. QMT injects `get_trade_detail_data` into
-# globals(), which the executor uses for snapshot (read path). Orders use
-# __import__("xtquant.xttrader") (write path). Timed-run is a fallback where
-# the VBA reader may be absent from globals().
+# globals(); snapshot reads use it on the QMT main thread. When unavailable,
+# snapshot reads use xttrader in a background task. Model-trading orders use
+# native passorder/cancel; standalone execution retains the xttrader fallback.
 #
 # Multi-account: scans IPC_ROOT sub-dirs for config.json; handles each.
 #
@@ -22,7 +22,7 @@
 # - order_stock should receive StockAccount when available. For market orders,
 #   use price_type=LATEST_PRICE and price=0.
 
-import os, json, time, shutil, traceback, threading
+import os, json, time, shutil, traceback, threading, math
 from datetime import datetime
 
 IPC_ROOT = os.environ.get("QMT_IPC_ROOT", r"C:\QuantIPC")
@@ -55,6 +55,8 @@ ORDER_CANCELED = 54
 ORDER_REJECTED = 57
 
 _LAST_SNAPSHOT_ATTEMPT = {}
+_LAST_QUOTES = {}
+_QUOTE_ERRORS = {}
 _CONTEXT_INFO = {"obj": None}
 _DIAG_DONE = {"ctx": False}
 _MAIN_STATE = {"last_run": 0.0, "last_log": 0.0, "ticks": 0}
@@ -210,6 +212,7 @@ def discover_accounts():
         accounts.append({"account_id": account_id, "qmt_path": qmt_path,
                           "account_type": account_type,
                           "ipc_secret": ipc_secret,
+                          "quote_interval": cfg.get("quote_interval", 2.0),
                           "dir": sub, "dirs": _account_dirs(sub)})
     if not accounts and os.path.isdir(os.path.join(IPC_ROOT, "orders")):
         accounts.append({"account_id": _DEFAULT_ACCOUNT_ID,
@@ -382,28 +385,29 @@ def _snapshot_from_xttrader(acc):
 
 
 def write_snapshot(acc):
-    """Write account snapshot. Prefer xttrader; use VBA as fallback."""
     account_id = acc["account_id"]
-    snap = _snapshot_from_xttrader(acc)
-    if snap is not None:
-        _atomic_write_json(os.path.join(acc["dirs"]["status"], "account.json"), snap)
-        return True
-
     gtdd = _get_vba_reader()
     if not callable(gtdd):
-        log("[%s] snapshot skipped: VBA reader not found" % account_id)
+        snap = _snapshot_from_xttrader(acc)
+        if snap is None:
+            return False
+        _atomic_write_json(os.path.join(acc["dirs"]["status"], "account.json"), snap)
+        return True
+    if threading.current_thread() is not threading.main_thread():
+        log("[%s] snapshot skipped: native account API requires QMT main thread" % account_id)
         return False
 
     account, positions = None, None
-
-    # Account cash
-    for args in [(account_id, "STOCK", "ACCOUNT"),
-                 (account_id, "stock", "account"),
-                 (account_id, "ACCOUNT")]:
+    account_type = acc.get("account_type", "STOCK")
+    for args in [(account_id, account_type.upper(), "ACCOUNT"),
+                 (account_id, account_type.lower(), "account")]:
         try:
             data = gtdd(*args)
             if data:
                 o = data[0]
+                returned_account = str(getattr(o, "m_strAccountID", account_id))
+                if returned_account != str(account_id):
+                    raise ValueError("account query returned another account")
                 account = {
                     "total_asset": float(getattr(o, "m_dTotalAsset",
                                           getattr(o, "m_dBalance", 0))),
@@ -413,58 +417,76 @@ def write_snapshot(acc):
                     "pnl": 0.0,
                 }
                 break
-        except Exception:
-            continue
-
-    # Positions
-    for args in [(account_id, "STOCK", "POSITION"), (account_id, "POSITION")]:
-        try:
-            pos_data = gtdd(*args)
-            positions = []
-            if pos_data:
-                total_mv = 0.0
-                for p in pos_data:
-                    stk = getattr(p, "m_strInstrumentID", "")
-                    vol = int(getattr(p, "m_nVolume", 0))
-                    av = int(getattr(p, "m_nCanUseVolume", vol))
-                    cost = float(getattr(p, "m_dOpenPrice", 0))
-                    mp = float(getattr(p, "m_dLastPrice", 0))
-                    mv = float(getattr(p, "m_dMarketValue", mp * vol))
-                    row = _make_position(stk, vol, av, cost, mp, mv)
-                    if row is None:
-                        continue
-                    total_mv += row["market_value"]
-                    positions.append(row)
-                if account and account.get("market_value", 0) == 0:
-                    account["market_value"] = total_mv
-            break
-        except Exception:
-            continue
-
+        except Exception as e:
+            log("[%s] snapshot VBA ACCOUNT failed args=%s: %s" % (
+                account_id, args, str(e)[:120]))
     if account is None:
         log("[%s] snapshot failed: VBA returned no account data" % account_id)
         return False
 
+    for args in [(account_id, account_type.upper(), "POSITION"),
+                 (account_id, account_type.lower(), "position")]:
+        try:
+            pos_data = gtdd(*args)
+            if pos_data is None:
+                raise ValueError("position query returned None")
+            candidate, total_mv = [], 0.0
+            for p in pos_data:
+                returned_account = str(getattr(p, "m_strAccountID", account_id))
+                if returned_account != str(account_id):
+                    raise ValueError("position query returned another account")
+                stk = getattr(p, "m_strInstrumentID", "")
+                vol = int(getattr(p, "m_nVolume", 0))
+                if vol <= 0:
+                    continue
+                av = int(getattr(p, "m_nCanUseVolume"))
+                if not stk or av < 0 or av > vol:
+                    raise ValueError("position quantities are invalid")
+                cost = float(getattr(p, "m_dOpenPrice", 0))
+                mp = float(getattr(p, "m_dLastPrice", 0))
+                mv = float(getattr(p, "m_dMarketValue", mp * vol))
+                row = _make_position(stk, vol, av, cost, mp, mv)
+                row["name"] = str(getattr(p, "m_strInstrumentName", "") or "")
+                name_reader = getattr(_CONTEXT_INFO.get("obj"), "get_stock_name", None)
+                if not row["name"] and callable(name_reader):
+                    try:
+                        row["name"] = str(name_reader(_canonical_stock(stk)) or "")
+                    except Exception:
+                        pass
+                total_mv += row["market_value"]
+                candidate.append(row)
+            positions = candidate
+            account["market_value"] = total_mv
+            break
+        except Exception as e:
+            log("[%s] snapshot VBA POSITION failed args=%s: %s" % (
+                account_id, args, str(e)[:120]))
+    if positions is None:
+        log("[%s] snapshot failed: VBA positions unavailable, previous snapshot retained" % account_id)
+        return False
+
+    total_asset = account["total_asset"]
+    if total_asset <= 0:
+        total_asset = account["available"] + account["frozen"] + account["market_value"]
     snap = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "account_id": account_id,
         "source": "vba",
-        "total_asset": max(account.get("total_asset", 0),
-                           account.get("available", 0) + account.get("market_value", 0)),
-        "available": account.get("available", 0),
-        "market_value": account.get("market_value", 0),
-        "frozen": account.get("frozen", 0),
-        "positions": positions or [],
-        "today_pnl": account.get("pnl", 0),
+        "total_asset": total_asset,
+        "available": account["available"],
+        "market_value": account["market_value"],
+        "frozen": account["frozen"],
+        "positions": positions,
+        "today_pnl": account["pnl"],
     }
     _atomic_write_json(os.path.join(acc["dirs"]["status"], "account.json"), snap)
     log("[%s] snapshot VBA: total=%.0f positions=%d" % (
-        account_id, snap["total_asset"], len(positions or [])))
+        account_id, snap["total_asset"], len(positions)))
     return True
 
 
 def write_done(dirs, processing_path, order, status, msg,
-               filled_price=0, filled_vol=0):
+               filled_price=0, filled_vol=0, keep_processing=False, **metadata):
     result = {
         "version": "1.0",
         "order_id": order["order_id"],
@@ -473,6 +495,8 @@ def write_done(dirs, processing_path, order, status, msg,
         "status": status,
         "action": order.get("action", ""),
         "stock_code": order.get("stock_code", ""),
+        "price": order.get("price", 0),
+        "qmt_price_type": order.get("qmt_price_type", FIX_PRICE),
         "filled_price": filled_price,
         "filled_volume": filled_vol,
         "total_volume": order["volume"],
@@ -480,11 +504,13 @@ def write_done(dirs, processing_path, order, status, msg,
         "remark": order.get("remark", ""),
         "error": msg if status in ("rejected", "error", "cancelled_by_user") else None,
     }
+    result.update(metadata)
     _atomic_write_json(os.path.join(dirs["done"], os.path.basename(processing_path)), result)
-    try:
-        os.remove(processing_path)
-    except Exception:
-        pass
+    if not keep_processing:
+        try:
+            os.remove(processing_path)
+        except Exception:
+            pass
 
 
 def _order_secret_valid(acc, order):
@@ -615,6 +641,252 @@ def _query_xt_order_result(trader, account_obj, account_id, seq, terminal_only=F
     return None, "order not found"
 
 
+def _canonical_stock(stock, exchange=""):
+    code = str(stock or "").strip().upper()
+    if "." in code or not code:
+        return code
+    market = str(exchange or "").upper()
+    if market not in ("SH", "SZ", "BJ"):
+        market = "BJ" if code.startswith(("920", "8", "4")) else (
+            "SH" if code.startswith(("6", "5", "9")) else "SZ")
+    return "%s.%s" % (code, market)
+
+
+def _json_value(value):
+    if isinstance(value, dict):
+        return {str(k): _json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(v) for v in value]
+    if hasattr(value, "tolist"):
+        return _json_value(value.tolist())
+    return value
+
+
+def write_quotes(acc):
+    ctx = _CONTEXT_INFO.get("obj")
+    getter = getattr(ctx, "get_full_tick", None)
+    if not callable(getter) or threading.current_thread() is not threading.main_thread():
+        return False
+    account_id = acc["account_id"]
+    now = time.time()
+    interval = float(acc.get("quote_interval", 2.0))
+    if now - _LAST_QUOTES.get(account_id, 0) < interval:
+        return False
+    _LAST_QUOTES[account_id] = now
+    try:
+        cfg = _load_json(os.path.join(acc["dir"], "config.json")) or {}
+        subscriptions = _load_json(os.path.join(acc["dirs"]["status"], "subscriptions.json")) or {}
+        snapshot = _load_json(os.path.join(acc["dirs"]["status"], "account.json")) or {}
+        stocks = list(cfg.get("stocks", [])) + list(subscriptions.get("stocks", []))
+        stocks += [p.get("stock") for p in snapshot.get("positions", [])]
+        stocks = sorted({_canonical_stock(code) for code in stocks if code})
+        if not stocks:
+            return False
+        ticks = getter(stocks) or {}
+        quotes, instruments = {}, {}
+        detail_reader = getattr(ctx, "get_instrumentdetail", None)
+        if not callable(detail_reader):
+            detail_reader = getattr(ctx, "get_instrument_detail", None)
+        for code in stocks:
+            tick = ticks.get(code) or ticks.get(code.split(".")[0])
+            if isinstance(tick, dict):
+                quotes[code] = _json_value(tick)
+            if callable(detail_reader):
+                try:
+                    detail = detail_reader(code) or {}
+                    if isinstance(detail, dict):
+                        instruments[code] = {key: _json_value(detail[key]) for key in
+                            ("UpStopPrice", "DownStopPrice", "InstrumentName", "PreClose")
+                            if key in detail}
+                except Exception:
+                    pass
+        _atomic_write_json(os.path.join(acc["dirs"]["status"], "quotes.json"), {
+            "timestamp": datetime.now().isoformat(), "account_id": account_id,
+            "source": "qmt", "quotes": quotes, "instruments": instruments})
+        return True
+    except Exception as e:
+        if now - _QUOTE_ERRORS.get(account_id, 0) >= MAIN_LOG_INTERVAL_SEC:
+            _QUOTE_ERRORS[account_id] = now
+            log("[%s] quote export failed: %s" % (account_id, str(e)[:120]))
+        return False
+
+
+def _native_details(acc, kind):
+    reader = _get_vba_reader()
+    if not callable(reader) or threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("native query requires QMT main thread")
+    rows = reader(acc["account_id"], acc.get("account_type", "STOCK"), kind)
+    if rows is None:
+        raise RuntimeError("native %s query returned None" % kind)
+    return rows
+
+
+def _native_order_matches(row, acc, order):
+    state = order["native"]
+    marker = str(_first_attr(row, ["m_strRemark", "user_order_id"], ""))
+    sysid = str(_first_attr(row, ["m_strOrderSysID", "order_sys_id"], "") or "")
+    if marker != state["marker"] and not (state.get("broker_sysid") and sysid == state["broker_sysid"]):
+        return False
+    if str(_first_attr(row, ["m_strAccountID"], acc["account_id"])) != str(acc["account_id"]):
+        return False
+    stock = _canonical_stock(_first_attr(row, ["m_strInstrumentID"], ""),
+                             _first_attr(row, ["m_strExchangeID"], ""))
+    side = _as_int(_first_attr(row, ["m_nOffsetFlag"], -1), -1)
+    expected_side = 48 if order["action"] == "buy" else 49
+    volume = _as_int(_first_attr(row, ["m_nVolumeTotalOriginal"], 0))
+    return stock == _canonical_stock(order["stock_code"]) and side == expected_side and volume == int(order["volume"])
+
+
+def _native_fill_rows(rows, acc, order, sysid):
+    result = {}
+    expected_side = 48 if order["action"] == "buy" else 49
+    trade_date = order["timestamp"][:10].replace("-", "")
+    for row in rows:
+        if str(_first_attr(row, ["m_strOrderSysID"], "")) != sysid:
+            continue
+        if str(_first_attr(row, ["m_strAccountID"], acc["account_id"])) != str(acc["account_id"]):
+            continue
+        stock = _canonical_stock(_first_attr(row, ["m_strInstrumentID"], ""),
+                                 _first_attr(row, ["m_strExchangeID"], ""))
+        if stock != _canonical_stock(order["stock_code"]):
+            continue
+        if _as_int(_first_attr(row, ["m_nOffsetFlag"], -1), -1) != expected_side:
+            continue
+        day = str(_first_attr(row, ["m_strTradeDate"], trade_date)).replace("-", "")
+        if day != trade_date:
+            continue
+        trade_id = str(_first_attr(row, ["m_strTradeID"], "") or "")
+        volume = _as_int(_first_attr(row, ["m_nVolume"], 0))
+        price = _as_float(_first_attr(row, ["m_dPrice", "m_dTradePrice"], 0))
+        amount = _as_float(_first_attr(row, ["m_dTradeAmount"], volume * price))
+        if not trade_id or volume <= 0 or not math.isfinite(price) or price <= 0 or not math.isfinite(amount) or amount <= 0:
+            continue
+        stamp = str(_first_attr(row, ["m_strTradeTime"], ""))
+        traded_time = None
+        candidates = [stamp, day + " " + stamp]
+        for text in candidates:
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
+                        "%Y%m%d %H:%M:%S.%f", "%Y%m%d %H:%M:%S", "%Y%m%d %H%M%S"):
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    if parsed.strftime("%Y%m%d") == trade_date:
+                        traded_time = int(parsed.timestamp())
+                        break
+                except ValueError:
+                    pass
+            if traded_time is not None:
+                break
+        if traded_time is None:
+            continue
+        result[trade_id] = {"trade_id": trade_id, "volume": volume, "price": price,
+                            "amount": amount, "time": traded_time}
+    return sorted(result.values(), key=lambda item: (item["time"], item["trade_id"]))
+
+
+def _submit_native_order(acc, processing_path, order):
+    if threading.current_thread() is not threading.main_thread() or _CONTEXT_INFO.get("obj") is None:
+        raise RuntimeError("native submit requires initialized QMT main thread")
+    if order.get("action") not in ("buy", "sell") or int(order.get("volume", 0)) <= 0:
+        raise ValueError("invalid native order side or volume")
+    if not _native_details(acc, "ACCOUNT"):
+        raise RuntimeError("native account unavailable")
+    if not callable(_lookup_qmt_symbol("cancel")):
+        raise RuntimeError("native cancel unavailable")
+    if order.get("native"):
+        return
+    price_type = int(order.get("qmt_price_type") or (LATEST_PRICE if order.get("price_type") == "market" else FIX_PRICE))
+    price = float(order.get("price") or 0)
+    if price_type == FIX_PRICE and (not math.isfinite(price) or price <= 0):
+        raise ValueError("invalid fixed order price")
+    order["native"] = {"phase": "submitting", "marker": "ipc:%s" % order["order_id"],
+                       "submitted_at": time.time()}
+    _atomic_write_json(processing_path, order)
+    try:
+        result = _lookup_qmt_symbol("passorder")(
+            STOCK_BUY if order["action"] == "buy" else STOCK_SELL, 1101,
+            acc["account_id"], _canonical_stock(order["stock_code"]), price_type,
+            price, int(order["volume"]), order.get("strategy", ""), 2,
+            order["native"]["marker"], _CONTEXT_INFO["obj"])
+        if isinstance(result, (int, float)) and result < 0:
+            write_done(acc["dirs"], processing_path, order, "rejected", "passorder returned %s" % result)
+            return
+        order["native"]["phase"] = "submitted"
+    except Exception as e:
+        order["native"]["phase"] = "unknown"
+        log("[%s] native submission outcome unknown oid=%s: %s" % (
+            acc["account_id"], order["order_id"], str(e)[:120]))
+    _atomic_write_json(processing_path, order)
+    log("[%s] native order retained oid=%s phase=%s" % (
+        acc["account_id"], order["order_id"], order["native"]["phase"]))
+
+
+def _poll_native_orders(acc):
+    records = []
+    for name in os.listdir(acc["dirs"]["processing"]):
+        if name.endswith(".json"):
+            path = os.path.join(acc["dirs"]["processing"], name)
+            order = _load_json(path)
+            if order and order.get("native"):
+                records.append((path, order))
+    if not records:
+        return
+    try:
+        orders = _native_details(acc, "ORDER")
+        deals = _native_details(acc, "DEAL")
+    except Exception as e:
+        log("[%s] native order query unavailable: %s" % (acc["account_id"], str(e)[:120]))
+        return
+    for path, order in records:
+        try:
+            matches = [row for row in orders if _native_order_matches(row, acc, order)]
+            unique = {str(_first_attr(row, ["m_strOrderSysID"], "") or "") for row in matches}
+            if len(unique) != 1 or "" in unique:
+                continue
+            sysid = next(iter(unique))
+            state = order["native"]
+            state["broker_sysid"] = sysid
+            raw_status = _as_int(_first_attr(matches[-1], ["m_nOrderStatus"], 0))
+            fills = _native_fill_rows(deals, acc, order, sysid)
+            volume = sum(item["volume"] for item in fills)
+            reported_volume = _as_int(_first_attr(matches[-1], ["m_nVolumeTraded"], 0))
+            incomplete_fills = (volume < reported_volume or
+                                (raw_status == ORDER_ALL_TRADED and volume < int(order["volume"])))
+            amount = sum(item["amount"] for item in fills)
+            if volume > int(order["volume"]):
+                raise ValueError("native fills exceed requested volume")
+            status = "partial" if volume else "pending"
+            if volume == int(order["volume"]):
+                status = "filled"
+            elif raw_status in (ORDER_CANCELED, ORDER_PART_TRADED_CANCELED, ORDER_REJECTED):
+                status = "partial_cancelled" if volume else (
+                    "rejected" if raw_status == ORDER_REJECTED else "cancelled")
+            terminal = status in ("filled", "partial_cancelled", "cancelled", "rejected")
+            cancel_path = os.path.join(acc["dirs"]["cancel"], "cancel_%s.json" % order["order_id"])
+            expired = time.time() - state["submitted_at"] >= float(order.get("timeout_sec", 30))
+            if not terminal and (expired or os.path.exists(cancel_path)) and not state.get("cancel_sent"):
+                if time.time() - state.get("cancel_attempted_at", 0) >= MAIN_LOG_INTERVAL_SEC:
+                    state["cancel_attempted_at"] = time.time()
+                    _atomic_write_json(path, order)
+                    cancel = _lookup_qmt_symbol("cancel")
+                    if not callable(cancel):
+                        raise RuntimeError("native cancel unavailable")
+                    state["cancel_sent"] = bool(cancel(sysid, acc["account_id"],
+                                                       acc.get("account_type", "STOCK"), _CONTEXT_INFO["obj"]))
+            state["phase"] = "accepted"
+            _atomic_write_json(path, order)
+            if incomplete_fills:
+                continue
+            write_done(acc["dirs"], path, order, status,
+                       "native broker report", amount / volume if volume else 0, volume,
+                       keep_processing=not terminal, entrust_id=sysid, deals=fills,
+                       filled_amount=amount, qmt_price_type=order.get("qmt_price_type", FIX_PRICE))
+            if terminal and os.path.exists(cancel_path):
+                os.remove(cancel_path)
+        except Exception as e:
+            log("[%s] native order poll failed oid=%s: %s" % (
+                acc["account_id"], order.get("order_id"), str(e)[:120]))
+
+
 def process_one_order(acc, filepath):
     dirs, account_id = acc["dirs"], acc["account_id"]
     filename = os.path.basename(filepath)
@@ -643,6 +915,9 @@ def process_one_order(acc, filepath):
         if os.path.exists(cancel_path):
             write_done(dirs, processing_path, order, "cancelled", "user cancel")
             os.remove(cancel_path); return
+        if callable(_get_vba_reader()) and callable(_lookup_qmt_symbol("passorder")):
+            _submit_native_order(acc, processing_path, order)
+            return
         trader = _try_connect_xttrader(acc["qmt_path"])
         if trader is None:
             write_done(dirs, processing_path, order, "rejected", "xttrader connect timeout/error")
@@ -719,7 +994,7 @@ def process_one_order(acc, filepath):
                    filled_price=result["price"], filled_vol=result["vol"])
     except Exception as e:
         log("[%s] error: %s\n%s" % (account_id, e, traceback.format_exc()))
-        if order:
+        if order and not order.get("native"):
             write_done(dirs, processing_path, order, "error", str(e))
     finally:
         try:
@@ -740,6 +1015,8 @@ def recover_leftovers(acc):
         try:
             if now - os.path.getmtime(fp) < PROCESSING_STALE_SEC: continue
             order = _load_json(fp) or {}
+            if order.get("native"):
+                continue
         except OSError: continue
         order.setdefault("order_id", os.path.splitext(fn)[0].replace("ord_", ""))
         order.setdefault("volume", 0)
@@ -795,6 +1072,12 @@ def _snapshot_worker(acc):
 
 
 def _start_snapshot_task(acc):
+    if callable(_get_vba_reader()):
+        if threading.current_thread() is not threading.main_thread():
+            log("[%s] snapshot deferred: waiting for QMT main thread" % acc["account_id"])
+            return False
+        _snapshot_worker(acc)
+        return True
     account_id = acc["account_id"]
     now = time.time()
     with _SNAPSHOT_LOCK:
@@ -870,6 +1153,9 @@ def handle_account(acc):
     _ensure_heartbeat_thread(acc)
     _write_heartbeat(acc)
     recover_leftovers(acc)
+    if callable(_get_vba_reader()) and _CONTEXT_INFO.get("obj") is not None:
+        _poll_native_orders(acc)
+        write_quotes(acc)
     pending_dir = dirs["pending"]
     pending = sorted([f for f in os.listdir(pending_dir)
                       if f.endswith(".json") and not f.startswith(".")])
@@ -964,6 +1250,8 @@ def main():
         return
     try:
         now = time.time()
+        if _in_qmt_runtime() and _CONTEXT_INFO.get("obj") is None:
+            return
         if now - _MAIN_STATE["last_run"] < MAIN_INTERVAL_SEC:
             return
         _MAIN_STATE["last_run"] = now

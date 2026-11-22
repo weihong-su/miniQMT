@@ -325,7 +325,7 @@ class PositionManager:
 
                 if success:
                     with self._reconnect_lock:
-                        self.qmt_connected = not getattr(self, '_asset_monitor_abnormal', False)
+                        self.qmt_connected = True
                     # 重新注册成交回报回调
                     try:
                         self.qmt_trader.register_trade_callback(self._on_trade_callback)
@@ -349,8 +349,7 @@ class PositionManager:
                     # 不置零则 get_all_positions() 最长 QMT_POSITION_QUERY_INTERVAL(10秒) 内
                     # 继续返回断连前的缓存快照，止盈止损会基于错误持仓判断。
                     self.last_position_update_time = 0
-                    recovery_status = '恢复正常运行' if self.qmt_connected else '等待总资产核对恢复'
-                    logger.info(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}成功，{recovery_status}')
+                    logger.info(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}成功，恢复正常运行')
                 else:
                     self.qmt_connected = False
                     logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}失败')
@@ -420,14 +419,14 @@ class PositionManager:
         不能用「持仓查询返回空」当依据——position() 在断连时同样返回空 DataFrame，
         与「真的没有持仓」无法区分，据此自恢复会造成假健康。
 
-        重连进行中或总资产核对仍异常时返回 False，避免查询有返回就误判恢复。
+        重连进行中返回 False；资产估值告警不参与连接健康判断。
         """
         if config.ENABLE_SIMULATION_MODE:
             return False
         if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
             return False
         with self._reconnect_lock:
-            if self._reconnect_in_progress or getattr(self, '_asset_monitor_abnormal', False):
+            if self._reconnect_in_progress:
                 return False
         trader = self.qmt_trader
         if trader is None or not hasattr(trader, 'ping_xttrader'):
@@ -629,9 +628,12 @@ class PositionManager:
                         # 获取当前价格
                         current_price = cost_price  # 默认使用成本价
                         try:
-                            latest_quote = self.data_manager.get_latest_data(stock_code)
-                            if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
-                                current_price = float(latest_quote['lastPrice'])
+                            if config.ENABLE_QMT_IPC_FALLBACK:
+                                current_price = float(row.get('市价') or cost_price)
+                            else:
+                                latest_quote = self.data_manager.get_latest_data(stock_code)
+                                if latest_quote and isinstance(latest_quote, dict) and 'lastPrice' in latest_quote and latest_quote['lastPrice'] is not None:
+                                    current_price = float(latest_quote['lastPrice'])
                         except Exception as e:
                             logger.warning(f"{stock_code[:6]} 价格失败→成本价")
 
@@ -1397,10 +1399,17 @@ class PositionManager:
                     self.last_position_update_time = current_time
                     logger.debug(f"更新持仓缓存，共 {len(self.positions_cache)} 条记录")
                 except Exception as e:
-                    logger.error(f"获取和处理持仓数据时出错: {str(e)}")
-                    # 如果出错，返回上次的缓存，或者空DataFrame
-                    if self.positions_cache is None:
-                        self.positions_cache = pd.DataFrame()
+                    if (config.ENABLE_QMT_IPC_FALLBACK and
+                            getattr(self.qmt_trader, 'position_snapshot_valid', None) is False):
+                        log_throttled(logger, logging.WARNING, 'ipc_position_unavailable',
+                                      f'[IPC] 持仓快照不可用，保留最后有效持仓: {e}')
+                        if self.positions_cache is None:
+                            with self.memory_conn_lock:
+                                self.positions_cache = pd.read_sql_query("SELECT * FROM positions", self.memory_conn)
+                    else:
+                        logger.error(f"获取和处理持仓数据时出错: {str(e)}")
+                        if self.positions_cache is None:
+                            self.positions_cache = pd.DataFrame()
 
             # 返回缓存数据的副本
             return self.positions_cache.copy() if self.positions_cache is not None else pd.DataFrame()
@@ -1695,8 +1704,9 @@ class PositionManager:
             reliable = valid and position_quantities(source) == position_quantities(position)
             reliable = reliable and position_quantities(source) is not None
             proof_position = dict(position, account_id=source.get('资金账号') if source else None)
+            source_asof = source.get('快照时间') if source and config.ENABLE_QMT_IPC_FALLBACK else asof
             info = classify_position_restriction(proof_position, trades=trades, orders=orders,
-                                                  position_asof=asof if reliable else None, fresh=reliable)
+                                                  position_asof=source_asof if reliable else None, fresh=reliable)
             metadata[code] = dict(info, quantities=position_quantities(position))
         with self.memory_conn_lock:
             self._position_restrictions = metadata
@@ -1716,8 +1726,9 @@ class PositionManager:
         if asof and info.get('quantities') == position_quantities(position):
             timestamp = datetime.fromisoformat(asof)
             age = (datetime.now() - timestamp).total_seconds()
-            fresh = (timestamp.date() == datetime.now().date()
-                     and 0 <= age <= config.QMT_POSITION_QUERY_INTERVAL + config.MONITOR_CALL_TIMEOUT)
+            max_age = (config.QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS if config.ENABLE_QMT_IPC_FALLBACK
+                       else config.QMT_POSITION_QUERY_INTERVAL + config.MONITOR_CALL_TIMEOUT)
+            fresh = (timestamp.date() == datetime.now().date() and 0 <= age <= max_age)
         if not fresh:
             return classify_position_restriction(position, position_asof=asof, fresh=False)
         return {key: value for key, value in info.items() if key != 'quantities'}
@@ -2169,8 +2180,9 @@ class PositionManager:
                         continue
                     timestamp = datetime.fromisoformat(info['position_asof'])
                     age = (datetime.now() - timestamp).total_seconds()
-                    if (timestamp.date() != datetime.now().date()
-                            or not 0 <= age <= config.QMT_POSITION_QUERY_INTERVAL + config.MONITOR_CALL_TIMEOUT):
+                    max_age = (config.QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS if config.ENABLE_QMT_IPC_FALLBACK
+                               else config.QMT_POSITION_QUERY_INTERVAL + config.MONITOR_CALL_TIMEOUT)
+                    if timestamp.date() != datetime.now().date() or not 0 <= age <= max_age:
                         info.update(restriction_reason='unknown', restriction_detail='持仓数据待刷新')
                         expired = True
             if expired:
@@ -2450,22 +2462,19 @@ class PositionManager:
                         quote_market_value=None)
 
     def _monitor_total_asset_consistency(self):
-        """连续交易时段用可用现金加实时持仓市值核对柜台总资产。"""
+        """核对可用现金、冻结资金及行情持仓市值，仅告警，不改变连接状态。"""
         if (config.ENABLE_SIMULATION_MODE or config.ENABLE_XTQUANT_MANAGER
                 or config.ENABLE_QMT_IPC_FALLBACK or config.ENABLE_QMT_RPC_FALLBACK
                 or not config.is_continuous_trade_time()):
-            return True
+            return
 
         with self._reconnect_lock:
-            abnormal = getattr(self, '_asset_monitor_abnormal', False)
             now = time.monotonic()
             last_check = getattr(self, '_asset_monitor_last_check', None)
             if (self._reconnect_in_progress or
                     (last_check is not None and now - last_check <
                      config.ASSET_CONSISTENCY_CHECK_INTERVAL_SECONDS)):
-                if abnormal:
-                    self.qmt_connected = False
-                return not abnormal
+                return
             self._asset_monitor_last_check = now
 
         try:
@@ -2475,42 +2484,36 @@ class PositionManager:
                 raise ValueError(valuation.get('reason', '估值证据不可用'))
             total = float(account['total_asset'])
             cash = float(account['available'])
+            frozen = float(account['frozen_cash'])
             market_value = float(valuation['quote_market_value'])
-            if (not all(math.isfinite(value) for value in (total, cash, market_value))
-                    or total <= 0 or cash < 0 or market_value < 0):
+            if (not all(math.isfinite(value) for value in (total, cash, frozen, market_value))
+                    or total <= 0 or cash < 0 or frozen < 0 or market_value < 0):
                 raise ValueError('资产金额无效')
         except (KeyError, TypeError, ValueError) as exc:
             log_throttled(logger, logging.WARNING, 'asset_consistency_unavailable',
                           f'[ASSET_CONSISTENCY] 暂无法核对总资产: {exc}')
-            with self._reconnect_lock:
-                abnormal = getattr(self, '_asset_monitor_abnormal', False)
-                if abnormal:
-                    self.qmt_connected = False
-                return not abnormal
+            return
 
-        estimated = cash + market_value
+        estimated = cash + frozen + market_value
         deviation = abs(total - estimated) / total
         threshold = config.ASSET_CONSISTENCY_MAX_DEVIATION_RATIO
         abnormal = deviation > threshold
         with self._reconnect_lock:
             was_abnormal = getattr(self, '_asset_monitor_abnormal', False)
             self._asset_monitor_abnormal = abnormal
-            if abnormal:
-                self.qmt_connected = False
         reset_log_throttle('asset_consistency_unavailable')
         if abnormal:
             log_throttled(
-                logger, logging.ERROR, 'asset_consistency_mismatch',
-                f'[ASSET_CONSISTENCY] xttrader连接异常: 柜台总资产={total:.2f}, '
-                f'可用金额={cash:.2f}, 行情持仓市值={market_value:.2f}, '
+                logger, logging.WARNING, 'asset_consistency_mismatch',
+                f'[ASSET_CONSISTENCY] 总资产核对偏差超限: 柜台总资产={total:.2f}, '
+                f'可用金额={cash:.2f}, 冻结金额={frozen:.2f}, 行情持仓市值={market_value:.2f}, '
                 f'重算总资产={estimated:.2f}, 差额={total - estimated:.2f}, '
                 f'偏差={deviation:.2%}, 阈值={threshold:.2%}, '
-                f'行情时间={valuation.get("quote_asof")}, 已标记断连并等待恢复')
+                f'行情时间={valuation.get("quote_asof")}, 仅告警')
         else:
             reset_log_throttle('asset_consistency_mismatch')
             if was_abnormal:
                 logger.info(f'[ASSET_CONSISTENCY] 总资产核对恢复: 偏差={deviation:.2%}')
-        return not abnormal
 
     def get_account_info(self):
         """获取账户信息"""
@@ -2561,6 +2564,10 @@ class PositionManager:
             if account_df is None or not isinstance(account_df, pd.DataFrame) or account_df.empty:
                 return None
             
+            # 保留 IPC 的源时间，不能用本次读取时刻冒充快照时间。
+            account_asof = (str(account_df['快照时间'].iloc[0])
+                            if config.ENABLE_QMT_IPC_FALLBACK and '快照时间' in account_df.columns
+                            else datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             # 转换为字典格式
             account_info = {
                 'account_id': account_df['资金账户'].iloc[0] if '资金账户' in account_df.columns and not account_df['资金账户'].empty else '--',
@@ -2569,12 +2576,18 @@ class PositionManager:
                 'frozen_cash': float(account_df['冻结金额'].iloc[0]) if '冻结金额' in account_df.columns and not account_df['冻结金额'].empty else 0.0,
                 'market_value': float(account_df['持仓市值'].iloc[0]) if '持仓市值' in account_df.columns and not account_df['持仓市值'].empty else 0.0,
                 'total_asset': float(account_df['总资产'].iloc[0]) if '总资产' in account_df.columns and not account_df['总资产'].empty else 0.0,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'timestamp': account_asof
             }
             account_info['valuation'] = self.get_account_valuation(account_info)
+            if config.ENABLE_QMT_IPC_FALLBACK:
+                reset_log_throttle('ipc_account_unavailable')
             return account_info
         except Exception as e:
-            logger.error(f"获取账户信息时出错: {str(e)}")
+            if config.ENABLE_QMT_IPC_FALLBACK:
+                log_throttled(logger, logging.ERROR, 'ipc_account_unavailable',
+                              f"获取账户信息时出错: {e}")
+            else:
+                logger.error(f"获取账户信息时出错: {str(e)}")
             return None
     
     # ===== 旧的网格交易方法已废弃，请使用GridTradingManager =====
@@ -4745,6 +4758,9 @@ class PositionManager:
     def get_all_positions_with_all_fields(self):
         """获取所有持仓的所有字段（包括内存数据库中的所有字段）"""
         try:
+            # IPC 只读已校验的本地快照，盘后也要刷新可卖量和来源时间。
+            if config.ENABLE_QMT_IPC_FALLBACK and not config.ENABLE_SIMULATION_MODE:
+                self.get_all_positions()
             query = "SELECT * FROM positions"
             # P0修复: 添加锁保护防止并发访问导致 "Gaps in blk ref_locs" 错误
             with self.memory_conn_lock:
@@ -5152,10 +5168,9 @@ class PositionManager:
                 try:
                     timeout = config.MONITOR_CALL_TIMEOUT
                     positions_df = run_with_timeout(self.get_all_positions, timeout)
-                    asset_consistent = run_with_timeout(self._monitor_total_asset_consistency, timeout)
 
-                    if not config.ENABLE_SIMULATION_MODE and (not self.qmt_connected or not asset_consistent):
-                        # 断连回调或总资产核对异常均可触发保护，缓存读取成功不代表恢复。
+                    if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
+                        # 断连回调可触发保护，缓存读取成功不代表恢复。
                         # get_all_positions() 内部吞掉了 qmt_trader.position() 的异常，
                         # 返回的是旧缓存数据——不能视为真实成功，也不能将 qmt_connected 翻回 True。
                         #
@@ -5208,6 +5223,25 @@ class PositionManager:
                     time.sleep(5)
                     last_loop_time = time.time()
                     continue
+
+                if (config.ENABLE_QMT_IPC_FALLBACK and
+                        getattr(self.qmt_trader, 'position_snapshot_valid', None) is False):
+                    log_throttled(logger, logging.WARNING, 'ipc_position_unavailable',
+                                  '[IPC] 持仓来源不可用，保留缓存并等待新快照')
+                    self.check_pending_orders_timeout()
+                    time.sleep(config.MONITOR_LOOP_INTERVAL)
+                    last_loop_time = time.time()
+                    continue
+
+                # 估值任务单独处理异常，不能触发断连、重连或跳过后续交易流程。
+                try:
+                    run_with_timeout(self._monitor_total_asset_consistency, timeout)
+                except concurrent.futures.TimeoutError:
+                    log_throttled(logger, logging.WARNING, 'asset_consistency_unavailable',
+                                  f'[ASSET_CONSISTENCY] 总资产核对超时({timeout}秒)，仅告警')
+                except Exception as exc:
+                    log_throttled(logger, logging.WARNING, 'asset_consistency_unavailable',
+                                  f'[ASSET_CONSISTENCY] 总资产核对异常: {exc}，仅告警')
 
                 # 成交流水对账兜底：放在信号检测之前，补回的流水先于下一轮策略判断落地
                 self._maybe_reconcile_missing_trades(positions_df)

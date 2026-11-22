@@ -373,5 +373,81 @@ class TestDatabaseRetentionSafety(unittest.TestCase):
                 store.close()
 
 
+
+class TestArtifactCleanupIsolation(unittest.TestCase):
+    def _paths(self, root):
+        blocked = root / "logs" / "regression_blocked" / "workspace"
+        ordinary = root / "logs" / "regression_ordinary" / "workspace"
+        for path in (blocked, ordinary):
+            path.mkdir(parents=True)
+            (path / "source.py").write_text("value = 1", encoding="utf-8")
+        return blocked, ordinary
+
+    def test_rejected_candidate_is_reported_and_does_not_stop_preview(self):
+        import runtime_retention as retention
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked, ordinary = self._paths(root)
+            original = retention.tree_size
+            def size(path):
+                if path == blocked:
+                    raise ValueError("拒绝处理链接路径: node_modules")
+                return original(path)
+            with patch.object(retention, "stale_task_artifacts", return_value=[blocked, ordinary]), \
+                 patch.object(retention, "tree_size", side_effect=size):
+                result = retention.cleanup_runtime_artifacts(root, apply=False)
+            self.assertEqual(len(result), 2)
+            self.assertTrue(result[0]["skipped"])
+            self.assertIn("链接路径", result[0]["reason"])
+            self.assertNotIn("error", result[0])
+            self.assertGreater(result[1]["bytes"], 0)
+            self.assertTrue(blocked.exists() and ordinary.exists())
+
+    def test_nested_directory_link_preserves_target_and_other_cleanup_continues(self):
+        import subprocess
+        import runtime_retention as retention
+        from datetime import datetime
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            blocked, ordinary = self._paths(root)
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            sentinel = outside / "keep.txt"
+            sentinel.write_text("不要删除", encoding="utf-8")
+            link = blocked / "node_modules"
+            if os.name == "nt":
+                created = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+                                         capture_output=True)
+                self.assertEqual(created.returncode, 0, created.stderr)
+            else:
+                link.symlink_to(outside, target_is_directory=True)
+            with patch.object(retention, "stale_task_artifacts", return_value=[blocked, ordinary]), \
+                 patch.object(retention, "completed_task", return_value=datetime.now()):
+                result = retention.cleanup_runtime_artifacts(root, apply=True)
+            self.assertTrue(result[0]["skipped"])
+            self.assertTrue(result[1]["applied"])
+            self.assertTrue(blocked.exists() and link.exists())
+            self.assertFalse(ordinary.exists())
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "不要删除")
+            self.assertTrue((ordinary.parent / "retained_workspace.zip").exists())
+
+    def test_scan_io_error_is_visible_and_other_candidates_are_still_processed(self):
+        import runtime_retention as retention
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked, ordinary = self._paths(root)
+            original = retention.tree_size
+            def size(path):
+                if path == blocked:
+                    raise PermissionError("目录不可读取")
+                return original(path)
+            with patch.object(retention, "stale_task_artifacts", return_value=[blocked, ordinary]), \
+                 patch.object(retention, "tree_size", side_effect=size):
+                result = retention.cleanup_runtime_artifacts(root)
+            self.assertIn("目录不可读取", result[0]["error"])
+            self.assertNotIn("skipped", result[0])
+            self.assertGreater(result[1]["bytes"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

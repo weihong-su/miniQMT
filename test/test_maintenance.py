@@ -169,5 +169,94 @@ class TestMaintenance(unittest.TestCase):
                 conn.close()
 
 
+
+class TestMaintenanceArtifactSkips(unittest.TestCase):
+    def test_link_skip_is_warned_once_and_daily_database_work_is_not_repeated(self):
+        from unittest.mock import Mock
+        import maintenance
+        event = Mock()
+        event.is_set.side_effect = [False, False, True]
+        skipped = [{"path": "logs/old/workspace", "bytes": 0, "skipped": True,
+                    "reason": "拒绝处理链接路径: node_modules"}]
+        with patch.object(maintenance, "datetime", wraps=datetime) as clock, \
+             patch.object(config, "ENABLE_DB_MAINTENANCE", True), \
+             patch.object(config, "is_market_hours", return_value=False), \
+             patch.object(maintenance, "rotate_xqm_log"), \
+             patch.object(maintenance, "run_database_maintenance") as database, \
+             patch("runtime_retention.cleanup_runtime_artifacts", return_value=skipped) as artifacts, \
+             patch.object(maintenance, "logger") as log:
+            clock.now.return_value = datetime(2026, 11, 20, 16, 31)
+            maintenance.schedule_database_maintenance(event)
+        database.assert_called_once()
+        artifacts.assert_called_once()
+        log.error.assert_not_called()
+        log.warning.assert_called_once()
+        completed = [call for call in log.info.call_args_list if "运行产物维护完成" in str(call)]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].args[1], 0)
+
+    def test_real_cleanup_errors_are_still_reported_as_errors(self):
+        from unittest.mock import Mock
+        import maintenance
+        event = Mock()
+        event.is_set.side_effect = [False, False, True]
+        errors = [{"path": "logs/old/workspace", "bytes": 0, "error": "磁盘读取失败"}]
+        with patch.object(maintenance, "datetime", wraps=datetime) as clock, \
+             patch.object(config, "ENABLE_DB_MAINTENANCE", True), \
+             patch.object(config, "is_market_hours", return_value=False), \
+             patch.object(maintenance, "rotate_xqm_log"), \
+             patch.object(maintenance, "run_database_maintenance"), \
+             patch("runtime_retention.cleanup_runtime_artifacts", return_value=errors), \
+             patch.object(maintenance, "logger") as log:
+            clock.now.return_value = datetime(2026, 11, 20, 16, 31)
+            maintenance.schedule_database_maintenance(event)
+        log.error.assert_called_once()
+        self.assertIn("磁盘读取失败", str(log.error.call_args))
+
+    def test_artifact_failure_retries_next_day_without_repeating_database_work(self):
+        from unittest.mock import Mock
+        import maintenance
+        event = Mock()
+        event.is_set.side_effect = [False, False, False, True]
+        results = [{"path": "logs/old/workspace", "bytes": 0, "error": "拒绝访问"},
+                   {"path": "logs/linked/workspace", "bytes": 0, "skipped": True}]
+        with patch.object(maintenance, "datetime", wraps=datetime) as clock, \
+             patch.object(config, "ENABLE_DB_MAINTENANCE", True), \
+             patch.object(config, "is_market_hours", return_value=False), \
+             patch.object(maintenance, "rotate_xqm_log"), \
+             patch.object(maintenance, "run_database_maintenance") as database, \
+             patch("runtime_retention.cleanup_runtime_artifacts", return_value=results) as artifacts, \
+             patch.object(maintenance, "logger") as log:
+            clock.now.side_effect = [datetime(2026, 11, 22, 12),
+                                     datetime(2026, 11, 22, 12, 10), datetime(2026, 11, 23, 12)]
+            maintenance.schedule_database_maintenance(event)
+        self.assertEqual(database.call_count, 2)
+        self.assertEqual(artifacts.call_count, 2)
+        self.assertEqual(log.error.call_count, 2)
+        self.assertEqual(log.warning.call_count, 2)
+
+    def test_database_retry_does_not_repeat_failed_artifact_scan(self):
+        from unittest.mock import Mock
+        import maintenance
+        event = Mock()
+        event.is_set.side_effect = [False, False, True]
+        with patch.object(maintenance, "datetime", wraps=datetime) as clock, \
+             patch.object(config, "ENABLE_DB_MAINTENANCE", True), \
+             patch.object(config, "is_market_hours", return_value=False), \
+             patch.object(maintenance, "rotate_xqm_log"), \
+             patch.object(maintenance, "run_database_maintenance",
+                          side_effect=[OSError("数据库暂忙"), {}]) as database, \
+             patch("runtime_retention.cleanup_runtime_artifacts",
+                   side_effect=PermissionError("旧测试目录不可读")) as artifacts, \
+             patch.object(maintenance, "logger") as log:
+            clock.now.return_value = datetime(2026, 11, 22, 12)
+            maintenance.schedule_database_maintenance(event)
+        self.assertEqual(database.call_count, 2)
+        artifacts.assert_called_once()
+        self.assertEqual(log.error.call_count, 2)
+        self.assertIn("数据库暂忙", str(log.error.call_args_list[0]))
+        self.assertIn("旧测试目录不可读", str(log.error.call_args_list[1]))
+
+
 if __name__ == "__main__":
     unittest.main()

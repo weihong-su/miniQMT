@@ -20,8 +20,10 @@ import os
 import json
 import time
 import random
+import math
 import threading
 from datetime import datetime
+from qmt_ipc_data import IpcSnapshotUnavailable, QmtIpcDataAdapter, read_snapshot, source_timestamp
 
 try:
     import pandas as pd
@@ -63,6 +65,7 @@ _IPC_STATUS_TO_QMT = {
     'partial': 55,            # 部成
     'partial_cancelled': 53,  # 部撤
     'pending': 50,            # 已报
+    'submitted': 48,          # IPC 已提交，柜台尚未确认
     'rejected': 57,           # 废单
     'error': 57,              # 废单
     'cancelled': 54,          # 已撤
@@ -180,6 +183,8 @@ class QmtIpcTrader:
         # 因此每次下单把 order_id 自映射(id→id)写入本表，兼容 config 两种模式，避免
         # 用户忘记把 USE_SYNC_ORDER_API 改成 True 时所有委托静默失败。
         self.order_id_map = {}
+        self._cache_lock = threading.RLock()
+        self.order_id_map_lock = self._cache_lock
 
         # 回调列表
         self._trade_callbacks = []
@@ -194,6 +199,9 @@ class QmtIpcTrader:
         self._timeout_orders = {}  # order_id -> 客户端等待超时后已追撤的订单快照
 
         self._connected = False
+        self.position_snapshot_valid = False
+        self._seen_native_deals = set()
+        self._seen_deal_amounts = {}
         logger.info('操作提示: QmtIpcTrader 已创建，请确保大QMT端 QMT_trade_executor.py 已运行且心跳持续刷新')
 
     # ------------------------------------------------------------------
@@ -219,6 +227,8 @@ class QmtIpcTrader:
         existing = self._read_json(cfg_path) or {}
         existing['account_id'] = self.account
         existing['account_type'] = self.account_type
+        existing['stocks'] = [self.adjust_stock(code) for code in getattr(config, 'STOCK_POOL', [])]
+        existing['quote_interval'] = config.QMT_IPC_QUOTE_INTERVAL_SECONDS
         ipc_secret = getattr(config, 'QMT_IPC_SECRET', '') if config else ''
         if ipc_secret:
             existing['ipc_secret'] = ipc_secret
@@ -271,22 +281,26 @@ class QmtIpcTrader:
 
         长时间运行时限制表容量，避免内存无限增长（IPC 每次下单新增一条）。
         """
-        self.order_id_map[order_id] = order_id
-        if len(self.order_id_map) > 4096:
-            for k in list(self.order_id_map)[:2048]:
-                self.order_id_map.pop(k, None)
+        with self._cache_lock:
+            self.order_id_map[order_id] = order_id
+            if len(self.order_id_map) > 4096:
+                for k in list(self.order_id_map)[:2048]:
+                    self.order_id_map.pop(k, None)
 
     def _trim_seen_cache(self):
         """限制回调去重缓存容量，避免长时间运行缓慢增长。"""
-        if len(self._seen_orders) > 4096:
-            for k in list(self._seen_orders)[:2048]:
-                self._seen_orders.discard(k)
-        if len(self._seen_deals) > 4096:
-            for k in list(self._seen_deals)[:2048]:
-                self._seen_deals.pop(k, None)
-        if len(self._timeout_orders) > 4096:
-            for k in list(self._timeout_orders)[:2048]:
-                self._timeout_orders.pop(k, None)
+        with self._cache_lock:
+            if len(self._seen_orders) > 4096:
+                for k in list(self._seen_orders)[:2048]:
+                    self._seen_orders.discard(k)
+            if len(self._seen_deals) > 4096:
+                for k in list(self._seen_deals)[:2048]:
+                    self._seen_deals.pop(k, None)
+            self._seen_native_deals = {key for key in self._seen_native_deals if key[0] in self._seen_deals}
+            self._seen_deal_amounts = {key: value for key, value in self._seen_deal_amounts.items() if key in self._seen_deals}
+            if len(self._timeout_orders) > 4096:
+                for k in list(self._timeout_orders)[:2048]:
+                    self._timeout_orders.pop(k, None)
 
     def get_ipc_health(self):
         """返回 IPC 通道健康诊断快照，供控制台/日志排障（参考 xtquant_big_convert metrics）。"""
@@ -297,7 +311,15 @@ class QmtIpcTrader:
                 return 0
         hb = self._dir('status', 'heartbeat.json')
         hb_age = round(time.time() - os.path.getmtime(hb), 2) if os.path.exists(hb) else None
+        try:
+            snapshot = self._read_account_snapshot()
+            snapshot_time, snapshot_error = snapshot['timestamp'], None
+        except IpcSnapshotUnavailable as exc:
+            snapshot_time, snapshot_error = None, str(exc)
         return {
+            'snapshot_available': snapshot_error is None,
+            'snapshot_time': snapshot_time,
+            'snapshot_error': snapshot_error,
             'account': self.account,
             'ipc_root': self.ipc_root,
             'connected': self._connected,
@@ -327,15 +349,21 @@ class QmtIpcTrader:
 
     def register_trade_callback(self, cb):
         """注册成交回报回调。由后台轮询线程扫 done/ 目录后触发。"""
-        self._trade_callbacks.append(cb)
+        with self._cache_lock:
+            if cb not in self._trade_callbacks:
+                self._trade_callbacks.append(cb)
 
     def register_order_callback(self, cb):
         """注册委托状态回调。"""
-        self._order_callbacks.append(cb)
+        with self._cache_lock:
+            if cb not in self._order_callbacks:
+                self._order_callbacks.append(cb)
 
     def register_disconnect_callback(self, cb):
         """注册断连回调。心跳超时时触发。"""
-        self._disconnect_callbacks.append(cb)
+        with self._cache_lock:
+            if cb not in self._disconnect_callbacks:
+                self._disconnect_callbacks.append(cb)
 
     def _start_deal_poller(self):
         """启动后台线程，轮询 done/ 目录，把新回执转成 callback。"""
@@ -381,48 +409,71 @@ class QmtIpcTrader:
                             self._seen_orders.add(order_key)
                             self._fire_order_callback(rec)
 
-                        # 成交回调：done/ 记录是累计成交量，这里只向上层推送增量。
                         if status in ('filled', 'partial', 'partial_cancelled'):
-                            oid_key = str(oid)
-                            filled_volume = int(rec.get('filled_volume') or 0)
-                            previous_volume = int(self._seen_deals.get(oid_key, 0) or 0)
-                            delta_volume = filled_volume - previous_volume
-                            if delta_volume > 0:
-                                self._seen_deals[oid_key] = filled_volume
-                                self._fire_trade_callback(
-                                    rec,
-                                    traded_volume=delta_volume,
-                                    traded_id_suffix=f'cum_{filled_volume}'
-                                )
+                            self._dispatch_deals(rec)
                         self._trim_seen_cache()
             except Exception as e:
                 logger.warning(f'成交回报轮询异常: {e}')
             time.sleep(interval)
 
-    def _fire_trade_callback(self, rec, traded_volume=None, traded_id_suffix=None):
+    def _dispatch_deals(self, rec):
+        """原生成交按真实编号投递；旧累计回执按金额差换算分笔价。"""
+        key = str(rec.get('order_id'))
+        fills = rec.get('deals')
+        if isinstance(fills, list):
+            with self._cache_lock:
+                pending = [deal for deal in fills if (key, str(deal['trade_id'])) not in self._seen_native_deals]
+                self._seen_deals[key] = int(rec.get('filled_volume') or 0)
+            for deal in pending:
+                if self._fire_trade_callback(rec, deal=deal):
+                    with self._cache_lock:
+                        self._seen_native_deals.add((key, str(deal['trade_id'])))
+            return
+        with self._cache_lock:
+            volume = int(rec.get('filled_volume') or 0)
+            delta = volume - int(self._seen_deals.get(key, 0) or 0)
+            amount = float(rec.get('filled_amount') or float(rec.get('filled_price', 0)) * volume)
+            delta_amount = amount - self._seen_deal_amounts.get(key, 0)
+        if delta > 0 and self._fire_trade_callback(
+                rec, traded_volume=delta, traded_id_suffix='cum_%s' % volume,
+                traded_price=delta_amount / delta):
+            with self._cache_lock:
+                self._seen_deals[key] = volume
+                self._seen_deal_amounts[key] = amount
+
+    def _fire_trade_callback(self, rec, traded_volume=None, traded_id_suffix=None,
+                             traded_price=None, deal=None):
         """把回执构造成 XtTrade-like 对象，触发 trade_callbacks。"""
         volume = rec.get('filled_volume', 0) if traded_volume is None else traded_volume
         base_trade_id = str(rec.get('entrust_id', rec.get('order_id', '')))
         if traded_id_suffix:
             base_trade_id = f'{base_trade_id}_{traded_id_suffix}'
+        deal = deal or {}
+        volume = deal.get('volume', volume)
+        price = deal.get('price', rec.get('filled_price', 0) if traded_price is None else traded_price)
         trade = _FakeXtObject(
             order_id=rec.get('order_id'),
             stock_code=rec.get('stock_code', ''),
             traded_volume=volume,
-            traded_price=rec.get('filled_price', 0),
-            traded_amount=rec.get('filled_price', 0) * volume,
+            traded_price=price,
+            traded_amount=deal.get('amount', price * volume),
             account_id=self.account,
             account_type=self.account_type,
-            traded_id=base_trade_id,
-            traded_time=int(time.time()),
+            traded_id=deal.get('trade_id', base_trade_id),
+            traded_time=deal.get('time', self._receipt_time(rec)),
             order_type=_STOCK_BUY if rec.get('action') == 'buy' else _STOCK_SELL,
             order_status=_IPC_STATUS_TO_QMT.get(rec.get('status'), 56),
         )
-        for cb in self._trade_callbacks:
+        with self._cache_lock:
+            callbacks = list(self._trade_callbacks)
+        success = True
+        for cb in callbacks:
             try:
                 cb(trade)
             except Exception as e:
+                success = False
                 logger.error(f'trade_callback 异常: {e}')
+        return success
 
     def _fire_order_callback(self, rec):
         """把回执构造成 XtOrder-like 对象，触发 order_callbacks。"""
@@ -437,7 +488,7 @@ class QmtIpcTrader:
     # 下单
     # ------------------------------------------------------------------
 
-    def _send_ipc_order(self, action, stock_code, volume, price, strategy_name='', order_remark=''):
+    def _send_ipc_order(self, action, stock_code, volume, price, strategy_name='', order_remark='', price_type=None, wait_for_receipt=None):
         """
         写 pending/ 下单文件 + 轮询 done/ 等待回执。
 
@@ -454,9 +505,13 @@ class QmtIpcTrader:
                          f'快速失败不阻塞. {action} {stock_code} {volume}股')
             return None
         try:
+            self._read_account_snapshot()
             self._ensure_dirs()
             stock_code = self.adjust_stock(stock_code)
-            price = self.select_slippage(stock_code, price or 0, action)
+            market_order = price_type == 5 or price is None or float(price) == 0
+            price = 0 if market_order else self.select_slippage(stock_code, float(price), action)
+            if not market_order and (not math.isfinite(price) or price <= 0):
+                raise ValueError('委托价无效')
             order_id = _next_order_id()
             self._register_order_id(order_id)
             order = {
@@ -465,8 +520,9 @@ class QmtIpcTrader:
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:23],
                 'action': action,
                 'stock_code': stock_code,
-                'price_type': 'market' if (price is None or price == 0) else 'limit',
-                'price': price or 0,
+                'price_type': 'market' if market_order else 'limit',
+                'qmt_price_type': int(price_type or (5 if market_order else 11)),
+                'price': price,
                 'volume': int(volume),
                 'strategy': strategy_name or '',
                 'timeout_sec': self.order_timeout,
@@ -483,13 +539,18 @@ class QmtIpcTrader:
             os.rename(tmp, final)
             logger.info(f'IPC下单已提交: {action} {stock_code} {volume}股 @ {price}, order_id={order_id}')
 
-            # 轮询等待回执（成交/部成/拒绝/撤单任一终态即返回）
+            if wait_for_receipt is None:
+                wait_for_receipt = bool(getattr(config, 'USE_SYNC_ORDER_API', False))
+            if not wait_for_receipt:
+                return order_id
+
+            # 同步调用仅等待回执；异步调用交由回调和委托跟踪处理。
             deadline = time.time() + self.order_timeout
             while time.time() < deadline:
                 rec = self._find_done_record(order_id)
                 if rec:
                     status = rec.get('status', '')
-                    if status in ('filled', 'partial', 'partial_cancelled'):
+                    if status in ('submitted', 'pending', 'filled', 'partial', 'partial_cancelled'):
                         logger.info(f'IPC下单成交: order_id={order_id}, status={status}, '
                                     f"价={rec.get('filled_price')}, 量={rec.get('filled_volume')}")
                         return order_id
@@ -515,24 +576,25 @@ class QmtIpcTrader:
     def buy(self, security='600031.SH', order_type=_STOCK_BUY, amount=100,
             price_type=None, price=20, strategy_name='', order_remark=''):
         """买入，兼容 easy_qmt_trader.buy()。返回 order_id 或 None。"""
-        return self._send_ipc_order('buy', security, amount, price, strategy_name, order_remark)
+        return self._send_ipc_order('buy', security, amount, price, strategy_name, order_remark, price_type)
 
     def sell(self, security='600031.SH', order_type=_STOCK_SELL, amount=100,
              price_type=None, price=20, strategy_name='', order_remark=''):
         """卖出，兼容 easy_qmt_trader.sell()。返回 order_id 或 None。"""
-        return self._send_ipc_order('sell', security, amount, price, strategy_name, order_remark)
+        return self._send_ipc_order('sell', security, amount, price, strategy_name, order_remark, price_type)
 
     def order_stock(self, stock_code='600031.SH', order_type=_STOCK_BUY, order_volume=100,
                     price_type=None, price=20, strategy_name='', order_remark=''):
         """统一下单接口，兼容 easy_qmt_trader.order_stock()。"""
         action = 'buy' if order_type == _STOCK_BUY else 'sell'
-        return self._send_ipc_order(action, stock_code, order_volume, price, strategy_name, order_remark)
+        return self._send_ipc_order(action, stock_code, order_volume, price, strategy_name, order_remark, price_type)
 
     def order_stock_async(self, stock_code='600031.SH', order_type=_STOCK_BUY, order_volume=100,
                           price_type=None, price=20, strategy_name='', order_remark=''):
-        """IPC 无真正异步接口，同步执行并返回 order_id（兼容签名）。"""
-        return self.order_stock(stock_code, order_type, order_volume, price_type, price,
-                                strategy_name, order_remark)
+        """原子发布指令后立即返回本地委托号，不阻塞监控等待柜台。"""
+        action = 'buy' if order_type == _STOCK_BUY else 'sell'
+        return self._send_ipc_order(action, stock_code, order_volume, price, strategy_name,
+                                    order_remark, price_type, wait_for_receipt=False)
 
     # ------------------------------------------------------------------
     # 撤单
@@ -577,8 +639,9 @@ class QmtIpcTrader:
     # ------------------------------------------------------------------
 
     def _read_account_snapshot(self):
-        """读取大QMT定时写入的账户快照 status/account.json。"""
-        return self._read_json(self._dir('status', 'account.json')) or {}
+        """读取有效账户快照，失败不能被解释为空仓或零资金。"""
+        return read_snapshot(self.ipc_root, self.account, 'account.json',
+                             config.QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS)
 
     def position(self):
         """
@@ -589,9 +652,13 @@ class QmtIpcTrader:
         证券代码/股票余额/可用余额/成本价/市值
         """
         empty = self._empty_df(_POSITION_COLUMNS)
+        self.position_snapshot_valid = False
         snapshot = self._read_account_snapshot()
-        positions = snapshot.get('positions', [])
+        positions = snapshot.get('positions')
+        if not isinstance(positions, list):
+            raise IpcSnapshotUnavailable('持仓列表格式无效')
         if not positions:
+            self.position_snapshot_valid = True
             return empty
 
         data_list = []
@@ -600,6 +667,13 @@ class QmtIpcTrader:
             code6 = stock.split('.')[0] if '.' in stock else stock
             volume = pos.get('volume', 0)
             available = pos.get('available')  # 缺失值不能用总持仓冒充可卖量
+            if (not code6 or isinstance(volume, bool) or not math.isfinite(float(volume)) or
+                    float(volume) < 0 or int(volume) != float(volume)):
+                raise IpcSnapshotUnavailable('持仓数量格式无效')
+            if available is not None and (isinstance(available, bool) or
+                    not math.isfinite(float(available)) or float(available) < 0 or
+                    int(available) != float(available) or float(available) > float(volume)):
+                raise IpcSnapshotUnavailable('可卖数量格式无效')
             cost = pos.get('cost', 0)
             market_price = pos.get('market_price', 0)
             market_value = pos.get('market_value', market_price * volume)
@@ -607,12 +681,16 @@ class QmtIpcTrader:
                 '账号类型': self.account_type,
                 '资金账号': self.account,
                 '证券代码': code6,
+                '证券名称': pos.get('name') or code6,
                 '股票余额': volume,
                 '可用余额': available,
                 '成本价': cost,
                 '参考成本价': cost,
                 '市值': market_value,
+                '市价': market_price,
+                '快照时间': snapshot['timestamp'],
             })
+        self.position_snapshot_valid = True
         if not _HAS_PANDAS:
             return data_list
         return pd.DataFrame(data_list)
@@ -643,6 +721,7 @@ class QmtIpcTrader:
         df['冻结金额'] = [snapshot.get('frozen', 0)]
         df['持仓市值'] = [snapshot.get('market_value', 0)]
         df['总资产'] = [snapshot.get('total_asset', 0)]
+        df['快照时间'] = [snapshot['timestamp']]
         return df
 
     def query_stock_asset(self):
@@ -661,6 +740,13 @@ class QmtIpcTrader:
     # 委托/成交查询（从 done/ 目录聚合）
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _receipt_time(rec):
+        try:
+            return int(source_timestamp(rec.get('orig_timestamp') or rec.get('exec_timestamp')))
+        except (ValueError, TypeError):
+            return 0
+
     def _rec_to_order(self, rec):
         """把 done/ 回执 dict 转成 XtOrder-like 对象。"""
         oid = rec.get('order_id')
@@ -673,11 +759,12 @@ class QmtIpcTrader:
             stock_code=str(rec.get('stock_code', '')),
             order_id=oid,
             order_sysid=str(rec.get('entrust_id', '')),
-            order_time=int(time.time()),
+            order_time=self._receipt_time(rec),
+            native_deals=rec.get('deals'),
             order_type=_STOCK_BUY if rec.get('action') == 'buy' else _STOCK_SELL,
             order_volume=volume,
-            price_type=50,
-            price=rec.get('filled_price', 0) or rec.get('price', 0),
+            price_type=rec.get('qmt_price_type', 11),
+            price=rec.get('price', 0) or rec.get('filled_price', 0),
             traded_volume=filled,
             traded_price=rec.get('filled_price', 0),
             order_status=_IPC_STATUS_TO_QMT.get(status, 56),
@@ -908,22 +995,23 @@ class QmtIpcTrader:
         return pd.DataFrame(rows) if _HAS_PANDAS else rows
 
     def _trades_to_df(self, orders):
-        """成交对象列表 → DataFrame（与 easy_qmt_trader.query_stock_trades 兼容）。"""
-        if not orders:
-            return self._empty_df([])
-        rows = [{
-            '账号类型': o.account_type,
-            '资金账号': o.account_id,
-            '证券代码': str(o.stock_code)[:6],
-            '委托类型': o.order_type,
-            '成交编号': getattr(o, 'order_sysid', ''),
-            '成交时间': o.order_time,
-            '成交均价': o.traded_price,
-            '成交数量': o.traded_volume,
-            '成交金额': o.traded_price * o.traded_volume,
-            '订单编号': o.order_id,
-            '柜台合同编号': getattr(o, 'order_sysid', ''),
-            '策略名称': o.strategy_name,
-            '委托备注': o.order_remark,
-        } for o in orders]
+        """原生回执逐笔保留成交编号、价量与时间，兼容旧累计回执。"""
+        rows = []
+        for order in orders:
+            fills = getattr(order, 'native_deals', None)
+            if fills is None:
+                fills = [{'trade_id': getattr(order, 'order_sysid', ''),
+                          'time': order.order_time, 'price': order.traded_price,
+                          'volume': order.traded_volume,
+                          'amount': order.traded_price * order.traded_volume}]
+            for fill in fills:
+                rows.append({
+                    '账号类型': order.account_type, '资金账号': order.account_id,
+                    '证券代码': str(order.stock_code)[:6], '委托类型': order.order_type,
+                    '成交编号': fill['trade_id'], '成交时间': fill['time'],
+                    '成交均价': fill['price'], '成交数量': fill['volume'],
+                    '成交金额': fill['amount'], '订单编号': order.order_id,
+                    '柜台合同编号': getattr(order, 'order_sysid', ''),
+                    '策略名称': order.strategy_name, '委托备注': order.order_remark,
+                })
         return pd.DataFrame(rows) if _HAS_PANDAS else rows

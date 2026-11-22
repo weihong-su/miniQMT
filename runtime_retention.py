@@ -288,8 +288,16 @@ def cleanup_runtime_artifacts(project_root, apply=False, now=None):
     log_dir = root / "logs"
     if log_dir.exists():
         for path in stale_task_artifacts(log_dir, now):
-            item = {"path": str(path), "bytes": tree_size(path), "rule": "已完成测试产物到期"}
+            item = {"path": str(path), "bytes": 0, "rule": "已完成测试产物到期"}
             result.append(item)
+            try:
+                item["bytes"] = tree_size(path)
+            except ValueError as exc:
+                item.update(skipped=True, reason=str(exc))
+                continue
+            except OSError as exc:
+                item["error"] = str(exc)
+                continue
             if apply:
                 try:
                     if completed_task(path if path.parent == log_dir else path.parent) is None:

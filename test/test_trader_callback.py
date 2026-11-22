@@ -2158,6 +2158,9 @@ class TestTraderCallback(TestBase):
         """卖出路径在callback映射缺失时，应通过委托列表拿到真实order_id且不重试。"""
         executor = self._make_live_executor()
         executor.position_manager = self.pm
+        # 隔离真实行情查询，避免接口等待让预建委托时间超出匹配窗口。
+        executor._quote_api = MagicMock()
+        executor._quote_api.return_value.get_instrument_detail.return_value = {}
 
         qmt_trader = MagicMock()
         qmt_trader.adjust_stock.side_effect = (

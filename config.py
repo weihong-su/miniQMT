@@ -406,6 +406,10 @@ QMT_IPC_HEARTBEAT_MAX_AGE = 10
 QMT_IPC_DEAL_POLL_INTERVAL = 1.0
 # done/ 目录回执聚合查询的回溯窗口（秒），默认24小时
 QMT_IPC_DONE_LOOKBACK_SECONDS = 86400
+QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS = 90.0  # 账户快照最大年龄，过期数据不参与持仓同步
+QMT_IPC_QUOTE_INTERVAL_SECONDS = 2.0  # 大 QMT 行情导出周期
+QMT_IPC_QUOTE_MAX_AGE_SECONDS = 15.0  # 连续交易时段行情来源时间的最大年龄
+QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 5.0  # 允许的时钟偏差
 
 # ======================= 大QMT RPC Fallback（xtquant_big_convert）=======================
 # xttrader 降级替代方案：通过 Redis/ZMQ/MySQL RPC 远程驱动大QMT内置Python执行交易。
@@ -707,7 +711,7 @@ SETTLEMENT_ASSET_IDENTITY_TOLERANCE = 1.0
 # 重新开启会把 WARNING 日志与 run_events(asset_identity_mismatch, ERROR) 一并恢复。
 ENABLE_ASSET_IDENTITY_ALERT = False
 ASSET_VALUATION_MAX_AGE_SECONDS = 60  # 盘中资产、持仓及行情快照允许的最大年龄（秒）
-ASSET_CONSISTENCY_MAX_DEVIATION_RATIO = 0.03  # 两路总资产差额占 xttrader 总资产超过 3% 时标记连接异常
+ASSET_CONSISTENCY_MAX_DEVIATION_RATIO = 0.03  # 含冻结资金的两路总资产偏差超过 3% 时仅告警
 ASSET_CONSISTENCY_CHECK_INTERVAL_SECONDS = 10.0  # 连续交易时段总资产核对间隔（秒）
 GRID_ORDER_AMOUNT_TOLERANCE = 0.01  # 修复订单错误时双账本成交金额的核对容差（元）
 SETTLEMENT_ASSET_RECHECK_COUNT = 1  # 净值恒等式异常时最多额外查询一次

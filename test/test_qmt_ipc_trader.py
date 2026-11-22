@@ -42,6 +42,7 @@ class _IpcTestBase(unittest.TestCase):
             patch.object(config, "QMT_IPC_HEARTBEAT_MAX_AGE", 10, create=True),
             patch.object(config, "QMT_IPC_DEAL_POLL_INTERVAL", 0.1, create=True),
             patch.object(config, "QMT_IPC_DONE_LOOKBACK_SECONDS", 86400, create=True),
+            patch.object(config, "USE_SYNC_ORDER_API", True),
         ]
         for p in self._patchers:
             p.start()
@@ -50,6 +51,7 @@ class _IpcTestBase(unittest.TestCase):
         self.ipc_root = self.trader.ipc_root
         for d in ["orders/pending", "orders/processing", "orders/done", "cancel", "status"]:
             os.makedirs(os.path.join(self.ipc_root, *d.split("/")), exist_ok=True)
+        self._write_account({"available": 1000000.0, "positions": []})
 
     def tearDown(self):
         try:
@@ -68,6 +70,9 @@ class _IpcTestBase(unittest.TestCase):
             json.dump({"ts": datetime_now()}, f)
 
     def _write_account(self, snapshot):
+        snapshot = dict(snapshot)
+        snapshot.setdefault("account_id", self.trader.account)
+        snapshot.setdefault("timestamp", datetime_now())
         path = os.path.join(self.ipc_root, "status", "account.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, ensure_ascii=False)
@@ -328,7 +333,7 @@ class TestPositionAndBalance(_IpcTestBase):
 
     def _sample_snapshot(self):
         return {
-            "timestamp": "2026-07-09 10:00:00",
+            "timestamp": datetime_now(),
             "total_asset": 1000000.0,
             "available": 800000.0,
             "market_value": 200000.0,
@@ -362,9 +367,10 @@ class TestPositionAndBalance(_IpcTestBase):
         row = df[df['证券代码'] == '600519'].iloc[0]
         self.assertEqual(row['可用余额'], 100)  # available < volume
 
-    def test_position_no_snapshot_returns_empty(self):
-        df = self.trader.position()
-        self.assertTrue(df.empty)
+    def test_position_no_snapshot_is_unavailable(self):
+        os.remove(self.trader._dir("status", "account.json"))
+        with self.assertRaises(RuntimeError):
+            self.trader.position()
 
     def test_balance_returns_dataframe(self):
         self._write_account(self._sample_snapshot())
@@ -375,9 +381,10 @@ class TestPositionAndBalance(_IpcTestBase):
         self.assertEqual(df['总资产'].iloc[0], 1000000.0)
         self.assertEqual(df['可用金额'].iloc[0], 800000.0)
 
-    def test_balance_no_snapshot_returns_empty(self):
-        df = self.trader.balance()
-        self.assertTrue(df.empty)
+    def test_balance_no_snapshot_is_unavailable(self):
+        os.remove(self.trader._dir("status", "account.json"))
+        with self.assertRaises(RuntimeError):
+            self.trader.balance()
 
     def test_query_stock_asset_dict(self):
         self._write_account(self._sample_snapshot())
@@ -582,6 +589,9 @@ class TestMultiAccountIsolation(unittest.TestCase):
         t2 = QmtIpcTrader(account="TEST_ACC_2")
         t1._ensure_dirs()
         t2._ensure_dirs()
+        with open(t1._dir("status", "account.json"), "w", encoding="utf-8") as handle:
+            json.dump({"account_id": "TEST_ACC_1", "timestamp": datetime_now(),
+                       "available": 100000.0, "positions": []}, handle)
         # 心跳（下单前快速失败门禁要求 QMT 在线）
         with open(t1._dir("status", "heartbeat.json"), "w") as f:
             json.dump({"ts": time.time()}, f)
@@ -612,13 +622,14 @@ class TestMultiAccountIsolation(unittest.TestCase):
         t2._ensure_dirs()
         # 只给 t1 写账户快照
         with open(t1._dir("status", "account.json"), "w", encoding="utf-8") as f:
-            json.dump({"total_asset": 1000000, "available": 800000, "positions": [
+            json.dump({"account_id": "TEST_ACC_1", "timestamp": datetime_now(), "total_asset": 1000000, "available": 800000, "positions": [
                 {"stock": "000001.SZ", "volume": 5000, "available": 5000,
                  "cost": 10.2, "market_price": 10.5, "market_value": 52500}
             ]}, f)
-        # t1 有持仓，t2 无
+        # t1 有有效快照，t2 未取得快照不能冒充空仓。
         self.assertFalse(t1.position().empty)
-        self.assertTrue(t2.position().empty)
+        with self.assertRaises(RuntimeError):
+            t2.position()
 
 
 # ── 接口契约对齐 easy_qmt_trader ──

@@ -165,6 +165,17 @@ class TradingExecutor:
             return price_value
         return None
 
+    def _quote_api(self):
+        """IPC 行情直接读取大 QMT 导出，不反向连接失效的本地服务。"""
+        if getattr(config, 'ENABLE_QMT_IPC_FALLBACK', False):
+            api = getattr(self.data_manager, 'xt', None)
+            if api is None:
+                from data_manager import _create_xtdata
+                api = _create_xtdata()
+                self.data_manager.xt = api
+            return api
+        return xt
+
     def _clamp_order_price_to_daily_limits(self, stock_code, price, side):
         """把限价委托价夹到当日涨跌停区间内。
 
@@ -179,7 +190,7 @@ class TradingExecutor:
             return price
 
         try:
-            detail = xt.get_instrument_detail(stock_code)
+            detail = self._quote_api().get_instrument_detail(stock_code)
             up_stop = float((detail or {}).get('UpStopPrice') or 0)
             down_stop = float((detail or {}).get('DownStopPrice') or 0)
         except Exception as e:
@@ -1731,8 +1742,7 @@ class TradingExecutor:
                 # 如果未提供价格，获取卖三价
                 if price is None:
                     try:
-                        from xtquant import xtdata
-                        ticks = xtdata.get_full_tick([formatted_stock_code])
+                        ticks = self._quote_api().get_full_tick([formatted_stock_code])
                         if ticks and formatted_stock_code in ticks:
                             tick = ticks[formatted_stock_code]
                             if hasattr(tick, 'askPrice') and len(tick.askPrice) >= 3:
@@ -2047,8 +2057,7 @@ class TradingExecutor:
                 # 如果未提供价格，获取买三价（提高成交概率）
                 if price is None:
                     try:
-                        from xtquant import xtdata
-                        ticks = xtdata.get_full_tick([formatted_stock_code])
+                        ticks = self._quote_api().get_full_tick([formatted_stock_code])
                         if ticks and formatted_stock_code in ticks:
                             tick = ticks[formatted_stock_code]
                             if hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 3:

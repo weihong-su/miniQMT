@@ -3,6 +3,8 @@ QMT_trade_executor.py tests -- compact rewrite aligned with current module.
 """
 import os, sys, json, time, types, shutil, tempfile, unittest, threading
 from contextlib import contextmanager
+from unittest.mock import patch
+from datetime import datetime
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -62,11 +64,16 @@ class _ExecBase(unittest.TestCase):
                     "dir":self.acc_dir,"dirs":ex._account_dirs(self.acc_dir)}
         ex._SNAPSHOT_STATE.clear()
         ex._LAST_SNAPSHOT_ATTEMPT.clear()
+        connect_patch = patch.object(ex, "_try_connect_xttrader", return_value=None)
+        heartbeat_patch = patch.object(ex, "_ensure_heartbeat_thread", return_value=False)
+        for item in (connect_patch, heartbeat_patch):
+            item.start()
+            self.addCleanup(item.stop)
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
     def _write_pending(self, oid, action="buy", stock="000001.SZ",
                        volume=1000, price=10.5, price_type="limit", timeout_sec=2):
-        order = dict(version="1.0", order_id=oid, timestamp="2026-07-11 10:00:00.000",
+        order = dict(version="1.0", order_id=oid, timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                      action=action, stock_code=stock, price_type=price_type, price=price,
                      volume=volume, strategy="test", timeout_sec=timeout_sec, remark="")
         path = os.path.join(self.acc["dirs"]["pending"], "ord_%s.json" % oid)
@@ -518,6 +525,133 @@ class TestWorkerDaemonPolicy(unittest.TestCase):
                 os.environ.pop("QMT_IPC_TOP_LEVEL_WORKER", None)
             else:
                 os.environ["QMT_IPC_TOP_LEVEL_WORKER"] = old
+
+
+class TestNativeAccountSnapshot(_ExecBase):
+    def _reader(self, account_id, account_type, kind=None):
+        if kind is None:
+            raise TypeError("three arguments required")
+        self.assertIs(threading.current_thread(), threading.main_thread())
+        if kind.upper() == "ACCOUNT":
+            return [types.SimpleNamespace(m_dBalance=468119.14, m_dAvailable=243333.14,
+                                          m_dFrozen=0.0)]
+        return [
+            types.SimpleNamespace(m_strAccountID=account_id, m_strInstrumentID=code,
+                                  m_nVolume=volume, m_nCanUseVolume=available,
+                                  m_dOpenPrice=cost, m_dLastPrice=price,
+                                  m_dMarketValue=volume * price)
+            for code, volume, available, cost, price in [
+                ("603466", 3800, 3800, 8.094, 14.30),
+                ("001306", 1400, 1400, 57.109, 48.48),
+                ("300792", 5500, 5500, 23.29, 18.66),
+            ]
+        ]
+
+    def _snapshot_path(self):
+        return os.path.join(self.acc["dirs"]["status"], "account.json")
+
+    def _previous_snapshot(self):
+        value = {"timestamp": "2026-07-13 14:20:26", "positions": [{"stock": "OLD"}]}
+        ex._atomic_write_json(self._snapshot_path(), value)
+        return value
+
+    def test_native_reader_is_preferred_over_unavailable_xttrader(self):
+        with patch.object(ex, "_get_vba_reader", return_value=self._reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None) as xt_read:
+            self.assertTrue(ex.write_snapshot(self.acc))
+        xt_read.assert_not_called()
+        snapshot = ex._load_json(self._snapshot_path())
+        self.assertEqual(snapshot["source"], "vba")
+        self.assertEqual(snapshot["total_asset"], 468119.14)
+        self.assertEqual(snapshot["available"], 243333.14)
+        self.assertEqual([p["volume"] for p in snapshot["positions"]], [3800, 1400, 5500])
+        self.assertEqual([p["available"] for p in snapshot["positions"]], [3800, 1400, 5500])
+
+    def test_native_snapshot_task_runs_on_main_thread(self):
+        with patch.object(ex, "_get_vba_reader", return_value=self._reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None), \
+             patch.object(ex, "archive_old"):
+            self.assertTrue(ex._start_snapshot_task(self.acc))
+            thread = ex._SNAPSHOT_STATE.get(self.acc["account_id"], {}).get("thread")
+            if thread is not None:
+                thread.join(timeout=1)
+        snapshot = ex._load_json(self._snapshot_path())
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(len(snapshot["positions"]), 3)
+
+    def test_native_reader_is_not_called_from_background_thread(self):
+        results = []
+        with patch.object(ex, "_get_vba_reader", return_value=self._reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None), \
+             patch.object(ex, "_atomic_write_json") as write:
+            thread = threading.Thread(target=lambda: results.append(ex.write_snapshot(self.acc)))
+            thread.start()
+            thread.join(timeout=1)
+        self.assertEqual(results, [False])
+        write.assert_not_called()
+
+    def test_missing_account_preserves_previous_snapshot(self):
+        previous = self._previous_snapshot()
+        with patch.object(ex, "_get_vba_reader", return_value=lambda *args: []), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None) as xt_read:
+            self.assertFalse(ex.write_snapshot(self.acc))
+        xt_read.assert_not_called()
+        self.assertEqual(ex._load_json(self._snapshot_path()), previous)
+
+    def test_position_query_failure_preserves_previous_snapshot(self):
+        previous = self._previous_snapshot()
+        def reader(*args):
+            if args[-1].upper() == "POSITION":
+                raise RuntimeError("position query unavailable")
+            return self._reader(*args)
+        with patch.object(ex, "_get_vba_reader", return_value=reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None):
+            self.assertFalse(ex.write_snapshot(self.acc))
+        self.assertEqual(ex._load_json(self._snapshot_path()), previous)
+
+    def test_partial_position_parse_failure_does_not_publish_partial_portfolio(self):
+        previous = self._previous_snapshot()
+        def reader(*args):
+            rows = self._reader(*args)
+            if args[-1].upper() == "POSITION":
+                rows[1].m_nCanUseVolume = "invalid"
+            return rows
+        with patch.object(ex, "_get_vba_reader", return_value=reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None):
+            self.assertFalse(ex.write_snapshot(self.acc))
+        self.assertEqual(ex._load_json(self._snapshot_path()), previous)
+
+    def test_missing_available_volume_does_not_default_to_total_volume(self):
+        previous = self._previous_snapshot()
+        def reader(*args):
+            rows = self._reader(*args)
+            if args[-1].upper() == "POSITION":
+                del rows[0].m_nCanUseVolume
+            return rows
+        with patch.object(ex, "_get_vba_reader", return_value=reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None):
+            self.assertFalse(ex.write_snapshot(self.acc))
+        self.assertEqual(ex._load_json(self._snapshot_path()), previous)
+
+    def test_other_account_positions_are_rejected(self):
+        previous = self._previous_snapshot()
+        def reader(*args):
+            rows = self._reader(*args)
+            if args[-1].upper() == "POSITION":
+                rows[0].m_strAccountID = "OTHER_ACCOUNT"
+            return rows
+        with patch.object(ex, "_get_vba_reader", return_value=reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None):
+            self.assertFalse(ex.write_snapshot(self.acc))
+        self.assertEqual(ex._load_json(self._snapshot_path()), previous)
+
+    def test_valid_empty_positions_can_publish_an_empty_portfolio(self):
+        def reader(*args):
+            return [] if args[-1].upper() == "POSITION" else self._reader(*args)
+        with patch.object(ex, "_get_vba_reader", return_value=reader), \
+             patch.object(ex, "_snapshot_from_xttrader", return_value=None):
+            self.assertTrue(ex.write_snapshot(self.acc))
+        self.assertEqual(ex._load_json(self._snapshot_path())["positions"], [])
 
 if __name__ == "__main__":
     unittest.main()

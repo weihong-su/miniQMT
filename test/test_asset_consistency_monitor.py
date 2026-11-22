@@ -1,4 +1,6 @@
 """开盘总资产双源核对：使用内存持仓与模拟柜台，禁止连接真实 QMT。"""
+import concurrent.futures
+import logging
 import sqlite3
 import threading
 import unittest
@@ -67,14 +69,16 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
                 self._set_evidence(price=price)
                 self.pm._monitor_total_asset_consistency()
                 self.assertEqual(self.pm._asset_monitor_abnormal, abnormal)
-                self.assertEqual(self.pm.qmt_connected, not abnormal)
+                self.assertTrue(self.pm.qmt_connected)
 
-    def test_uses_available_cash_without_frozen_cash(self):
-        """核对口径严格按可用金额加行情市值，不把冻结现金计入。"""
+    def test_includes_frozen_cash_in_total_assets(self):
+        """未成交挂单冻结的资金仍属于账户总资产。"""
         self._set_evidence(cash=40000, frozen=10000)
-        self.pm._monitor_total_asset_consistency()
-        self.assertFalse(self.pm.qmt_connected)
-        self.assertTrue(self.pm._asset_monitor_abnormal)
+        with patch('position_manager.log_throttled') as alert:
+            self.pm._monitor_total_asset_consistency()
+        self.assertTrue(self.pm.qmt_connected)
+        self.assertFalse(self.pm._asset_monitor_abnormal)
+        alert.assert_not_called()
 
     def test_ignores_broker_market_value(self):
         frame = self.pm.qmt_trader.balance.return_value
@@ -120,9 +124,9 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
         self.assertTrue(self.pm.qmt_connected)
         self.assertFalse(self.pm._asset_monitor_abnormal)
 
-    def test_empty_portfolio_uses_cash_only(self):
+    def test_empty_portfolio_includes_frozen_cash(self):
         self.pm.memory_conn.execute('DELETE FROM positions')
-        self._set_evidence(cash=100000)
+        self._set_evidence(cash=90000, frozen=10000)
         self.pm._monitor_total_asset_consistency()
         self.assertTrue(self.pm.qmt_connected)
 
@@ -147,11 +151,12 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
             self.pm._monitor_total_asset_consistency()
         self.assertEqual(self.pm.qmt_trader.balance.call_count, 2)
 
-    def test_ping_cannot_clear_asset_abnormality(self):
+    def test_asset_warning_does_not_block_connection_probe(self):
         self._set_evidence(price=11.0)
         self.pm._monitor_total_asset_consistency()
-        self.assertFalse(self.pm._probe_qmt_recovered())
-        self.pm.qmt_trader.ping_xttrader.assert_not_called()
+        self.assertTrue(self.pm._probe_qmt_recovered())
+        self.pm.qmt_trader.ping_xttrader.assert_called_once()
+        self.assertTrue(self.pm._asset_monitor_abnormal)
 
     def test_unknown_evidence_preserves_previous_abnormality(self):
         self._set_evidence(price=11.0)
@@ -160,7 +165,7 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
         self.pm.data_manager.get_cached_quotes.return_value = {}
         self.pm._monitor_total_asset_consistency()
         self.assertTrue(self.pm._asset_monitor_abnormal)
-        self.assertFalse(self.pm.qmt_connected)
+        self.assertTrue(self.pm.qmt_connected)
 
     def test_rechecks_before_recovery(self):
         self._set_evidence(price=11.0)
@@ -175,7 +180,11 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
         self._set_evidence(price=11.0)
         with patch('position_manager.log_throttled') as alert:
             self.pm._monitor_total_asset_consistency()
+        self.assertEqual(alert.call_args.args[1], logging.WARNING)
         message = alert.call_args.args[3]
+        self.assertIn('总资产核对偏差超限', message)
+        self.assertIn('冻结金额=0.00', message)
+        self.assertNotIn('已标记断连', message)
         self.assertIn('柜台总资产=100000.00', message)
         self.assertIn('重算总资产=105000.00', message)
         self.assertIn('偏差=5.00%', message)
@@ -194,45 +203,105 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
             self.pm._monitor_total_asset_consistency()
         self.assertTrue(self.pm.qmt_connected)
 
-    def test_reconnect_does_not_bypass_pending_asset_recheck(self):
+    def test_check_interval_does_not_change_connection_after_warning(self):
         self._set_evidence(price=11.0)
         with patch('position_manager.time.monotonic', return_value=1000):
             self.pm._monitor_total_asset_consistency()
         self.pm.qmt_connected = True
         with patch('position_manager.time.monotonic', return_value=1001):
             self.pm._monitor_total_asset_consistency()
-        self.assertFalse(self.pm.qmt_connected)
-        self.assertFalse(self.pm._probe_qmt_recovered())
+        self.assertTrue(self.pm.qmt_connected)
+        self.assertTrue(self.pm._probe_qmt_recovered())
 
-    def test_reconnect_worker_keeps_asset_abnormality_disconnected(self):
+    def test_reconnect_worker_recovers_despite_asset_warning(self):
         self.pm._asset_monitor_abnormal = True
         self.pm.qmt_connected = False
         self.pm.qmt_trader.reconnect_xttrader.return_value = True
         self.pm._start_qmt_connect_worker()
         self.pm._reconnect_thread.join(timeout=5)
         self.assertFalse(self.pm._reconnect_thread.is_alive())
-        self.assertFalse(self.pm.qmt_connected)
+        self.assertTrue(self.pm.qmt_connected)
         self.assertTrue(self.pm._asset_monitor_abnormal)
         self.assertEqual(self.pm.last_position_update_time, 0)
 
-    def test_monitor_loop_checks_before_signals_and_blocks_on_mismatch(self):
-        """通过真实监控循环验证异常时不会继续生成网格新单。"""
+    def _run_monitor_cycle(self):
+        """运行一轮真实监控流程，交易和数据接口全部使用模拟对象。"""
         import pandas as pd
-        self._set_evidence(price=11.0)
         self.pm.stop_flag = False
         self.pm.last_update_highest_time = float('inf')
         self.pm.update_highest_interval = 60
-        self.pm.get_all_positions = Mock(return_value=pd.DataFrame([{'stock_code': '603466'}]))
+        self.pm.get_all_positions = Mock(return_value=pd.DataFrame([{
+            'stock_code': '603466', 'highest_price': 12.0,
+        }]))
         self.pm._maybe_reconcile_missing_trades = Mock()
+        self.pm.check_pending_orders_timeout = Mock()
+        self.pm._detect_and_enqueue_dynamic_signal = Mock()
+        self.pm._has_tracked_pending_order = Mock(return_value=False)
         self.pm.grid_manager = Mock()
+        self.pm.grid_manager.check_grid_signals.return_value = None
+        self.pm.data_manager.get_latest_data.return_value = {'lastPrice': 11.0}
         self.pm._last_reconnect_time = 0
         self.pm._attempt_qmt_reconnect = Mock()
         with patch('position_manager.run_with_timeout', side_effect=lambda func, timeout: func()), \
+             patch.object(config, 'is_global_monitor_enabled', return_value=True), \
              patch('position_manager.time.sleep', side_effect=lambda seconds: setattr(self.pm, 'stop_flag', True)):
             self.pm._position_monitor_loop()
+
+    def test_monitor_loop_continues_signals_and_reconciliation_on_mismatch(self):
+        """估值偏差只告警，不跳过成交流水对账或交易信号检测。"""
+        self._set_evidence(price=11.0)
+        self._run_monitor_cycle()
+        self.assertTrue(self.pm.qmt_connected)
+        self.pm._attempt_qmt_reconnect.assert_not_called()
+        self.pm.qmt_trader.ping_xttrader.assert_not_called()
+        self.pm.grid_manager.check_grid_signals.assert_called_once()
+        self.pm._maybe_reconcile_missing_trades.assert_called_once()
+        self.pm._detect_and_enqueue_dynamic_signal.assert_called_once()
+
+    def test_valuation_errors_and_timeouts_only_warn(self):
+        """估值任务超时或异常不能累计为持仓查询失败。"""
+        for error in (concurrent.futures.TimeoutError(), RuntimeError('估值失败')):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(self.pm, '_monitor_total_asset_consistency', side_effect=error), \
+                 patch('position_manager.log_throttled') as alert:
+                self._run_monitor_cycle()
+                self.assertTrue(self.pm.qmt_connected)
+                self.pm._attempt_qmt_reconnect.assert_not_called()
+                self.pm._maybe_reconcile_missing_trades.assert_called_once()
+                self.pm.grid_manager.check_grid_signals.assert_called_once()
+                self.assertEqual(alert.call_args.args[1], logging.WARNING)
+
+    def test_real_disconnection_still_blocks_signals(self):
+        self.pm.qmt_connected = False
+        self.pm.qmt_trader.ping_xttrader.return_value = False
+        self._run_monitor_cycle()
         self.assertFalse(self.pm.qmt_connected)
         self.pm.grid_manager.check_grid_signals.assert_not_called()
         self.pm._maybe_reconcile_missing_trades.assert_not_called()
+
+    def test_warning_does_not_restore_a_disconnected_connection(self):
+        self.pm.qmt_connected = False
+        self._set_evidence(price=11.0)
+        self.pm._monitor_total_asset_consistency()
+        self.assertFalse(self.pm.qmt_connected)
+        self.assertTrue(self.pm._asset_monitor_abnormal)
+
+    def test_reconnect_in_progress_only_skips_valuation(self):
+        self.pm._reconnect_in_progress = True
+        self.pm._asset_monitor_abnormal = True
+        self.pm._monitor_total_asset_consistency()
+        self.assertTrue(self.pm.qmt_connected)
+        self.pm.qmt_trader.balance.assert_not_called()
+
+    def test_external_buy_snapshot_gap_only_warns(self):
+        """复现今日买入后本地持仓尚未同步的数值。"""
+        self._set_evidence(price=132582 / 5000, total=502098.17, cash=326925.17)
+        with patch('position_manager.log_throttled') as alert:
+            self.pm._monitor_total_asset_consistency()
+        self.assertTrue(self.pm.qmt_connected)
+        self.assertTrue(self.pm._asset_monitor_abnormal)
+        self.assertIn('差额=42591.00', alert.call_args.args[3])
+        self.assertEqual(alert.call_args.args[1], logging.WARNING)
 
 
 if __name__ == '__main__':
