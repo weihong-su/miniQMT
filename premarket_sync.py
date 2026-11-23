@@ -427,6 +427,18 @@ def reinit_xtquant_data():
         from position_manager import get_position_manager
 
         position_manager = get_position_manager()
+        if getattr(config, 'ENABLE_QMT_IPC_FALLBACK', False):
+            from data_manager import get_data_manager
+            data_manager = get_data_manager()
+            if data_manager.xt is None:
+                data_manager.reinit_xtquant()
+            connected = bool(data_manager.xt is not None and data_manager.xt.connect())
+            if connected:
+                data_manager._subscribe_stocks_to_xtdata(config.STOCK_POOL)
+                logger.info("  ✓ IPC 行情心跳正常，已恢复股票池订阅")
+            else:
+                logger.warning("  ⚠ IPC 行情心跳不可用，等待大 QMT 脚本恢复")
+            return connected
         qmt_trader = position_manager.qmt_trader
 
         # 步骤1: 检查现有连接状态
@@ -628,7 +640,9 @@ def verify_xtquant_connections():
         if hasattr(position_manager, 'qmt_trader') and position_manager.qmt_trader:
             qmt_trader = position_manager.qmt_trader
 
-            if hasattr(qmt_trader, 'xt_trader') and qmt_trader.xt_trader:
+            if getattr(config, 'ENABLE_QMT_IPC_FALLBACK', False):
+                status['xttrader'] = '正常' if qmt_trader.ping_xttrader() else '未连接'
+            elif hasattr(qmt_trader, 'xt_trader') and qmt_trader.xt_trader:
                 # 尝试查询账户资产来验证连接
                 try:
                     if hasattr(qmt_trader.xt_trader, 'query_stock_asset') and hasattr(qmt_trader, 'acc'):

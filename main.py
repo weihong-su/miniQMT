@@ -659,7 +659,8 @@ def main():
         # logger.info(f"[DEBUG main.py] position_manager id: {id(position_manager)}")
         # logger.info(f"[DEBUG main.py] position_manager有grid_manager属性: {hasattr(position_manager, 'grid_manager')}")
 
-        if config.ENABLE_GRID_TRADING:
+        # 已有会话始终可查询，自动执行仍由 ENABLE_GRID_TRADING 控制。
+        if config.ENABLE_GRID_TRADING or getattr(position_manager, 'db_manager', None) is not None:
             try:
                 logger.info("初始化网格交易管理器")
                 # logger.info(f"[DEBUG main.py] 调用init_grid_manager前，grid_manager={getattr(position_manager, 'grid_manager', 'NO_ATTR')}")
@@ -667,6 +668,8 @@ def main():
                 # logger.info(f"[DEBUG main.py] 调用init_grid_manager后，grid_manager={position_manager.grid_manager}")
                 # logger.info(f"[DEBUG main.py] grid_manager类型: {type(position_manager.grid_manager)}")
                 logger.info("✓ 网格交易管理器初始化完成")
+                if not config.ENABLE_GRID_TRADING:
+                    logger.info("网格自动执行关闭，已有会话仍可查看")
 
                 # ⚠️ 新增: 初始化风险等级模板(仅首次运行或更新时)
                 try:
@@ -685,7 +688,7 @@ def main():
                 logger.error(f"网格交易管理器初始化失败: {str(e)}")
                 logger.info("系统继续运行(网格交易功能不可用)")
         else:
-            logger.warning("网格交易功能未启用 (ENABLE_GRID_TRADING=False)")
+            logger.info("网格自动执行关闭，暂无可加载的会话数据库")
 
         # 下载初始数据
         download_initial_data(data_manager)

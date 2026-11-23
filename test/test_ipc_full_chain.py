@@ -500,5 +500,232 @@ class TestIpcAccountErrorLogging(_IpcSnapshotBase):
             pm.get_account_valuation.assert_called_once()
 
 
+class TestIpcPremarket(_IpcSnapshotBase):
+    def _manager(self):
+        from data_manager import DataManager
+        from qmt_ipc_data import QmtIpcDataAdapter
+        manager = DataManager.__new__(DataManager)
+        manager.xt = QmtIpcDataAdapter(account=self.acc)
+        manager._subscribe_stocks_to_xtdata = Mock()
+        return manager
+
+    def test_healthy_ipc_premarket_uses_adapter_without_legacy_xtdata(self):
+        from premarket_sync import reinit_xtquant_data
+        manager = self._manager()
+        self.snapshot()
+        with open(self.trader._dir("status", "heartbeat.json"), "w") as handle:
+            json.dump({}, handle)
+        with patch.object(config, "ENABLE_QMT_IPC_FALLBACK", True), \
+             patch("position_manager.get_position_manager", return_value=types.SimpleNamespace(qmt_trader=self.trader)), \
+             patch("data_manager.get_data_manager", return_value=manager), \
+             patch("premarket_sync.logger") as log:
+            self.assertTrue(reinit_xtquant_data())
+        manager._subscribe_stocks_to_xtdata.assert_called_once_with(config.STOCK_POOL)
+        log.error.assert_not_called()
+
+    def test_offline_ipc_premarket_reports_failure(self):
+        from premarket_sync import reinit_xtquant_data
+        manager = self._manager()
+        with patch.object(config, "ENABLE_QMT_IPC_FALLBACK", True), \
+             patch("position_manager.get_position_manager", return_value=types.SimpleNamespace(qmt_trader=self.trader)), \
+             patch("data_manager.get_data_manager", return_value=manager):
+            self.assertFalse(reinit_xtquant_data())
+        manager._subscribe_stocks_to_xtdata.assert_not_called()
+
+    def test_ipc_verification_uses_heartbeat_instead_of_benchmark_tick(self):
+        from premarket_sync import verify_xtquant_connections
+        manager = self._manager()
+        self.snapshot()
+        heartbeat = self.trader._dir("status", "heartbeat.json")
+        for alive in (False, True):
+            if alive:
+                with open(heartbeat, "w") as handle:
+                    json.dump({}, handle)
+            with self.subTest(alive=alive), patch.object(config, "ENABLE_QMT_IPC_FALLBACK", True), \
+                 patch.object(manager.xt, "get_full_tick", side_effect=AssertionError("不应读取基准股报价")), \
+                 patch("position_manager.get_position_manager", return_value=types.SimpleNamespace(qmt_trader=self.trader)), \
+                 patch("data_manager.get_data_manager", return_value=manager):
+                self.assertEqual(manager._verify_connection(), alive)
+                status = verify_xtquant_connections()
+                self.assertEqual(status["xtdata"], "正常" if alive else "异常")
+                self.assertEqual(status["xttrader"], "正常" if alive else "未连接")
+
+
+class TestIpcSnapshotSourceHonesty(_IpcSnapshotBase):
+    def test_unavailable_ipc_refresh_must_not_claim_a_fresh_broker_snapshot(self):
+        import pandas as pd
+        from position_manager import PositionManager
+        pm = PositionManager.__new__(PositionManager)
+        pm.qmt_trader = self.trader
+        pm._invalidate_positions_cache = Mock()
+        def cached_positions():
+            try:
+                self.trader.position()
+            except RuntimeError:
+                return pd.DataFrame([{"stock_code":"000001", "volume":500}])
+        pm.get_all_positions = Mock(side_effect=cached_positions)
+        with patch.object(config, "ENABLE_SIMULATION_MODE", False), \
+             patch.object(config, "ENABLE_QMT_IPC_FALLBACK", True), \
+             patch("position_manager.run_with_timeout", side_effect=lambda function, timeout: function()):
+            self.assertFalse(pm.refresh_positions_from_broker(reason="open持仓快照"))
+
+
+class TestIpcRuntimeDiagnostics(unittest.TestCase):
+    def _manager(self, connected=True):
+        import pandas as pd
+        from position_manager import PositionManager
+        from logger import reset_log_throttle
+        reset_log_throttle()
+        self.addCleanup(reset_log_throttle)
+        pm = PositionManager.__new__(PositionManager)
+        pm.stop_flag, pm.qmt_connected = False, connected
+        pm.qmt_trader = types.SimpleNamespace(xt_trader=object(), position_snapshot_valid=True)
+        pm.last_update_highest_time, pm.update_highest_interval = float("inf"), 60
+        pm._last_reconnect_time = 990
+        pm.get_all_positions = Mock(return_value=pd.DataFrame([{"stock_code":"000001", "highest_price":20}]))
+        pm._probe_qmt_recovered = Mock(return_value=False)
+        pm._monitor_total_asset_consistency = Mock()
+        pm._maybe_reconcile_missing_trades = Mock()
+        pm.check_pending_orders_timeout = Mock()
+        pm._detect_and_enqueue_dynamic_signal = Mock()
+        pm.grid_manager = None
+        pm.signal_lock, pm.latest_signals = threading.Lock(), {}
+        pm.data_manager = Mock()
+        pm.data_manager.get_latest_data.return_value = self._quote(False)
+        pm.data_manager.is_quote_tradable.side_effect = lambda stock, quote: quote["_tradable"]
+        return pm
+
+    @staticmethod
+    def _quote(tradable):
+        return dict(lastPrice=10, _source="QMT_IPC", _tradable=tradable, _health_score=100, time=1000)
+
+    def _run(self, pm, cycles, trade=True, continuous=True):
+        clock, loops = [1000.0], [0]
+        def sleep(seconds):
+            clock[0] += seconds
+            loops[0] += 1
+            pm.stop_flag = loops[0] >= cycles
+        pm._attempt_qmt_reconnect = Mock(side_effect=lambda: setattr(pm, "_last_reconnect_time", clock[0]))
+        with patch.object(config, "ENABLE_SIMULATION_MODE", False), \
+             patch.object(config, "ENABLE_XTQUANT_MANAGER", False), \
+             patch.object(config, "ENABLE_QMT_IPC_FALLBACK", True), \
+             patch.object(config, "XTQUANT_RECONNECT_INTERVAL", 30), \
+             patch.object(config, "MONITOR_NON_TRADE_SLEEP", 5), \
+             patch.object(config, "is_trade_time", return_value=trade), \
+             patch.object(config, "is_continuous_trade_time", return_value=continuous), \
+             patch.object(config, "is_global_monitor_enabled", return_value=True), \
+             patch("position_manager.run_with_timeout", side_effect=lambda function, timeout: function()), \
+             patch("position_manager.time.time", side_effect=lambda: clock[0]), \
+             patch("position_manager.time.sleep", side_effect=sleep), \
+             patch("position_manager.logger") as log:
+            pm._position_monitor_loop()
+        self.assertFalse(any("MONITOR_FATAL" in str(call) for call in log.error.call_args_list))
+        return log
+
+    def test_disconnected_monitor_obeys_cooldown_in_both_time_windows(self):
+        for trade in (False, True):
+            with self.subTest(trade=trade):
+                pm = self._manager(connected=False)
+                self._run(pm, 10, trade=trade)
+                pm._attempt_qmt_reconnect.assert_called_once()
+                self.assertFalse(pm.qmt_connected)
+                pm._detect_and_enqueue_dynamic_signal.assert_not_called()
+
+    def test_lunch_reference_quote_keeps_protection_without_warning_spam(self):
+        pm = self._manager()
+        log = self._run(pm, 4, continuous=False)
+        log.warning.assert_not_called()
+        self.assertEqual(log.log.call_count, 1)
+        self.assertEqual(log.log.call_args.args[0], 10)
+        pm._detect_and_enqueue_dynamic_signal.assert_not_called()
+
+    def test_trading_warning_is_throttled_and_resets_after_fresh_quote(self):
+        pm = self._manager()
+        pm.data_manager.get_latest_data.side_effect = [self._quote(v) for v in (False,False,True,False)]
+        log = self._run(pm, 4)
+        self.assertEqual(log.log.call_count, 2)
+        self.assertEqual(log.log.call_args.args[0], 30)
+        pm._detect_and_enqueue_dynamic_signal.assert_called_once_with("000001", 10.0)
+
+    def test_score_warmup_does_not_mask_a_real_health_warning(self):
+        pm = self._manager()
+        warm, unhealthy, fresh = (self._quote(True) for _ in range(3))
+        warm["_health_score"], unhealthy["_health_score"] = None, 40
+        pm.data_manager.get_latest_data.side_effect = [warm, unhealthy, fresh]
+        pm.data_manager.is_quote_tradable.side_effect = lambda stock, quote: (
+            quote["_tradable"] and quote["_health_score"] == 100)
+        log = self._run(pm, 3)
+        self.assertEqual([call.args[0] for call in log.log.call_args_list], [10,30])
+        pm._detect_and_enqueue_dynamic_signal.assert_called_once_with("000001", 10.0)
+
+    def test_loaded_grid_sessions_do_not_execute_when_grid_switch_is_off(self):
+        pm = self._manager()
+        pm.data_manager.get_latest_data.return_value = self._quote(True)
+        pm.grid_manager = Mock()
+        with patch.object(config, "ENABLE_GRID_TRADING", False):
+            self._run(pm, 3)
+        pm.grid_manager.sweep_stale_sessions.assert_not_called()
+        pm.grid_manager.check_grid_signals.assert_not_called()
+        pm.grid_manager.execute_grid_trade.assert_not_called()
+
+
+class TestIpcDisabledGridBoot(unittest.TestCase):
+    def test_disabled_grid_boot_keeps_existing_session_readable(self):
+        from contextlib import ExitStack
+        from pathlib import Path
+        from grid_database import DatabaseManager
+        from grid_trading_manager import GridTradingManager
+        temporary = tempfile.TemporaryDirectory(prefix="grid_boot_")
+        self.addCleanup(temporary.cleanup)
+        folder = temporary.name
+        with patch.object(config, "ENABLE_SIMULATION_MODE", True):
+            import main
+            import web_server
+            database = DatabaseManager(str(Path(folder) / "trading_test.db"))
+            self.addCleanup(database.conn.close)
+            database.init_grid_tables()
+            now = datetime.now()
+            database.conn.execute(
+                "INSERT INTO grid_trading_sessions(stock_code,status,center_price,current_center_price,"
+                "max_investment,start_time,end_time) VALUES (?,?,?,?,?,?,?)",
+                ("000001.SZ","active",10,10,10000,now.isoformat(),(now+timedelta(days=7)).isoformat()))
+            database.conn.commit()
+            pm = types.SimpleNamespace(db_manager=database, grid_manager=None,
+                                       get_position=Mock(return_value={"current_price":10}))
+            executor = Mock()
+            def initialize(trader):
+                pm.grid_manager = GridTradingManager(database, pm, trader)
+            pm.init_grid_manager = Mock(side_effect=initialize)
+
+            stopped = threading.Event()
+            stopped.set()
+            with ExitStack() as stack:
+                for name in ("download_initial_data","calculate_initial_indicators",
+                             "start_data_thread","start_position_thread","start_strategy_thread",
+                             "start_log_cleanup_thread","start_database_maintenance_thread",
+                             "start_settlement_snapshot_thread","start_heartbeat_logger",
+                             "start_web_server_thread","cleanup"):
+                    stack.enter_context(patch.object(main, name))
+                stack.enter_context(patch.object(main, "init_system",
+                    return_value=(Mock(),Mock(),pm,executor,Mock())))
+                stack.enter_context(patch.object(main, "stop_event", stopped))
+                stack.enter_context(patch("main.signal.signal"))
+                stack.enter_context(patch("main.trade_calendar.refresh_at_startup"))
+                stack.enter_context(patch("premarket_sync.start_premarket_sync_scheduler"))
+                stack.enter_context(patch.object(config, "ENABLE_GRID_TRADING", False))
+                stack.enter_context(patch.object(config, "ENABLE_THREAD_MONITOR", False))
+                stack.enter_context(patch.object(config, "ENABLE_SELL_MONITOR", False))
+                stack.enter_context(patch("web_server.get_position_manager_instance", return_value=pm))
+                main.main()
+                response = web_server.app.test_client().get("/api/grid/session/000001")
+                self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                payload = response.get_json()
+                self.assertTrue(payload["has_session"])
+                self.assertEqual(payload["config"]["max_investment"],10000)
+                self.assertEqual(payload["stats"]["center_price"],10)
+                self.assertFalse(config.ENABLE_GRID_TRADING)
+                pm.init_grid_manager.assert_called_once_with(executor)
+                self.assertFalse(executor.mock_calls)
+
 if __name__ == "__main__":
     unittest.main()

@@ -68,7 +68,7 @@ class TradingExecutor:
         try:
             # 检查是否为模拟交易模式
             if not hasattr(config, 'ENABLE_SIMULATION_MODE') or not config.ENABLE_SIMULATION_MODE:
-                logger.warning("非模拟交易模式，无法初始化模拟账户")
+                logger.debug("实盘模式，跳过模拟账户初始化")
                 return False
                 
             # 记录初始模拟资金到日志

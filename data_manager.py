@@ -466,6 +466,8 @@ class DataManager:
     def _verify_connection(self):
         """验证连接状态"""
         try:
+            if getattr(config, "ENABLE_QMT_IPC_FALLBACK", False):
+                return bool(self.xt is not None and self.xt.connect())
             # 使用一个简单的测试来验证连接
             test_codes = ['000001.SZ']  # 测试股票
             test_data = self.xt.get_full_tick(test_codes)

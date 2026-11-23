@@ -401,13 +401,13 @@ class PositionManager:
 
             if now - self._last_reconnect_time < cooldown:
                 remaining = int(cooldown - (now - self._last_reconnect_time))
-                logger.info(f'[RECONNECT] 冷却中，还需等待 {remaining} 秒，跳过本次重连')
+                logger.debug(f'[RECONNECT] 冷却中，还需等待 {remaining} 秒，跳过本次重连')
                 return False
 
             self._last_reconnect_time = now
 
         # 锁外启动后台重连，避免阻塞监控线程
-        logger.warning('[RECONNECT] 开始尝试重连 QMT xttrader 接口...')
+        logger.warning('[RECONNECT] 开始尝试重连 QMT 交易接口...')
         return self._start_qmt_connect_worker(mode="reconnect", reason="auto_reconnect")
 
     def _probe_qmt_recovered(self):
@@ -520,6 +520,10 @@ class PositionManager:
             self._invalidate_positions_cache(f"强制回源: {reason}" if reason else "强制回源")
             timeout = timeout if timeout is not None else config.MONITOR_CALL_TIMEOUT
             run_with_timeout(self.get_all_positions, timeout)
+            if (config.ENABLE_QMT_IPC_FALLBACK and
+                    getattr(self.qmt_trader, "position_snapshot_valid", None) is False):
+                logger.warning(f"IPC 持仓来源不可用，保留缓存且不标记为实盘刷新成功（{reason}）")
+                return False
             logger.info(f"持仓已从实盘强制刷新{f'（{reason}）' if reason else ''}")
             return True
         except concurrent.futures.TimeoutError:
@@ -5085,8 +5089,9 @@ class PositionManager:
                             cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
                             in_cooldown = (time.time() - self._last_reconnect_time) < cooldown
 
-                            if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
-                                # 达到重连阈值，输出ERROR级别日志并尝试重连
+                            if (consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3)
+                                    and not in_cooldown):
+                                # 达到阈值且冷却已结束时，报告本次重连尝试
                                 logger.error(
                                     f'❌ [MONITOR][非交易时段] 连续 {consecutive_errors} 次断连，触发重连'
                                 )
@@ -5187,11 +5192,15 @@ class PositionManager:
                             logger.info('[MONITOR] 探测到 QMT 已自行恢复，标记连接正常（免去一次冗余重连）')
                         else:
                             consecutive_errors += 1
-                            logger.warning(
+                            log_throttled(
+                                logger, logging.WARNING, 'qmt_disconnected_cache',
                                 f'[MONITOR] QMT 已断连，缓存数据不计为成功'
                                 f'（{consecutive_errors}/{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)}）'
                             )
-                            if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                            in_cooldown = (time.time() - self._last_reconnect_time) < getattr(
+                                config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                            if (consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3)
+                                    and not in_cooldown):
                                 logger.error(
                                     f'❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次QMT断连，触发重连'
                                 )
@@ -5203,6 +5212,7 @@ class PositionManager:
                     # QMT 连通（或模拟模式）：重置错误计数，不在此处写 qmt_connected
                     # qmt_connected=True 由 _attempt_qmt_reconnect() 在重连成功后设置
                     consecutive_errors = 0
+                    reset_log_throttle('qmt_disconnected_cache')
                 except concurrent.futures.TimeoutError:
                     consecutive_errors += 1
                     logger.warning(f"[MONITOR_TIMEOUT] 获取持仓超时,连续{consecutive_errors}次")
@@ -5281,12 +5291,27 @@ class PositionManager:
                             logger.warning(f"{stock_code} 价格无效: {current_price:.2f},跳过本次检查")
                             continue
                         if not self.data_manager.is_quote_tradable(stock_code, latest_quote):
-                            logger.warning(
-                                f"[MARKET_HEALTH] {stock_code} 行情健康度不足，跳过信号检测 "
+                            continuous = config.is_continuous_trade_time()
+                            warming_up = (latest_quote.get('_source') == 'QMT_IPC' and
+                                          latest_quote.get('_tradable') is True and
+                                          latest_quote.get('_health_score') is None)
+                            reason = ("行情健康评分预热，暂缓交易" if warming_up else
+                                      "行情不可用于交易" if continuous else "非连续竞价时段，仅保留参考行情")
+                            notice_key = (f"market_quote_warming:{stock_code}" if warming_up else
+                                          f"market_quote_untradable:{stock_code}:{continuous}")
+                            log_throttled(
+                                logger, logging.WARNING if continuous and not warming_up else logging.DEBUG,
+                                notice_key,
+                                f"[MARKET_HEALTH] {stock_code} {reason}，跳过信号检测 "
                                 f"(source={latest_quote.get('_source')}, "
-                                f"score={latest_quote.get('_health_score')})"
+                                f"score={latest_quote.get('_health_score')}, "
+                                f"tradable={latest_quote.get('_tradable')}, "
+                                f"quote_time={latest_quote.get('time') or latest_quote.get('timetag')})"
                             )
                             continue
+                        reset_log_throttle(f"market_quote_untradable:{stock_code}:True")
+                        reset_log_throttle(f"market_quote_untradable:{stock_code}:False")
+                        reset_log_throttle(f"market_quote_warming:{stock_code}")
                     except Exception as e:
                         logger.error(f"{stock_code} 获取行情异常: {e}")
                         continue
