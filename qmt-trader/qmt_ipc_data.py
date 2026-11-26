@@ -61,6 +61,7 @@ class QmtIpcDataAdapter:
         self.account = account or config.get_account_config().get("account_id", "")
         self.root = os.path.join(config.QMT_IPC_ROOT, str(self.account))
         self._lock = _subscriptions_lock
+        self._quote_diagnostics = threading.local()
 
     def connect(self):
         path = os.path.join(self.root, "status", "heartbeat.json")
@@ -99,32 +100,55 @@ class QmtIpcDataAdapter:
         return read_snapshot(self.root, self.account, "quotes.json",
                              config.QMT_IPC_QUOTE_MAX_AGE_SECONDS)
 
+    def get_quote_status(self, stock_code):
+        """返回当前线程最近一次报价校验结果，避免并发查询覆盖拒绝原因。"""
+        code = self._code(stock_code)
+        return dict(getattr(self._quote_diagnostics, "values", {}).get(code, {}))
+
     def get_full_tick(self, stock_list):
+        statuses = {}
+        self._quote_diagnostics.values = statuses
         for code in stock_list:
             self.subscribe_quote(code)
         try:
             snapshot = self._snapshot()
-        except IpcSnapshotUnavailable:
+        except IpcSnapshotUnavailable as exc:
+            for code in stock_list:
+                statuses[self._code(code)] = dict(reason="snapshot_unavailable",
+                    message="IPC 行情快照不可用", detail=str(exc))
             return {}
         result = {}
         for code in stock_list:
             canonical = self._code(code)
             quote = snapshot.get("quotes", {}).get(canonical)
+            status = dict(exported_at=snapshot.get("timestamp"),
+                          max_age_seconds=config.QMT_IPC_QUOTE_MAX_AGE_SECONDS)
+            statuses[canonical] = status
             if not isinstance(quote, dict):
+                status.update(reason="quote_missing", message="快照中缺少该股票报价")
                 continue
             try:
                 price = float(quote.get("lastPrice") or 0)
-                stamp = source_timestamp(quote.get("time") or quote.get("timetag"))
-                age = time.time() - stamp
                 if not math.isfinite(price) or price <= 0:
+                    status.update(reason="invalid_price", message="报价价格无效")
                     continue
-                if config.is_continuous_trade_time() and not (
-                        -config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS <= age <= config.QMT_IPC_QUOTE_MAX_AGE_SECONDS):
-                    continue
+                source_time = quote.get("time") or quote.get("timetag")
+                status["quote_asof"] = source_time
+                stamp = source_timestamp(source_time)
+                age = time.time() - stamp
+                status["quote_age_seconds"] = round(age, 6)
             except (TypeError, ValueError, OverflowError):
+                status.update(reason="invalid_quote", message="报价价格或来源时间格式无效")
                 continue
-            result[canonical] = dict(quote, _tradable=(
-                -config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS <= age <= config.QMT_IPC_QUOTE_MAX_AGE_SECONDS))
+            tradable = (-config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS <= age <=
+                        config.QMT_IPC_QUOTE_MAX_AGE_SECONDS)
+            if config.is_continuous_trade_time() and not tradable:
+                status.update(reason="quote_expired" if age > 0 else "quote_future",
+                              message="报价来源时间过期" if age > 0 else "报价来源时间超前")
+                continue
+            status.update(reason="success" if tradable else "reference_quote",
+                          message="报价有效" if tradable else "仅可作为参考行情")
+            result[canonical] = dict(quote, _tradable=tradable)
         return result
 
     def get_instrument_detail(self, stock_code):

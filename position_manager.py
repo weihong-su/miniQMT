@@ -5283,8 +5283,25 @@ class PositionManager:
                     try:
                         latest_quote = self.data_manager.get_latest_data(stock_code)
                         if not latest_quote:
-                            logger.warning(f"{stock_code} 获取行情失败,跳过本次检查")
+                            if config.ENABLE_QMT_IPC_FALLBACK:
+                                try:
+                                    reader = getattr(getattr(self.data_manager, "xt", None), "get_quote_status", None)
+                                    diagnostic = reader(stock_code) if callable(reader) else {}
+                                except Exception as exc:
+                                    diagnostic = dict(reason="diagnostic_unavailable",
+                                                      message="行情不可用且诊断读取失败", detail=str(exc))
+                                diagnostic = diagnostic if isinstance(diagnostic, dict) else {}
+                                log_throttled(
+                                    logger, logging.WARNING, f"ipc_quote_unavailable:{stock_code}",
+                                    f"[IPC_QUOTE] {stock_code} {diagnostic.get('message', '行情不可用')}，跳过信号检测 "
+                                    f"(reason={diagnostic.get('reason', 'unavailable')}, "
+                                    f"quote_time={diagnostic.get('quote_asof')}, age={diagnostic.get('quote_age_seconds')}, "
+                                    f"max_age={diagnostic.get('max_age_seconds')}, exported_at={diagnostic.get('exported_at')}, "
+                                    f"detail={diagnostic.get('detail', '')})")
+                            else:
+                                logger.warning(f"{stock_code} 获取行情失败,跳过本次检查")
                             continue
+                        reset_log_throttle(f"ipc_quote_unavailable:{stock_code}")
 
                         current_price = float(latest_quote.get('lastPrice', 0))
                         if current_price <= 0:

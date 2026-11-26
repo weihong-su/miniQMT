@@ -2203,8 +2203,15 @@ class DataManager:
                     self.xt = _create_xtdata()
                 tick = self.xt.get_full_tick([adjusted_code]).get(adjusted_code)
                 valid = bool(tick and tick.get("lastPrice", 0) > 0)
+                try:
+                    status_reader = getattr(self.xt, "get_quote_status", None)
+                    diagnostic = status_reader(adjusted_code) if callable(status_reader) else {}
+                except Exception:
+                    diagnostic = {}
+                diagnostic = diagnostic if isinstance(diagnostic, dict) else {}
+                reason = diagnostic.get("reason") or ("success" if valid else "unavailable")
                 self._record_market_health("QMT_IPC", "realtime", adjusted_code, valid,
-                                           reason="success" if valid else "unavailable")
+                                           reason=reason)
                 return self._decorate_quote(tick, "QMT_IPC", "realtime", adjusted_code) if valid else None
 
             # 在交易时间内，优先使用实时数据管理器

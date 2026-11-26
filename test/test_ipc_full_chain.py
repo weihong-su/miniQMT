@@ -669,6 +669,28 @@ class TestIpcRuntimeDiagnostics(unittest.TestCase):
         pm.grid_manager.execute_grid_trade.assert_not_called()
 
 
+
+    def test_missing_ipc_quote_logs_the_specific_reason_once(self):
+        pm = self._manager()
+        pm.data_manager.get_latest_data.return_value = None
+        pm.data_manager.xt.get_quote_status.return_value = dict(
+            reason="quote_expired",message="报价来源时间过期",
+            quote_asof=975000,quote_age_seconds=25,max_age_seconds=15,exported_at="snapshot")
+        log = self._run(pm, 4)
+        self.assertEqual(log.log.call_count,1)
+        self.assertIn("quote_expired",str(log.log.call_args))
+        self.assertIn("25",str(log.log.call_args))
+        pm._detect_and_enqueue_dynamic_signal.assert_not_called()
+
+    def test_missing_quote_warning_resets_after_a_fresh_quote(self):
+        pm = self._manager()
+        pm.data_manager.get_latest_data.side_effect = [None,None,self._quote(True),None]
+        pm.data_manager.xt.get_quote_status.return_value = dict(reason="quote_missing",message="缺少报价")
+        log = self._run(pm, 4)
+        self.assertEqual(log.log.call_count,2)
+        pm._detect_and_enqueue_dynamic_signal.assert_called_once_with("000001",10.0)
+
+
 class TestIpcDisabledGridBoot(unittest.TestCase):
     def test_disabled_grid_boot_keeps_existing_session_readable(self):
         from contextlib import ExitStack
@@ -726,6 +748,115 @@ class TestIpcDisabledGridBoot(unittest.TestCase):
                 self.assertFalse(config.ENABLE_GRID_TRADING)
                 pm.init_grid_manager.assert_called_once_with(executor)
                 self.assertFalse(executor.mock_calls)
+
+class TestIpcQuoteDiagnostics(_IpcSnapshotBase):
+    def _adapter(self, quote_age=0, price=10, stocks=True):
+        from qmt_ipc_data import QmtIpcDataAdapter
+        now=time.time()
+        value=dict(account_id=self.acc,timestamp=datetime.fromtimestamp(now).isoformat(),
+                   quotes={"000001.SZ":dict(lastPrice=price,time=int((now-quote_age)*1000),
+                                            bidPrice=[9.99],askPrice=[10.01])} if stocks else {})
+        with open(self.trader._dir("status","quotes.json"),"w",encoding="utf-8") as handle:
+            json.dump(value,handle)
+        return QmtIpcDataAdapter(account=self.acc)
+
+    @staticmethod
+    def _status(adapter):
+        getter=getattr(adapter,"get_quote_status",lambda code:{})
+        return getter("000001")
+
+    def test_expired_quote_keeps_trade_rejection_and_reports_its_age(self):
+        adapter=self._adapter(quote_age=25)
+        with patch.object(config,"is_continuous_trade_time",return_value=True):
+            self.assertEqual(adapter.get_full_tick(["000001"]),{})
+        status=self._status(adapter)
+        self.assertEqual(status.get("reason"),"quote_expired")
+        self.assertGreaterEqual(status["quote_age_seconds"],25)
+        self.assertIn("quote_asof",status)
+
+    def test_missing_and_invalid_quotes_have_separate_reasons(self):
+        for age,price,stocks,reason in [(0,10,False,"quote_missing"),
+                                       (0,0,True,"invalid_price"),
+                                       (-30,10,True,"quote_future")]:
+            with self.subTest(reason=reason):
+                adapter=self._adapter(age,price,stocks)
+                with patch.object(config,"is_continuous_trade_time",return_value=True):
+                    self.assertEqual(adapter.get_full_tick(["000001"]),{})
+                self.assertEqual(self._status(adapter).get("reason"),reason)
+
+    def test_missing_file_is_not_mislabeled_as_an_expired_quote(self):
+        from qmt_ipc_data import QmtIpcDataAdapter
+        adapter=QmtIpcDataAdapter(account=self.acc)
+        self.assertEqual(adapter.get_full_tick(["000001"]),{})
+        self.assertEqual(self._status(adapter).get("reason"),"snapshot_unavailable")
+
+    def test_health_endpoint_retains_the_actual_rejection_reason(self):
+        import data_manager
+        manager=data_manager.DataManager.__new__(data_manager.DataManager)
+        manager.xt=self._adapter(quote_age=25)
+        manager.market_health=data_manager.MarketDataHealthTracker()
+        with patch.object(config,"ENABLE_QMT_IPC_FALLBACK",True), \
+             patch.object(config,"is_continuous_trade_time",return_value=True):
+            self.assertIsNone(manager.get_latest_data("000001"))
+        score=manager.market_health.get_score(source="QMT_IPC",stock_code="000001.SZ")
+        self.assertEqual(score["last_reason"],"quote_expired")
+
+    def test_concurrent_call_cannot_replace_this_threads_rejection_reason(self):
+        adapter=self._adapter(quote_age=25)
+        ready,release=threading.Event(),threading.Event()
+        captured=[]
+        def worker():
+            adapter.get_full_tick(["000001"])
+            ready.set()
+            release.wait(2)
+            captured.append(self._status(adapter))
+        with patch.object(config,"is_continuous_trade_time",return_value=True):
+            thread=threading.Thread(target=worker)
+            try:
+                thread.start()
+                self.assertTrue(ready.wait(2))
+                self._adapter()
+                self.assertTrue(adapter.get_full_tick(["000001"]))
+            finally:
+                release.set()
+                thread.join(3)
+        self.assertEqual(captured[0].get("reason"),"quote_expired")
+        self.assertEqual(self._status(adapter).get("reason"),"success")
+
+
+    def test_fresh_tick_with_low_health_score_remains_blocked(self):
+        from data_manager import DataManager
+        manager=DataManager.__new__(DataManager)
+        quote=dict(_source="QMT_IPC",_tradable=True,_health_score=64)
+        with patch.object(config,"MARKET_HEALTH_ENABLED",True), \
+             patch.object(config,"MARKET_HEALTH_OBSERVE_ONLY",False), \
+             patch.object(config,"MARKET_HEALTH_TRADING_MIN_SCORE",70):
+            self.assertFalse(manager.is_quote_tradable("000001",quote))
+
+
+    def test_diagnostic_error_cannot_drop_a_valid_quote(self):
+        from data_manager import DataManager
+        manager=DataManager.__new__(DataManager)
+        manager.xt=types.SimpleNamespace(
+            get_full_tick=Mock(return_value={"000001.SZ":{"lastPrice":10}}),
+            get_quote_status=Mock(side_effect=RuntimeError("诊断读取失败")))
+        with patch.object(config,"ENABLE_QMT_IPC_FALLBACK",True):
+            quote=manager.get_latest_data("000001")
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote["lastPrice"],10)
+
+    def test_diagnostic_error_keeps_missing_quote_safely_rejected(self):
+        harness=TestIpcRuntimeDiagnostics()
+        try:
+            pm=harness._manager()
+            pm.data_manager.get_latest_data.return_value=None
+            pm.data_manager.xt.get_quote_status.side_effect=RuntimeError("诊断读取失败")
+            log=harness._run(pm,3)
+            log.error.assert_not_called()
+            pm._detect_and_enqueue_dynamic_signal.assert_not_called()
+        finally:
+            harness.doCleanups()
+
 
 if __name__ == "__main__":
     unittest.main()
