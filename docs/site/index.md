@@ -2,7 +2,7 @@
 
 基于迅投 QMT API 的**无人值守量化交易系统**。
 
-当前版本：**v3.9.6（2026-10-31）**。本版完善委托与部分成交闭环、Web 持仓提示及运行数据保留，详见[变更日志](changelog.md)。
+当前发布版本：**v3.9.6（2026-10-31）**。主分支于 2026-11-27 补充 IPC 原生交易、启动竞态、跨日账本及 Web 状态说明，记录在[开发中变更](changelog.md#unreleased)。部署见 [IPC 指南](miniqmt/qmt-ipc-fallback.md)，界面含义见 [Web 前端](miniqmt/web-frontend.md)。
 
 <div class="grid cards" markdown>
 

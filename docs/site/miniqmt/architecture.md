@@ -22,6 +22,12 @@
 - 每个信号经过 `validate_trading_signal()` 验证，防止重复执行
 - **信号保活与时效兜底**（v3.8.6）：`latest_signals` 是覆盖式队列，监控线程 3 秒一轮、策略线程单股消费周期约 `10 + 持仓数 + 股票池数` 秒。首次止盈这类「跨过即触发」的瞬时信号，价格回踩一次就会被原逻辑删除而永久丢失。现由 `ENABLE_DYNAMIC_SIGNAL_KEEPALIVE` 在窗口内保留未消费信号，并由 `validate_trading_signal()` 的年龄检查（`DYNAMIC_SIGNAL_MAX_AGE_SECONDS`）兜底，防止以过旧的价格快照下单。详见[止盈止损 · 信号保活与时效兜底](stop-profit-loss.md)
 
+### IPC 启动与回调生命周期
+
+`PositionManager` 先建立内存库、缓存、版本、信号、委托、刷新、网格和重连状态，再连接交易通道和注册回调，最后启动同步线程。`get_position_manager()` 与 `get_trading_executor()` 使用可重入锁串行发布实例，后台回报在构造阶段请求全局实例时等待完整对象。
+
+IPC 的回调列表在锁内复制、锁外执行；未注册消费者时保留回执，委托投递抛出异常时允许下轮重试。避免“先连接再建锁”造成缺少 `pending_orders_lock` / `callback_refresh_lock`，也避免注册空窗吞掉历史回执。回归见 `test/test_ipc_startup_race.py`，部署与诊断见 [IPC 指南](qmt-ipc-fallback.md)。
+
 ### 双层存储架构
 
 ```
@@ -36,6 +42,12 @@
 - **内存数据库**：高频更新数据（价格、市值、盈亏比例）
 - **SQLite**：持久化关键状态（开仓日期、止盈标记、最高价）
 - 修改内存数据后必须调用 `_increment_data_version()` 触发前端更新
+
+### 资产、历史与自动买入约束
+
+- 总资产核对包含可用资金、冻结资金和持仓市值；资产 / 估值偏差只告警，不触发断连或反推现金。
+- IPC 的实时行情来自文件适配器；历史日线沿用 Tushare → Mootdx，指数走各源的指数接口，实时和历史健康按目的分别记录。
+- 实盘内部自动策略（含网格）按单股全持仓、在途买入及未同步成交数量核对 `MAX_POSITION_VALUE`。未知买入结果保留预占，不重发；网格另保留 lot 成本预算。Web 手动买入路径的边界见 [Web API](web-api.md)。
 
 ### 外部成交补账
 
@@ -77,7 +89,7 @@ thread_monitor.py      # 线程健康监控与自愈
 data_manager.py        # 行情获取（实时标准模式 xtdata→Mootdx，网关模式 xtdata→lastClose/None；历史标准模式 Tushare→Mootdx，网关模式 xtdata→Tushare→Mootdx；行情健康评分；.SH/.SZ/.BJ 代码归一）
 indicator_calculator.py # 技术指标计算
 position_manager.py    # 持仓管理核心（内存 + SQLite 双层）
-trading_executor.py    # 交易执行器（xttrader 接口）
+trading_executor.py    # 交易执行器（共用实盘下单入口、单股自动买入预占及各交易通道）
 strategy.py            # 交易策略逻辑
 web_server.py          # RESTful API 服务（Flask；QMT_API_TOKEN 配置后统一保护所有 /api/*，含 GET/SSE）
 easy_qmt_trader.py     # QMT 交易 API 封装（xttrader 直连）
@@ -85,7 +97,7 @@ qmt-trader/            # 大QMT 降级交易通道  [v3.7.0+]
   _qmt_trader_base.py  #   IPC/RPC 共享件（列名、Fake对象、纯逻辑）
   qmt_rpc_trader.py    #   大QMT RPC 适配器（Redis/ZMQ RPC 驱动大QMT）
   qmt_ipc_trader.py    #   大QMT 文件IPC 适配器（JSON文件驱动大QMT）
-  qmt_trade_executor.py #   大QMT 模型交易策略入口脚本（GBK编码）
+  QMT_trade_executor.py #   大QMT 模型交易策略入口（保持 ASCII 源码，兼容内置编辑器）
   qmt_trade_client.py  #   策略端客户端库
 premarket_sync.py      # 盘前同步与初始化
 config_manager.py      # 配置持久化管理

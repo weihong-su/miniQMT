@@ -921,10 +921,9 @@ class TradingStrategy:
                 if self._is_signal_processed(signal_key):
                     logger.debug(f"{stock_code} 买入信号今日已处理，跳过")
                 else:
-                    logger.info(f"{stock_code} 检测到买入信号")
-
                     # 只有在启用自动交易时才执行；传入已有信号避免重复调用
                     if config.ENABLE_AUTO_TRADING:
+                        logger.info(f"{stock_code} 检测到买入信号")
                         if self.execute_buy_strategy(stock_code, buy_signal=buy_signal):
                             logger.info(f"{stock_code} 执行买入策略成功")
                             return

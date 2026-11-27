@@ -521,13 +521,14 @@ class TestTushareFallbackIntegration(TestBase):
                 # Tushare 返回正常数据 → 不应走 Mootdx
                 self._make_healthy_tushare()
 
-                with patch('data_manager.Methods', create=True) as mock_methods:
+                # 只隔离下载调用，保留真实证券代码格式化，避免 Mock 伪装成指数。
+                with patch('Methods.getStockData') as mock_mootdx:
                     df = self.dm.download_history_data(
                         '000001.SZ', period='day',
                         start_date='2026-07-01', end_date='2026-07-05'
                     )
                     # Tushare 成功，不应调用 Mootdx
-                    mock_methods.getStockData.assert_not_called()
+                    mock_mootdx.assert_not_called()
                     self.assertIsNotNone(df)
                     self.assertFalse(df.empty)
 

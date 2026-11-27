@@ -1312,9 +1312,12 @@ class DataManager:
             else:
                 freq = 9  # Default to 日线
 
-            # Adjust stock code if necessary
-            if stock_code.endswith((".SH", ".SZ")):
-                stock_code = stock_code[:-3]  # Remove suffix
+            is_index = (stock_code in ('000001.SH', '999999.SH') or
+                        (stock_code.endswith('.SZ') and stock_code.startswith('399')))
+            history_query = Methods.getIndexData if is_index else Methods.getStockData
+            query_code = stock_code
+            if not is_index and stock_code.endswith((".SH", ".SZ")):
+                query_code = stock_code[:-3]
 
             # ⭐ 超时优化：为Mootdx调用添加超时保护
             # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
@@ -1322,9 +1325,9 @@ class DataManager:
 
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(
-                Methods.getStockData,
-                code=stock_code,
-                offset=60,
+                history_query,
+                code=query_code,
+                offset=(config.MACD_ADVICE_MIN_HISTORY_BARS + max(config.MA_PERIODS)) if is_index else 60,
                 freq=freq,
                 adjustflag='qfq'  # 前复权
             )
@@ -1375,8 +1378,8 @@ class DataManager:
             # Ensure 'close' column is numeric
             df['close'] = pd.to_numeric(df['close'], errors='coerce')
 
-            # Add stock_code column
-            df['stock_code'] = stock_code
+            # 指数保留交易所；股票沿用既有裸代码返回口径。
+            df['stock_code'] = stock_code if is_index else query_code
 
             # logger.info(f"成功使用Mootdx获取 {stock_code} 的历史数据, 共 {len(df)} 条记录")
             return df
@@ -1443,8 +1446,9 @@ class DataManager:
 
         logger.info(f"下载 {xt_stock_code} 的历史数据, 周期: {period}, 从 {start_date} 到 {end_date}")
 
-        if not self.xt:
-            logger.debug(f"xtdata未连接，跳过下载 {xt_stock_code} 历史数据")
+        if (not self.xt or not callable(getattr(self.xt, 'download_history_data', None))
+                or not callable(getattr(self.xt, 'get_market_data_ex', None))):
+            logger.debug(f"当前行情适配器不提供历史接口，跳过下载 {xt_stock_code}")
             return None
 
         try:
@@ -1750,7 +1754,13 @@ class DataManager:
             return None
 
         ts_code = self._to_tushare_code(stock_code)
-        query_func = getattr(pro, 'fund_daily', None) if self._is_tushare_fund_code(ts_code) else getattr(pro, 'daily', None)
+        is_index = (ts_code in ('000001.SH', '999999.SH') or
+                    (ts_code.endswith('.SZ') and ts_code.startswith('399')))
+        if ts_code == '999999.SH':
+            ts_code = '000001.SH'
+        endpoint = ('index_daily' if is_index else
+                    'fund_daily' if self._is_tushare_fund_code(ts_code) else 'daily')
+        query_func = getattr(pro, endpoint, None)
         if query_func is None:
             logger.debug(f"Tushare: 当前客户端不支持 {stock_code} 的历史数据接口")
             return None
@@ -1782,6 +1792,15 @@ class DataManager:
                 return None
 
             if df.empty:
+                # 无明确增量区间的首次历史请求为空，不能冒充历史链路可用。
+                if start_date is None:
+                    cached = self.get_history_data_from_db(stock_code) if getattr(self, 'conn', None) is not None else None
+                    if cached is None or len(cached) < config.MACD_ADVICE_MIN_HISTORY_BARS:
+                        self._record_market_health("Tushare", "history", stock_code, False,
+                                                   latency_ms, reason="empty_history")
+                        self._ts_consecutive_failures += 1
+                        self._check_tushare_cooldown()
+                        return None
                 self._ts_consecutive_failures = 0
                 self._ts_cooldown_until = 0.0
                 self._record_market_health("Tushare", "history", stock_code, True, latency_ms, reason="no_data")

@@ -409,7 +409,13 @@ QMT_IPC_DONE_LOOKBACK_SECONDS = 86400
 QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS = 90.0  # 账户快照最大年龄，过期数据不参与持仓同步
 QMT_IPC_QUOTE_INTERVAL_SECONDS = 2.0  # 大 QMT 行情导出周期
 QMT_IPC_QUOTE_MAX_AGE_SECONDS = 15.0  # 连续交易时段行情来源时间的最大年龄
+QMT_IPC_READ_RETRIES = 2  # 瞬态共享冲突时的额外读取次数
+QMT_IPC_READ_RETRY_DELAY_SECONDS = 0.02  # 每次额外读取前等待时间
 QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 5.0  # 允许的时钟偏差
+QMT_IPC_RECONNECT_MAX_INTERVAL_SECONDS = 300.0  # 完整重连失败后的退避上限
+QMT_IPC_HEALTH_PROBE_INTERVAL_SECONDS = 5.0  # 独立恢复探测，不受完整重连退避影响
+QMT_IPC_PREFLIGHT_LEAD_SECONDS = 300.0  # 盘前同步前提前检查生产端就绪状态
+PREMARKET_SNAPSHOT_RETRY_SECONDS = 15.0  # 仅在既定盘前补偿窗口内重试不完整开盘快照
 
 # ======================= 大QMT RPC Fallback（xtquant_big_convert）=======================
 # xttrader 降级替代方案：通过 Redis/ZMQ/MySQL RPC 远程驱动大QMT内置Python执行交易。
@@ -569,6 +575,7 @@ MA_PERIODS = [10, 20, 30, 60]
 
 # MACD 操盘建议(悬浮窗)配置
 SHENZHEN_INDEX_CODE = "399001.SZ"   # 账号级建议使用的深证成指代码
+MACD_ADVICE_MIN_HISTORY_BARS = 60  # 建议计算所需的最少有效日线
 MACD_ADVICE_CACHE_TTL = 300         # 建议结果缓存时长(秒)，日线日内基本不变
 
 # ======================= 参数配置范围 =======================

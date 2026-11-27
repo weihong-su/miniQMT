@@ -2,14 +2,15 @@
 
 ## 概述
 
-项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 38 个测试组（含 `fast` 快速子集）。
+项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 39 个测试组（含 `fast` 快速子集）。
 
-v3.9.6 发布前于 2026-10-31 使用 Anaconda `python39` 在隔离副本执行 `--all-with-fast`：**38 组、172 次模块执行、3867 次用例执行，3867 通过、0 失败、0 错误、0 跳过，成功率 100%**，耗时 1177.21 秒。次数包含 fast 与专项组的重复覆盖。
+2026-11-27 主分支开发修正在 Anaconda `python39`、虚拟账户和独立源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行，全部通过、0 失败、0 错误、0 跳过，成功率 100%**，耗时 1265.92 秒。次数包含 fast 与专项组的重复覆盖。
 
 ## 测试统计速查
 
 | 版本 | 日期 | 回归规模（含 fast） | 通过用例 | 通过率 |
 |------|------|----------|--------|--------|
+| 开发中（IPC / Web 修正） | 2026-11-27 | 39 组, 178 次模块执行, 4121 次用例执行 | 4121 | 100% |
 | v3.9.6 | 2026-10-31 | 38 组, 172 次模块执行, 3867 次用例执行 | 3867 | 100% |
 | v3.9.5 | 2026-10-15 | 37 组, 160 模块, 3496 用例 | 3496 | 100% |
 | v3.9.4 | 2026-09-30 | 37 组, 159 模块, 3450 用例 | 3450 | 100% |
@@ -99,6 +100,16 @@ python -m unittest test.test_system_integration -v
 python test/run_all_grid_tests.py
 ```
 
+### IPC 运行与启动回归
+
+- `test/test_runtime_ops_20261126.py`：固定股数执行、预算、账户缓存、IPC 就绪及盘前补偿。
+- `test/test_runtime_ops_20261127.py`：实际日期与账号隔离、历史补录占位保护、指数历史、单股敞口、预占和重复流水修正。
+- `test/test_ipc_startup_race.py`：15 项即时成交 / 委托回报、晚注册、失败重投、并发单例及构造阶段的后台回报获取全局执行器验证。
+
+11 月 27 日最后一次启动修正的专项 15 项、扩大回归 807 项全部通过。4 笔委托、6 笔原生成交在真实数据库副本中连续重放 3 轮，391 条原记录一致、新增流水为 0；该验证不发真实下单或撤单。
+
+心跳与重连防阻塞测试使用事件验证“旧工作尚未释放时新处理已返回”，避免把日志 / 文件 I/O 耗时误当成线程互等；生产时效参数保持原值。
+
 ### QMT order_id 回归
 
 `order_stock_async()` 的 `seq -> order_id` 行为已经固化为单元/集成回归，不再保留可触发实盘下单的 Web 调试窄接口。相关实盘行为结论和匹配原则见 [QMT order_id 匹配](qmt-order-id-matching.md)。
@@ -118,6 +129,7 @@ python test/run_all_grid_tests.py
 
 | 组名 | 优先级 | 内容 |
 |------|--------|------|
+| `priority_optimization` | critical | 跨日订单身份、成交终态、资产估值及运行修正 |
 | `autobuy` | high | 自动买入候选池筛选、条件检查、防重、HTTP 下单 |
 | `system_integration` | critical | 系统集成、无人值守、线程监控 |
 | `stop_profit` | high | 动态止盈止损策略（9 个模块） |
@@ -146,12 +158,16 @@ python test/run_all_grid_tests.py
 | `grid_full_range_coverage` | critical | 全网格价格区间覆盖（114 个用例，A-K 11 个套件） |
 | `grid_true_pnl` | critical | True P&L / LIFO 真实盈亏验证 |
 | `grid_simulation` | high | 价格模拟测试 |
-| `qmt_ipc_fallback` | high | 大QMT 文件 IPC 客户端、执行器、PositionManager 集成 |
+| `qmt_ipc_fallback` | high | IPC 原生链路、生产端诊断、启动回调时序、晚注册投递与运行优化 |
 | `qmt_rpc` | high | 大QMT RPC 交易后端契约、只读门禁、回调和委托映射 |
 | `simulation_trading_e2e` | critical | 模拟交易模式端到端（核心链路 / Web 下单 / 策略四分支 / 模式切换） |
 | `p1_fixes` | high | 重连缓存刷新 / QMT 自恢复探测 / 信号保活与时效兜底 / 超时泄漏可观测 |
 | `sellability` | critical | 可卖数量、持仓受限原因、自动补仓门控与网关兼容 |
-| `fast` | critical | 关键功能子集（当前 59 次模块执行、1487 次用例执行） |
+| `executor_cancel_order` | critical | TradingExecutor 撤单通道与委托持仓管理集成 |
+| `grid_pause_after_full_exit` | critical | 全仓止盈或止损成交后的同股网格暂停 |
+| `positions_cache` | critical | 持仓缓存失效、版本触发与假空窗口防护 |
+| `settlement_export` | critical | 交割单、快照、净值、手续费及券商导入导出 |
+| `fast` | critical | 关键功能子集（当前 59 次模块执行、1507 次用例执行） |
 
 ---
 

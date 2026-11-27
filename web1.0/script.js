@@ -824,7 +824,22 @@
         elements.availableBalance.textContent = validAsset ? statusData.account.availableBalance.toFixed(2) : '--';
         elements.totalAssets.textContent = validAsset ? statusData.account.totalAssets.toFixed(2) : '--';
         updateAccountValuation(statusData.account?.valuation, statusData.account?.maxHoldingValue, statusData.account?.totalAssets);
-        elements.lastUpdateTimestamp.textContent = statusData.account?.timestamp ?? new Date().toLocaleString('zh-CN');
+        const validation = statusData.account?.openValidation;
+        const validationNames = {valid: '开盘财务核对通过', pending_review: '开盘财务差额待复核',
+            unverified: '开盘财务尚未核验', unavailable: '暂无开盘财务证据'};
+        elements.lastUpdateTimestamp.title = validationNames[validation?.status] || '';
+        const hint = document.getElementById('accountValuationHint');
+        if (hint && validation?.status === 'pending_review') {
+            hint.textContent += (hint.textContent ? '；' : '') + '开盘差额待复核 ' + validation.identity_diff + ' 元';
+        }
+        if (hint && statusData.account?.quoteMode === 'reference') {
+            hint.textContent += (hint.textContent ? '；' : '') + '非连续交易时段，行情仅供参考';
+        }
+        const accountState = statusData.account?.dataStatus;
+        const accountTime = statusData.account?.timestamp ?? '--';
+        elements.lastUpdateTimestamp.textContent = accountTime
+            + (accountState === 'stale' ? '（缓存已过期，等待账户更新）'
+                : accountState === 'unavailable' ? '（账户数据不可用）' : '');
         
         // 获取后端状态，三个自动开关都按“用户意图优先，否则以后端为准”同步
         const backendMonitoring = statusData.settings?.isMonitoring ?? statusData.isMonitoring ?? false;
@@ -920,6 +935,11 @@
 
     // 轻量级账户信息更新，用于SSE
     function updateQuickAccountInfo(accountInfo) {
+        if (accountInfo.data_status) {
+            elements.lastUpdateTimestamp.textContent = (accountInfo.timestamp ?? '--')
+                + (accountInfo.data_status === 'stale' ? '（缓存已过期，等待账户更新）'
+                    : accountInfo.data_status === 'unavailable' ? '（账户数据不可用）' : '');
+        }
         const validAsset = Number(accountInfo.total_asset) > 0;
         if (accountInfo.available !== undefined) {
             elements.availableBalance.textContent = validAsset ? parseFloat(accountInfo.available).toFixed(2) : '--';
@@ -1835,6 +1855,13 @@
             
             // 只更新连接状态指示器，不影响监控状态
             updateConnectionStatus(data.connected);
+            const indicator = document.getElementById('statusIndicator');
+            if (indicator && data.ipc) {
+                const sources = ['heartbeat', 'account', 'quotes'].filter(key => !data.ipc[key]?.available);
+                indicator.title = sources.length ? 'IPC 数据待恢复：'
+                    + sources.map(key => ({heartbeat: '心跳', account: '账户', quotes: '行情'}[key])).join('、')
+                    : data.ipc.ready ? 'IPC 数据已就绪' : 'IPC 个股行情待更新';
+            }
         } catch (error) {
             console.error("Error checking API connection:", error);
             updateConnectionStatus(false);
@@ -3645,6 +3672,11 @@
         if (data.stats && data.config) {
             const used = Number(stats.current_investment || 0);
             const max = Number(config.max_investment || stats.max_investment || snapshot.denominator || 0);
+            const budget = stats.buy_budget;
+            document.getElementById('tooltipInvestment').title = budget?.blocked
+                ? '买入预算不足：剩余 ' + Number(budget.remaining).toFixed(2)
+                    + ' 元，所需 ' + Number(budget.required_amount).toFixed(2) + ' 元'
+                : '';
             if (max > 0) {
                 const percent = Math.round((used / max) * 100);
                 document.getElementById('tooltipInvestment').textContent = `${percent}% (${used.toFixed(0)}/${max.toFixed(0)}元)`;
@@ -3776,7 +3808,11 @@
     }
 
     function renderAdviceTooltip(tooltip, event, code, data) {
-        if (!data || data.status !== 'success') return;
+        if (!data || data.status !== 'success') {
+            tooltip.textContent = data?.message || '历史数据暂不可用';
+            placeAdviceTooltip(event, tooltip);
+            return;
+        }
 
         const difDea = (data.dif !== null && data.dif !== undefined)
             ? `DIF ${escapeHtml(data.dif)} / DEA ${escapeHtml(data.dea)}` : `DEA ${escapeHtml(data.dea)}`;
@@ -3784,7 +3820,7 @@
         tooltip.innerHTML = `
             <div class="advice-header"><span class="advice-trend">${escapeHtml(data.trend || '')}</span><span class="advice-badge">操作建议</span></div>
             <div class="advice-line">底仓：<b>${escapeHtml(data.base_position || '--')}</b>；网格：<b>${escapeHtml(data.grid || '--')}</b></div>
-            <div class="advice-meta">${escapeHtml(data.cross || '')}<br>${difDea}｜${escapeHtml(data.updated || '')}（${escapeHtml(data.code || code)}）</div>
+            <div class="advice-meta">${escapeHtml(data.cross || '')}<br>${difDea}｜${escapeHtml(data.history_asof || data.updated || '')}（${escapeHtml(data.code || code)}）${data.history_status === 'cache' ? '｜使用历史缓存，刷新未完成' : ''}</div>
             ${data.series && data.series.length ? `<div class="advice-chart">${renderMacdChartSVG(data.series)}</div>` : ''}
         `;
 

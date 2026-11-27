@@ -170,16 +170,33 @@ def _compute_advice(code: str) -> dict:
     indicator_calculator = get_indicator_calculator()
 
     # 1) 确保历史日线已入库
+    history_status = "fresh"
     try:
         if _is_index_code(code):
             from autobuy.filter import download_market_index_history
             df = download_market_index_history(data_manager, code)
             if df is not None and not getattr(df, "empty", True):
+                history_status = df.attrs.get("data_status", "fresh")
                 data_manager.save_history_data(code, df)
+            else:
+                history_status = "unavailable"
         else:
             data_manager.update_stock_data(code)
     except Exception as e:
+        history_status = "unavailable"
         logger.warning(f"[MACD建议] {code} 历史数据准备失败: {e}")
+
+    hist_df = data_manager.get_history_data_from_db(code)
+    if hist_df is None or hist_df.empty or 'close' not in hist_df.columns:
+        return dict(status="error", code=code, history_status="unavailable", message="无有效历史日线")
+    hist_df = data_manager._filter_history_date_range(
+        hist_df, end_date=data_manager._get_completed_history_end_date())
+    hist_df = hist_df[hist_df["close"].notna() & (hist_df["close"] > 0)]
+    if len(hist_df) < config.MACD_ADVICE_MIN_HISTORY_BARS:
+        return dict(status="error", code=code, history_status="insufficient",
+                    message="历史日线不足，暂不生成建议")
+    if history_status == "unavailable":
+        history_status = "cache"
 
     # 2) 计算并落库指标
     try:
@@ -206,7 +223,6 @@ def _compute_advice(code: str) -> dict:
         return {"status": "error", "code": code, "message": "指标数值无效"}
 
     # 4) 构建迷你全景图序列(OHLC + MACD + 逐日类别)
-    hist_df = data_manager.get_history_data_from_db(code)
     series = _build_series(hist_df, ind_df)
 
     updated = str(ind_df["date"].iloc[-1]) if "date" in ind_df.columns else ""
@@ -221,6 +237,8 @@ def _compute_advice(code: str) -> dict:
         "dea": round(float(dea_last), 4),
         "dea_prev": round(float(dea_prev), 4),
         "updated": updated,
+        "history_status": history_status,
+        "history_asof": str(hist_df["date"].max()),
         "series": series,
     }
 

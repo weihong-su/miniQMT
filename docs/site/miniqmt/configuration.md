@@ -85,10 +85,12 @@ flowchart TD
 
     subgraph RT["实时行情 get_latest_data"]
         direction TB
-        RT0{"ENABLE_XTQUANT_MANAGER?"}
-        RT0 -->|标准模式| RT1["xtdata get_full_tick"]
+        RT0{"ENABLE_QMT_IPC_FALLBACK?"}
+        RT0 -->|True| RTIPC["quotes.json 来源时间与价格校验"]
+        RT0 -->|False| RTGW{"ENABLE_XTQUANT_MANAGER?"}
+        RTGW -->|标准模式| RT1["xtdata get_full_tick"]
         RT1 -->|失败/超时/无效价| RT2["Mootdx 兜底"]
-        RT0 -->|网关模式| RT3["xtdata get_full_tick"]
+        RTGW -->|网关模式| RT3["xtdata get_full_tick"]
         RT3 -->|lastPrice=0 且 lastClose>0| RT4["lastClose 参考价"]
         RT3 -->|无有效价格| RT5["返回 None"]
     end
@@ -148,7 +150,7 @@ flowchart TD
 | `ASYNC_ORDER_QUERY_FALLBACK_INTERVAL_SECONDS` | `0.5` | 主动反查的轮询间隔 |
 | `ASYNC_ORDER_QUERY_MATCH_PRE_WINDOW_SECONDS` | `5.0` | 允许匹配下单前若干秒的委托，兼容本机与 QMT 的时间偏差 |
 | `ASYNC_ORDER_QUERY_MATCH_POST_WINDOW_SECONDS` | `30.0` | 允许匹配下单后若干秒的委托，避免误配历史委托 |
-| `ASYNC_ORDER_UNKNOWN_COOLDOWN_SECONDS` | `300` | 拿到正 `seq` 但未确认 `order_id` 时，同股同方向暂停再次提交的时间 |
+| `ASYNC_ORDER_UNKNOWN_COOLDOWN_SECONDS` | `300` | 未确认异步委托的基础冷却秒数；买入结果仍未知时，期满不自动解除重复提交保护 |
 | `QMT_ORDER_ID_MAP_TTL_SECONDS` | `86400` | `seq -> order_id` 映射保留时长，防止长时间运行后旧 seq 污染匹配 |
 | `QMT_ORDER_ID_MAP_MAX_ENTRIES` | `4096` | 映射最大键数量（`int`/`str` 双键分别计入），防止内存无限增长 |
 
@@ -176,13 +178,32 @@ flowchart TD
 | `ENABLE_QMT_IPC_FALLBACK` | `False`（环境变量 `ENABLE_QMT_IPC_FALLBACK`） | 大QMT文件IPC 交易通道总开关；与 `ENABLE_XTQUANT_MANAGER` 互斥 |
 | `QMT_IPC_ROOT` | `"C:\QuantIPC"`（环境变量 `QMT_IPC_ROOT`） | IPC 文件目录，策略端与大QMT端必须一致 |
 | `QMT_IPC_SECRET` | `""`（环境变量 `QMT_IPC_SECRET`） | IPC 可选共享密钥；策略端写入订单 JSON，大 QMT executor 校验，空值保持原本地信任模型 |
-| `QMT_IPC_ORDER_TIMEOUT` | `30` | 下单后等待成交回执最大秒数 |
+| `QMT_IPC_ORDER_TIMEOUT` | `30` | 同步调用等待回执秒数；超时保留已知委托号并追撤，异步发布后由回调跟踪 |
 | `QMT_IPC_HEARTBEAT_MAX_AGE` | `10` | 心跳超过此秒数判定大QMT离线 |
 | `QMT_IPC_DEAL_POLL_INTERVAL` | `1.0` | 成交回报轮询间隔（秒） |
-| `QMT_IPC_DONE_LOOKBACK_SECONDS` | `86400` | done/ 目录委托查询回溯窗口（秒） |
+| `QMT_IPC_DONE_LOOKBACK_SECONDS` | `86400` | done/ 目录委托查询回溯窗口（秒）；对账按实际成交日隔离 |
+| `QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS` | `90.0` | 账户来源时间上限，失效时不作为空仓同步 |
+| `QMT_IPC_QUOTE_INTERVAL_SECONDS` | `2.0` | 大 QMT 报价导出周期 |
+| `QMT_IPC_QUOTE_MAX_AGE_SECONDS` | `15.0` | 连续交易时段单股报价来源时间上限 |
+| `QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS` | `5.0` | 来源时间允许的未来时钟偏差 |
+| `QMT_IPC_READ_RETRIES` | `2` | 瞬态共享 / 访问冲突的额外读取次数 |
+| `QMT_IPC_READ_RETRY_DELAY_SECONDS` | `0.02` | 额外读取等待秒数 |
+| `QMT_IPC_RECONNECT_MAX_INTERVAL_SECONDS` | `300.0` | 完整重连失败的退避上限 |
+| `QMT_IPC_HEALTH_PROBE_INTERVAL_SECONDS` | `5.0` | 独立恢复探测间隔 |
+| `QMT_IPC_PREFLIGHT_LEAD_SECONDS` | `300.0` | 盘前同步前提前检查 IPC 就绪 |
+| `PREMARKET_SNAPSHOT_RETRY_SECONDS` | `15.0` | 仅在既定盘前补偿窗口内重试不完整快照 |
 | `QMT_IPC_HEARTBEAT_INTERVAL_SEC` | `2.0`（大 QMT executor 环境变量） | `QMT_trade_executor.py` 独立心跳线程刷新间隔；不在主 `config.py`，需在运行大 QMT 脚本的环境中设置 |
 | `QMT_IPC_LOG_MAX_BYTES` | `5242880` | 大QMT端单个日志文件大小上限；设为 `0` 表示关闭大小轮转 |
 | `QMT_IPC_LOG_BACKUP_COUNT` | `5` | 大QMT端每日日志轮转备份数量 |
+
+!!! note "来源新鲜度与财务核验"
+    IPC `ready`、`trading_ready`、账户来源时间与单股行情时效分别校验；午休 / 收盘的参考行情不等于断连。新文件时间不能替代来源时间。资产等式为可用 + 冻结 + 持仓市值，偏差只告警，不反推现金，也不关闭全局开关。
+
+!!! note "内部自动买入与网格预算"
+    `MAX_POSITION_VALUE` 默认 70,000 元，交易执行器内部实盘自动策略（含网格）将全持仓、在途买入和未同步成交增量一起核对；未知提交继续保留预占。它与单会话 lot 成本预算 `max_investment` 是两道约束，`current_investment=0` 不代表没有持仓。Web 手动路径及复用该路径的独立自动买入服务不应被视为已经自动获得相同入口门控，详见 [Web API](web-api.md)。
+
+!!! note "MACD 必需历史"
+    `MACD_ADVICE_MIN_HISTORY_BARS=60` 为建议计算要求的最少合法日线。指数日线走统一历史源策略；足量缓存显示原日期，不足则返回不可用。当前 `MACD_ADVICE_CACHE_TTL=300` 秒。
 
 !!! note "IPC/RPC 订单状态口径  [v3.8.9]"
     IPC/RPC 交易后端会归一 QMT 委托状态，查询结果补齐 `status_msg`、`order_remark`、`strategy_name` 等字段。RPC 部分成交回调只推新增成交量，`rejected` / `cancelled` 不触发成交回调，避免把废单或撤单误落成真实成交。

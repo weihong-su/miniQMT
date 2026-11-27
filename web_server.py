@@ -18,6 +18,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import Methods as Methods
 import config
+import settlement_db
 from logger import get_logger
 from data_manager import get_data_manager
 from indicator_calculator import get_indicator_calculator
@@ -362,8 +363,20 @@ def _build_default_account_info():
         'market_value': 0.0,
         'total_asset': 0.0,
         'valuation': {'status': 'unavailable', 'reason': '账户信息待更新', 'quote_market_value': None},
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'timestamp': None,
+        'data_status': 'unavailable',
+        'data_age_seconds': None,
+        'data_error': '账户信息尚不可用'
     }
+
+def _mark_account_cache_unavailable(reason):
+    """保留最后有效金额和源时间，失败不能伪装成零资产。"""
+    with _account_info_lock:
+        previous = _account_info_cache.get('data') or _build_default_account_info()
+        has_source = bool(previous.get('timestamp'))
+        _account_info_cache['data'] = dict(previous, data_status='stale' if has_source else 'unavailable',
+                                           data_error=reason)
+        _account_info_cache['ts'] = time.time()
 
 def _refresh_account_info_worker():
     """后台刷新账户信息，允许阻塞但不影响SSE"""
@@ -390,21 +403,21 @@ def _refresh_account_info_worker():
             account_info = future.result(timeout=5.0) or {}
         except FuturesTimeoutError:
             logger.warning("账户信息查询超时（5秒），跳过本次刷新，更新缓存时间戳防止立即重试")
-            with _account_info_lock:
-                if _account_info_cache.get('data') is None:
-                    _account_info_cache['data'] = _build_default_account_info()
-                _account_info_cache['ts'] = time.time()
+            _mark_account_cache_unavailable('账户查询超时')
             return
 
         if not account_info:
-            account_info = _build_default_account_info()
+            _mark_account_cache_unavailable('账户来源暂不可用')
+            return
         else:
             account_info.setdefault('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            account_info = dict(account_info, data_status='fresh', data_error=None)
 
         with _account_info_lock:
             _account_info_cache['data'] = account_info
             _account_info_cache['ts'] = time.time()
     except Exception as e:
+        _mark_account_cache_unavailable('账户刷新失败: ' + str(e))
         logger.warning(f"账户信息刷新失败: {str(e)}")
     finally:
         with _account_info_refresh_lock:
@@ -444,6 +457,17 @@ def get_account_info_cached(max_age: float = None):
     if not cached:
         return _build_default_account_info()
     result = dict(cached)
+    try:
+        age = time.time() - datetime.fromisoformat(str(result.get('timestamp'))).timestamp()
+    except (ValueError, TypeError, OverflowError):
+        age = None
+    limit = config.QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS if config.ENABLE_QMT_IPC_FALLBACK else max_age
+    status = result.get('data_status', 'fresh' if age is not None else 'unavailable')
+    if age is None:
+        status = 'unavailable'
+    if age is not None and (age > limit or age < -config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS):
+        status = 'stale'
+    result.update(data_status=status, data_age_seconds=age)
     if isinstance(cached.get('valuation'), dict):
         # 只重算缓存证据；资金查询失败时也不能继续把过期行情标成有效。
         try:
@@ -508,9 +532,14 @@ def connection_status():
             # 不检查 xt_trader 对象存在性——对象存在不代表 QMT 进程在线
             is_connected = bool(getattr(position_manager, 'qmt_connected', False))
 
+        ipc = None
+        if config.ENABLE_QMT_IPC_FALLBACK and not config.ENABLE_SIMULATION_MODE:
+            from qmt_ipc_data import QmtIpcDataAdapter
+            ipc = QmtIpcDataAdapter().get_readiness()
         return jsonify({
             'status': 'success',
             'connected': is_connected,
+            'ipc': ipc,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
@@ -565,7 +594,12 @@ def get_status():
             'totalAssets': account_info.get('total_asset', 0.0),
             'frozenCash': account_info.get('frozen_cash', 0.0),
             'valuation': account_info.get('valuation'),
-            'timestamp': account_info.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            'dataStatus': account_info.get('data_status', 'fresh'),
+            'openValidation': settlement_db.read_open_validation(),
+            'quoteMode': 'realtime' if config.is_continuous_trade_time() else 'reference',
+            'dataAgeSeconds': account_info.get('data_age_seconds'),
+            'dataError': account_info.get('data_error'),
+            'timestamp': account_info.get('timestamp')
         }
         
         # 兼容字段 isMonitoring 映射全局自动操作总开关，不再依赖线程状态判断
@@ -2340,6 +2374,9 @@ def get_grid_session_status(stock_code):
                 current_price=mark_price
             )
             deviation_stats = _build_grid_deviation_stats(session, mark_price)
+            budget_reader = getattr(grid_manager, 'get_buy_budget_status', None)
+            budget = budget_reader(stock_code) if callable(budget_reader) else {}
+            budget = budget if isinstance(budget, dict) else {}
 
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
@@ -2377,6 +2414,7 @@ def get_grid_session_status(stock_code):
                     'pnl_snapshot': pnl_snapshot,
                     'current_investment': session.current_investment,
                     'max_investment': session.max_investment,
+                    'buy_budget': budget,
                     'start_time': session.start_time.isoformat() if session.start_time else None,
                     'end_time': session.end_time.isoformat() if session.end_time else None,
                     **deviation_stats,

@@ -32,10 +32,38 @@ def source_timestamp(value):
     raise ValueError("来源时间无效")
 
 
-def read_snapshot(root, account, name, max_age):
+def _diagnostic_time(value):
+    """无效数值用文字留痕，避免诊断输出含非标准 JSON 数值。"""
+    return str(value) if isinstance(value, float) and not math.isfinite(value) else value
+
+
+def heartbeat_is_fresh(path, max_age):
+    """两端统一允许配置内的时钟偏差，超出容差仍视为不可用。"""
     try:
-        with open(os.path.join(root, "status", name), encoding="utf-8-sig") as handle:
-            value = json.load(handle)
+        age = time.time() - os.path.getmtime(path)
+        return (math.isfinite(age) and
+                -config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS <= age <= max_age)
+    except OSError:
+        return False
+
+
+def _read_snapshot_json(path):
+    """只重试瞬态共享/访问冲突；格式错误和账号错误不重试。"""
+    for attempt in range(config.QMT_IPC_READ_RETRIES + 1):
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                return json.load(handle)
+        except OSError as exc:
+            transient = isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in (32, 33)
+            if not transient or attempt >= config.QMT_IPC_READ_RETRIES:
+                raise
+            time.sleep(config.QMT_IPC_READ_RETRY_DELAY_SECONDS)
+
+
+def read_snapshot(root, account, name, max_age, value=None):
+    try:
+        if value is None:
+            value = _read_snapshot_json(os.path.join(root, "status", name))
         if not isinstance(value, dict) or str(value.get("account_id")) != str(account):
             raise ValueError("快照账号不符")
         age = time.time() - source_timestamp(value.get("timestamp"))
@@ -65,10 +93,7 @@ class QmtIpcDataAdapter:
 
     def connect(self):
         path = os.path.join(self.root, "status", "heartbeat.json")
-        try:
-            return 0 <= time.time() - os.path.getmtime(path) < config.QMT_IPC_HEARTBEAT_MAX_AGE
-        except OSError:
-            return False
+        return heartbeat_is_fresh(path, config.QMT_IPC_HEARTBEAT_MAX_AGE)
 
     reconnect = connect
 
@@ -106,12 +131,17 @@ class QmtIpcDataAdapter:
         return dict(getattr(self._quote_diagnostics, "values", {}).get(code, {}))
 
     def get_full_tick(self, stock_list):
-        statuses = {}
-        self._quote_diagnostics.values = statuses
         for code in stock_list:
             self.subscribe_quote(code)
+        return self._read_ticks(stock_list)
+
+    def _read_ticks(self, stock_list, snapshot=None):
+        """只读校验供行情与就绪诊断共用，诊断不会修改订阅。"""
+        statuses = {}
+        self._quote_diagnostics.values = statuses
         try:
-            snapshot = self._snapshot()
+            if snapshot is None:
+                snapshot = self._snapshot()
         except IpcSnapshotUnavailable as exc:
             for code in stock_list:
                 statuses[self._code(code)] = dict(reason="snapshot_unavailable",
@@ -133,9 +163,11 @@ class QmtIpcDataAdapter:
                     status.update(reason="invalid_price", message="报价价格无效")
                     continue
                 source_time = quote.get("time") or quote.get("timetag")
-                status["quote_asof"] = source_time
+                status["quote_asof"] = _diagnostic_time(source_time)
                 stamp = source_timestamp(source_time)
                 age = time.time() - stamp
+                if not math.isfinite(age):
+                    raise ValueError("报价来源时间不是有限数值")
                 status["quote_age_seconds"] = round(age, 6)
             except (TypeError, ValueError, OverflowError):
                 status.update(reason="invalid_quote", message="报价价格或来源时间格式无效")
@@ -149,6 +181,54 @@ class QmtIpcDataAdapter:
             status.update(reason="success" if tradable else "reference_quote",
                           message="报价有效" if tradable else "仅可作为参考行情")
             result[canonical] = dict(quote, _tradable=tradable)
+        return result
+
+    def get_readiness(self, stock_list=None):
+        """分别核对心跳、账户和行情；不修改文件或交易开关。"""
+        stocks = [self._code(code) for code in
+                  (getattr(config, "STOCK_POOL", []) if stock_list is None else stock_list)]
+        result = {}
+        snapshots = {}
+        sources = (("heartbeat", "heartbeat.json", "ts", config.QMT_IPC_HEARTBEAT_MAX_AGE),
+                   ("account", "account.json", "timestamp", config.QMT_IPC_SNAPSHOT_MAX_AGE_SECONDS),
+                   ("quotes", "quotes.json", "timestamp", config.QMT_IPC_QUOTE_MAX_AGE_SECONDS))
+        for key, name, timestamp_key, limit in sources:
+            value, age = {}, None
+            try:
+                value = _read_snapshot_json(os.path.join(self.root, "status", name))
+                if not isinstance(value, dict) or str(value.get("account_id")) != str(self.account):
+                    raise ValueError("快照账号不符")
+                age = time.time() - source_timestamp(value.get(timestamp_key))
+                if key != "heartbeat":
+                    read_snapshot(self.root, self.account, name, limit, value=value)
+                    snapshots[key] = value
+                valid = math.isfinite(age) and -config.QMT_IPC_TIMESTAMP_FUTURE_TOLERANCE_SECONDS <= age <= limit
+                result[key] = dict(available=valid, asof=_diagnostic_time(value.get(timestamp_key)),
+                                   age_seconds=round(age, 6) if math.isfinite(age) else None, max_age_seconds=limit,
+                                   error=None if valid else "来源时间已过期或超前")
+            except (OSError, ValueError, TypeError, IpcSnapshotUnavailable) as exc:
+                result[key] = dict(available=False,
+                                   asof=_diagnostic_time(value.get(timestamp_key)) if isinstance(value, dict) else None,
+                                   age_seconds=round(age, 6) if age is not None and math.isfinite(age) else None,
+                                   max_age_seconds=limit, error=str(exc))
+
+        ticks = self._read_ticks(stocks, snapshot=snapshots.get("quotes", {}))
+        result["quotes"]["stocks"] = {code: self.get_quote_status(code) for code in stocks}
+        valid_stocks = all(code in ticks for code in stocks)
+        tradable = bool(stocks) and all(ticks.get(code, {}).get("_tradable") is True for code in stocks)
+        sources_ok = all(result[key]["available"] for key in ("heartbeat", "account", "quotes"))
+        result["account"]["data_status"] = ("fresh" if result["account"]["available"] else
+            "stale" if result["account"].get("asof") else "unavailable")
+        result["quotes"]["data_status"] = ("realtime" if tradable and config.is_continuous_trade_time()
+            else "reference" if sources_ok and not config.is_continuous_trade_time() else "unavailable")
+        result["ready"] = sources_ok and (valid_stocks or not config.is_continuous_trade_time())
+        result["trading_ready"] = sources_ok and tradable and config.is_continuous_trade_time()
+        try:
+            with open(os.path.join(self.root, "status", "producer.json"), encoding="utf-8-sig") as handle:
+                producer = json.load(handle)
+            result["producer"] = producer if isinstance(producer, dict) and str(producer.get("account_id")) == str(self.account) else None
+        except (OSError, ValueError, TypeError):
+            result["producer"] = None
         return result
 
     def get_instrument_detail(self, stock_code):

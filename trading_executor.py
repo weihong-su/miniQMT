@@ -96,7 +96,7 @@ class TradingExecutor:
 
     def _has_recent_unknown_order_submission(self, stock_code, side):
         cooldown = float(getattr(config, 'ASYNC_ORDER_UNKNOWN_COOLDOWN_SECONDS', 300))
-        if cooldown <= 0:
+        if cooldown <= 0 and str(side).upper() != 'BUY':
             return False
 
         submissions = self._unknown_order_submissions_map()
@@ -139,6 +139,9 @@ class TradingExecutor:
             )
             return True
 
+        if str(side).upper() == 'BUY':
+            logger.warning(f"[E_ORDER_UNKNOWN_GUARD] {stock_code} 买入结果仍未知，等待委托核对")
+            return True
         submissions.pop(key, None)
         return False
 
@@ -230,6 +233,17 @@ class TradingExecutor:
             volume = 0
 
         order_key = str(order_id)
+        with self._buy_risk_lock:
+            for key, entry in list(self.order_cache.items()):
+                if (entry.get('risk_reservation') and info.get('seq') is not None and
+                        str(entry.get('risk_order_id')) == str(info['seq']) and
+                        entry.get('stock_code') == str(stock_code).split('.')[0]):
+                    if str(order_id) == '-1':
+                        self.order_cache.pop(key, None)
+                    else:
+                        entry['risk_order_id'] = order_id
+        if str(order_id) == '-1':
+            return
         self.order_cache.setdefault(order_key, {
             'stock_code': str(stock_code).split('.')[0],
             'strategy': info.get('strategy') or 'default',
@@ -702,8 +716,9 @@ class TradingExecutor:
             'add_position': 'add_position',
         }.get(signal_type, 'default')
 
-    def _infer_trade_type(self, deal_info, order_id, fallback_order_info=None):
-        order_cache = self._get_order_cache_entry(order_id)
+    def _infer_trade_type(self, deal_info, order_id, fallback_order_info=None, order_cache=None):
+        if order_cache is None:
+            order_cache = self._get_order_cache_entry(order_id)
         if isinstance(order_cache, dict) and order_cache.get('trade_type'):
             return order_cache.get('trade_type')
 
@@ -735,6 +750,16 @@ class TradingExecutor:
         order_id = self._field_any(deal_info, ['order_id', 'm_strOrderID', '订单编号'])
         order_cache = self._get_order_cache_entry(order_id)
         order_cache = order_cache if isinstance(order_cache, dict) else {}
+        _, actual_time = settlement_db.parse_deal_time(self._field_any(
+            deal_info, ['traded_time', 'm_strTradeTime', '成交时间']))
+        cached_time = order_cache.get('order_time')
+        actual_stock = self._field_any(deal_info, ['stock_code', 'm_strInstrumentID', '证券代码'])
+        if ((actual_time and cached_time and
+             self._trade_record_date(actual_time) != self._trade_record_date(cached_time)) or
+            (actual_stock and order_cache.get('stock_code') and
+             self._normalize_trade_record_stock_code(actual_stock) !=
+             self._normalize_trade_record_stock_code(order_cache['stock_code']))):
+            order_cache = {}
         fallback_order_info = fallback_order_info or {}
         signal_info = fallback_order_info.get('signal_info') or {}
 
@@ -775,7 +800,7 @@ class TradingExecutor:
             self._field_any(deal_info, ['traded_id', 'trade_id', 'm_strTradeID', '成交编号'])
             or f"ORDER_{order_id}"
         )
-        trade_type = self._infer_trade_type(deal_info, order_id, fallback_order_info)
+        trade_type = self._infer_trade_type(deal_info, order_id, fallback_order_info, order_cache)
 
         signal_type = fallback_order_info.get('signal_type')
         strategy = (
@@ -845,7 +870,8 @@ class TradingExecutor:
             self._drop_placeholder_trade_record(
                 record.get('order_id'),
                 record.get('stock_code'),
-                exclude_trade_id=record.get('trade_id')
+                exclude_trade_id=record.get('trade_id'),
+                trade_time=record['trade_time']
             )
 
             return self._save_trade_record(
@@ -942,13 +968,19 @@ class TradingExecutor:
             order_id = self._field_any(trade, ['order_id', 'm_strOrderID', '订单编号'])
             if order_id is None or str(order_id).strip() == '':
                 continue
-            fills_by_order.setdefault(str(order_id).strip(), []).append(trade)
+            record = self._build_trade_record_from_deal(trade)
+            account = self._field_any(trade, ['account_id', 'account', '资金账号'])
+            if account and str(account) != settlement_db.get_account_id():
+                continue
+            key = (str(order_id).strip(), self._trade_record_date(record['trade_time']),
+                   record['stock_code'], record['trade_type'])
+            fills_by_order.setdefault(key, []).append(trade)
 
         if not fills_by_order:
             return 0
 
         recorded_count = 0
-        for order_id, fills in fills_by_order.items():
+        for (order_id, _, _, _), fills in fills_by_order.items():
             try:
                 recorded_count += self._backfill_order_fills(order_id, fills)
             except Exception as e:
@@ -963,11 +995,20 @@ class TradingExecutor:
 
     def _backfill_order_fills(self, order_id, fills):
         """补写单笔委托下账上缺失的分笔成交，返回补写笔数。"""
-        rows = self._load_today_order_records(order_id)
+        # 与成交回调共用记账锁，查询与补写之间不留并发窗口。
+        if not hasattr(self, '_trade_record_lock'):
+            self._trade_record_lock = threading.RLock()
+        with self._trade_record_lock:
+            return self._backfill_order_fills_locked(order_id, fills)
+
+    def _backfill_order_fills_locked(self, order_id, fills):
+        sample = self._build_trade_record_from_deal(fills[0])
+        rows = self._load_today_order_records(order_id, sample)
         fallback_order_info = {
             # 本机委托已入过账时沿用原流水口径，避免把自家成交误标成 external
             'stock_code': rows[0]['stock_code'] if rows else None,
-            'strategy': (rows[0]['strategy'] or 'external') if rows else 'external',
+            'strategy': ((rows[0]['strategy'] or 'external') if rows else
+                         self._field_any(fills[0], ['strategy_name', '策略名称']) or 'external'),
             'order_side': rows[0]['trade_type'] if rows else None,
         }
         known_trade_ids = {str(row['trade_id']) for row in rows if row.get('trade_id') is not None}
@@ -1006,22 +1047,28 @@ class TradingExecutor:
                 recorded += 1
         return recorded
 
-    def _load_today_order_records(self, order_id):
-        """读取 trade_records 中该委托当日有效流水，供对账判重。
-
-        读取失败时返回空列表——调用方退化为逐笔补写，trade_id 唯一约束仍是
-        最后一道防线，不会重复入账。
-        """
-        trade_date = datetime.now().strftime('%Y-%m-%d')
+    def _load_today_order_records(self, order_id, record=None):
+        """按成交日期、账号、证券及方向读取有效流水；失败时暂停本轮补写。"""
+        record = record or {}
+        trade_date = self._trade_record_date(record.get('trade_time'))
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(trade_records)")}
+            date_column = ("COALESCE(NULLIF(deal_time_str,''), trade_time)"
+                           if 'deal_time_str' in columns else "trade_time")
+            scope = ""
+            params = [str(order_id), trade_date]
+            if record.get('stock_code'):
+                scope += " AND (stock_code=? OR stock_code LIKE ?) AND trade_type=?"
+                code = self._normalize_trade_record_stock_code(record['stock_code'])
+                params += [code, code + '.%', record['trade_type']]
+            if 'account' in columns:
+                scope += " AND COALESCE(NULLIF(account,''),?)=?"
+                params += [settlement_db.get_account_id()] * 2
+            cursor = self.conn.execute(
                 "SELECT stock_code, trade_type, price, volume, strategy, trade_id FROM trade_records "
                 "WHERE order_id=? "
-                "AND substr(replace(COALESCE(CAST(trade_time AS TEXT), ''), 'T', ' '), 1, 10)=? "
-                "AND COALESCE(row_status, 'active')='active'",
-                (str(order_id), trade_date)
-            )
+                "AND substr(replace(CAST(" + date_column + " AS TEXT),'T',' '),1,10)=? "
+                "AND COALESCE(row_status,'active')='active'" + scope, params)
             return [
                 {
                     'stock_code': row[0],
@@ -1034,8 +1081,9 @@ class TradingExecutor:
                 for row in cursor.fetchall()
             ]
         except Exception as e:
-            logger.warning(f"[对账] 读取委托号={order_id} 当日流水失败，按逐笔补写处理: {e}")
-            return []
+            # 查询失败不能当作没有记录，否则聚合行会再次补成分笔。
+            logger.warning(f"[对账] 读取委托号={order_id} 流水失败，本轮暂停补写: {e}")
+            raise
 
     @staticmethod
     def _normalize_trade_record_stock_code(stock_code):
@@ -1124,7 +1172,7 @@ class TradingExecutor:
             logger.warning(f"检查交易流水是否已存在失败: 流水号={trade_id}, error={e}")
             return False
 
-    def _drop_placeholder_trade_record(self, order_id, stock_code, exclude_trade_id=None):
+    def _drop_placeholder_trade_record(self, order_id, stock_code, exclude_trade_id=None, trade_time=None):
         """清理下单时预写的 ORDER_{order_id} 占位流水。
 
         非延迟记账策略(手动买卖等)在下单成功时即以预估价写入一条流水，成交回报
@@ -1132,7 +1180,7 @@ class TradingExecutor:
         写入前先删除占位记录；同一委托多笔成交时只有首笔会删到行。
 
         ⚠️ QMT 的 order_id 会跨日复用，历史流水中存在同名 ORDER_{order_id}。
-        必须同时限定当天 + 同一股票，只删本次委托自己写的那条占位记录。
+        必须限定实际成交日及同一股票；历史补录不能清理今天同号的占位记录。
         """
         if order_id in (None, ''):
             return 0
@@ -1160,7 +1208,7 @@ class TradingExecutor:
                       AND (stock_code=? OR stock_code LIKE ?)
                 """, (
                     placeholder_id,
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    trade_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     base_code,
                     f"{base_code}.%"
                 ))
@@ -1667,6 +1715,128 @@ class TradingExecutor:
 
         return formatted_code
 
+    _buy_risk_lock = threading.RLock()
+
+    def _reserve_auto_buy(self, stock_code, price, volume, strategy, price_type=xtc.FIX_PRICE):
+        """按单股全持仓及在途委托预占；未知提交保留，接口失败拒绝新增买入。"""
+        try:
+            trader = self.position_manager.qmt_trader
+            raw_orders = trader.query_stock_orders()
+            raw_positions = trader.position()
+            if raw_orders is None or raw_positions is None:
+                raise ValueError("持仓或委托查询未返回数据")
+            orders = self._iter_query_records(raw_orders)
+            positions = self._iter_query_records(raw_positions)
+            code = self._normalize_trade_record_stock_code(stock_code)
+            relevant = [row for row in orders if
+                        self._normalize_trade_record_stock_code(self._field_any(
+                            row, ['stock_code', '证券代码'])) == code]
+            held, market_value = 0, 0.0
+            for row in positions:
+                if self._normalize_trade_record_stock_code(self._field_any(
+                        row, ['stock_code', '证券代码'])) == code:
+                    quantity = float(self._field_any(row, ['volume', '股票余额']))
+                    value = float(self._field_any(row, ['market_value', '市值']))
+                    if not np.isfinite(quantity + value) or quantity < 0 or value < 0:
+                        raise ValueError("持仓数量或市值无效")
+                    held += int(quantity)
+                    market_value += value
+            reserve_price = float(trader.select_slippage(
+                stock=stock_code, price=price, trader_type='buy'))
+            if price_type != xtc.FIX_PRICE:
+                detail = self._quote_api().get_instrument_detail(stock_code)
+                reserve_price = float((detail or {}).get('UpStopPrice') or 0)
+            if not np.isfinite(reserve_price) or reserve_price <= 0:
+                raise ValueError("买入风险预留价无效")
+            by_id = {str(self._field_any(row, ['order_id', '订单编号'])): row for row in relevant}
+            def filled(row):
+                return self._to_int(self._field_any(row, ['traded_volume', '成交数量']))
+            def is_buy(row):
+                return self._to_int(self._field_any(row, ['order_type', '委托类型'])) in (23, 48)
+            totals = {oid: filled(row) * (1 if is_buy(row) else -1) for oid, row in by_id.items()}
+            # 开盘基准与真实成交量可跨重启核对；不以文件重新导出作为同步完成证据。
+            floor = held
+            open_basis = False
+            conn = getattr(self, 'conn', None)
+            if conn is not None:
+                try:
+                    row = conn.execute(
+                        "SELECT volume FROM position_snapshot WHERE account=? AND code=? "
+                        "AND snapshot_date=? AND snapshot_type='open' AND source='memory_db'",
+                        (settlement_db.get_account_id(), code, datetime.now().strftime('%Y-%m-%d'))).fetchone()
+                    if row:
+                        open_basis = True
+                        today_total = 0
+                        for order in relevant:
+                            _, stamp = settlement_db.parse_deal_time(self._field_any(
+                                order, ['order_time', '报单时间']))
+                            if stamp and stamp.startswith(datetime.now().strftime('%Y-%m-%d')):
+                                today_total += filled(order) * (1 if is_buy(order) else -1)
+                        floor = max(floor, int(row[0]) + today_total)
+                except sqlite3.OperationalError:
+                    pass  # 旧库仍由进程内数量基准保护
+            with self._buy_risk_lock:
+                reservations = [(key, row) for key, row in list(self.order_cache.items())
+                                if row.get('risk_reservation') and row.get('stock_code') == code]
+                pending = 0.0
+                linked = set()
+                protected = {str(row.get('risk_order_id')) for _, row in reservations}
+                for oid, order in by_id.items():
+                    if not open_basis and is_buy(order) and filled(order) > 0 and oid not in protected:
+                        if not self.order_cache.get(oid, {}).get('risk_synced'):
+                            raise ValueError("缺少成交与持仓数量的核对基准，暂停新增买入")
+                for key, entry in reservations:
+                    oid = str(entry.get('risk_order_id') or '')
+                    order = by_id.get(oid)
+                    # 未得到委托号时仍计入全额，绝不因超时自动释放。
+                    if order is None:
+                        pending += entry['volume'] * entry['price']
+                        continue
+                    linked.add(oid)
+                    changes = sum(value - entry['baseline_fills'].get(oid2, 0)
+                                  for oid2, value in totals.items())
+                    expected = max(0, entry['base_volume'] + changes)
+                    floor = max(floor, expected)
+                    status = self._to_int(self._field_any(order, ['order_status', '委托状态']))
+                    remaining = max(0, entry['volume'] - filled(order))
+                    if status not in (53, 54, 56, 57):
+                        pending += remaining * entry['price']
+                    elif held >= expected:
+                        self.order_cache.setdefault(oid, {})['risk_synced'] = True
+                        self.order_cache.pop(key, None)
+                for oid, order in by_id.items():
+                    status = self._to_int(self._field_any(order, ['order_status', '委托状态']))
+                    if oid not in linked and is_buy(order) and status not in (53, 54, 56, 57):
+                        remaining = max(0, self._to_int(self._field_any(
+                            order, ['order_volume', '委托数量'])) - filled(order))
+                        pending += remaining * max(reserve_price, self._to_float(
+                            self._field_any(order, ['price', '委托价格'])))
+                held_value = max(market_value, held * reserve_price)
+                exposure = held_value + max(0, floor - held) * reserve_price + pending
+                required = volume * reserve_price
+                limit = float(config.MAX_POSITION_VALUE)
+                if not np.isfinite(exposure + required + limit) or limit <= 0 or exposure + required > limit:
+                    logger.warning(f"[买入敞口拒绝] {code} 持仓及预占={exposure:.2f}, "
+                                   f"本次={required:.2f}, 单股上限={limit:.2f}")
+                    return None
+                key = 'RISK_' + str(time.time_ns())
+                self.order_cache[key] = dict(risk_reservation=True, stock_code=code,
+                    volume=volume, price=reserve_price, strategy=strategy,
+                    base_volume=floor, baseline_fills=totals, risk_order_id=None)
+                return key
+        except Exception as exc:
+            logger.warning(f"[买入敞口拒绝] {stock_code} 风控证据不可用: {exc}")
+            return None
+
+    def _update_buy_reservation(self, key, order_id=None, release=False):
+        if not key:
+            return
+        with self._buy_risk_lock:
+            if release:
+                self.order_cache.pop(key, None)
+            elif key in self.order_cache:
+                self.order_cache[key]['risk_order_id'] = order_id
+
     def buy_stock(self, stock_code, volume=None, price=None, amount=None, price_type=xtc.FIX_PRICE,
                   callback=None, strategy='default', signal_type=None, signal_info=None):
         """
@@ -1688,6 +1858,8 @@ class TradingExecutor:
         str: 委托编号，失败返回None
         """
         with self.trade_lock:
+            risk_key = None
+            risk_submitted = False
             try:
                 price_disp = f"{price:.2f}" if price is not None else "None"
                 amount_disp = f"{amount:.2f}" if amount is not None else "None"
@@ -1826,6 +1998,15 @@ class TradingExecutor:
                         logger.error(f"[模拟] 买入 {formatted_stock_code} 失败")
                         return None
                 
+                if self._has_recent_unknown_order_submission(formatted_stock_code, 'BUY'):
+                    return None
+
+                # 自动买入硬上限独立于可买入检查的异常兜底。
+                if strategy not in ('M_real', 'M_simu', 'manual', 'manual_real', 'manual_simu'):
+                    risk_key = self._reserve_auto_buy(formatted_stock_code, price, volume, strategy, price_type)
+                    if risk_key is None:
+                        return None
+
                 # 实盘交易模式处理
                 # 使用qmt_trader检查股票是否可买入
                 can_buy = True
@@ -1860,6 +2041,7 @@ class TradingExecutor:
                         # 使用position_manager中的easy_qmt_trader进行买入
                         order_remark = f"auto_{strategy}"
                         submitted_at = time.time()
+                        risk_submitted = True
                         returned_id = self.position_manager.qmt_trader.buy(
                             security=formatted_stock_code,
                             price=price,
@@ -1871,6 +2053,7 @@ class TradingExecutor:
 
                         # 关键修复: 转换 seq 号为真实 order_id
                         if returned_id:
+                            self._update_buy_reservation(risk_key, returned_id)
                             order_id = self.position_manager._get_real_order_id(
                                 returned_id,
                                 stock_code=formatted_stock_code,
@@ -1895,15 +2078,18 @@ class TradingExecutor:
                                 break
                             # order_id=-1 表示QMT拒绝委托（账户限制/行情未就绪等），不重试不保存记录
                             if order_id == -1:
+                                risk_submitted = False
                                 logger.error(f"[E_ORDER_BUY_REJECT] 买入 {formatted_stock_code} 被QMT拒绝 "
                                              f"(委托号=-1, 请求序号={returned_id}), 停止重试，不保存交易记录")
                                 order_id = None
                                 self._clear_unknown_order_submission(formatted_stock_code, 'BUY')
                                 break
                         else:
+                            risk_submitted = False
                             order_id = None
 
                         if order_id and order_id > 0:
+                            self._update_buy_reservation(risk_key, order_id)
                             self._clear_unknown_order_submission(formatted_stock_code, 'BUY')
                             should_defer_record = self._should_defer_trade_record_until_deal(
                                 strategy,
@@ -1966,9 +2152,10 @@ class TradingExecutor:
                             retry_count += 1
                             time.sleep(1)  # 等待1秒再重试
                     except Exception as e:
-                        logger.error(f"[E_ORDER_BUY_003] 买入 {formatted_stock_code} 发生异常: {str(e)}，将在1秒后重试 ({retry_count + 1}/{max_retries})")
-                        retry_count += 1
-                        time.sleep(1)  # 等待1秒再重试
+                        logger.error(f"[E_ORDER_BUY_003] 买入 {formatted_stock_code} 提交结果未知: {e}，保留预占并停止重试")
+                        self._mark_unknown_order_submission(
+                            formatted_stock_code, 'BUY', None, price, volume, strategy)
+                        break
 
                 if submitted_but_unconfirmed:
                     logger.error(
@@ -1990,6 +2177,9 @@ class TradingExecutor:
             except Exception as e:
                 logger.error(f"买入 {stock_code} 时出错: {str(e)}")
                 return None
+            finally:
+                if risk_key and not risk_submitted:
+                    self._update_buy_reservation(risk_key, release=True)
     
     def sell_stock(self, stock_code, volume=None, price=None, ratio=None, price_type=xtc.FIX_PRICE, callback=None, strategy='default', signal_type=None, signal_info=None):
         """
@@ -2435,18 +2625,21 @@ class TradingExecutor:
                 logger.debug("[TRADING] 数据库连接已关闭，跳过获取成交记录")
                 return pd.DataFrame()
 
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(trade_records)")}
             query = "SELECT * FROM trade_records"
             params = []
+            if 'row_status' in columns:
+                query += " WHERE COALESCE(row_status,'active')='active'"
 
             if start_date:
-                query += " WHERE trade_time >= ?"
+                query += (" AND " if ' WHERE ' in query else " WHERE ") + "trade_time >= ?"
                 params.append(start_date + " 00:00:00")
 
                 if end_date:
                     query += " AND trade_time <= ?"
                     params.append(end_date + " 23:59:59")
             elif end_date:
-                query += " WHERE trade_time <= ?"
+                query += (" AND " if ' WHERE ' in query else " WHERE ") + "trade_time <= ?"
                 params.append(end_date + " 23:59:59")
 
             query += " ORDER BY trade_time DESC"
@@ -2492,10 +2685,12 @@ class TradingExecutor:
 
 # 单例模式
 _instance = None
+_instance_lock = threading.RLock()
 
 def get_trading_executor():
-    """获取TradingExecutor单例"""
+    """串行完成实例初始化，防止启动回调与主线程重复创建对象。"""
     global _instance
-    if _instance is None:
-        _instance = TradingExecutor()
-    return _instance
+    with _instance_lock:
+        if _instance is None:
+            _instance = TradingExecutor()
+        return _instance

@@ -16,8 +16,6 @@ check() 返回 (passed, reason_dict)，reason 含每项条件实际值与通过�
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 from .config import AutoBuyConfig, get_autobuy_logger
 
 logger = get_autobuy_logger("autobuy.filter")
@@ -105,24 +103,22 @@ def _recent_volume_ratios(df, days: int, baseline: int):
 
 
 def download_market_index_history(data_manager, code: str):
-    """大盘指数历史数据下载。
-
-    优先使用 xtdata，因为本机 Mootdx 对指数日线容易超时；失败后再走
-    DataManager.download_history_data() 原有路径作为兜底。
-    """
-    download_xt = getattr(data_manager, "download_history_xtdata", None)
-    has_real_xt_method = hasattr(type(data_manager), "download_history_xtdata")
-    if callable(download_xt) and has_real_xt_method and getattr(data_manager, "xt", None) is not None:
-        try:
-            start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
-            df = download_xt(code, period="1d", start_date=start_date)
-            if _has_valid_index_history(df):
-                return df
-        except Exception as e:
-            logger.warning(f"指数 {code} xtdata历史数据异常: {e}")
-
-    return data_manager.download_history_data(code, period="day")
-
+    """指数历史服从统一源策略；失败时仅复用足量且日期合法的本地历史。"""
+    df = data_manager.download_history_data(code, period="day")
+    if _has_valid_index_history(df):
+        df.attrs["data_status"] = "fresh"
+        return df
+    cached = None
+    if hasattr(type(data_manager), "get_history_data_from_db"):
+        cached = data_manager.get_history_data_from_db(code)
+    if _has_valid_index_history(cached):
+        cached = cached.copy()
+        cutoff = data_manager._get_completed_history_end_date()
+        cached = data_manager._filter_history_date_range(cached, end_date=cutoff)
+        if _has_valid_index_history(cached):
+            cached.attrs["data_status"] = "cache"
+            return cached
+    return None
 
 class BuyConditionFilter:
     def __init__(self, cfg: AutoBuyConfig, data_manager):

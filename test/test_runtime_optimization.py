@@ -39,6 +39,7 @@ class TestGridRestrictedSignals(unittest.TestCase):
         self.manager.reconcile_pending_grid_orders_if_due = MagicMock()
         self.manager._check_exit_conditions = MagicMock(return_value=None)
         self.session = GridSession(id=1, stock_code='000001.SZ', center_price=10,
+                                   max_investment=20000,
                                    current_center_price=10, callback_ratio=0.005,
                                    end_time=datetime.now() + timedelta(days=1))
         self.manager.sessions['000001'] = self.session

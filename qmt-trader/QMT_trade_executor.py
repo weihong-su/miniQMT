@@ -68,6 +68,10 @@ _SNAPSHOT_LOCK = threading.Lock()
 _HEARTBEAT_STATE = {}
 _HEARTBEAT_LOCK = threading.Lock()
 _LOG_LOCK = threading.Lock()
+_EXPORT_LOCK = threading.Lock()
+_EXPORT_STATE = {}
+_EXECUTOR_STARTED_AT = datetime.now().isoformat()
+_EXECUTOR_VERSION = "2026.11.26.1"
 
 
 def _rotate_log(path):
@@ -384,7 +388,29 @@ def _snapshot_from_xttrader(acc):
             pass
 
 
+def _record_export(acc, kind, success=None, error=None):
+    with _EXPORT_LOCK:
+        state = _EXPORT_STATE.setdefault(str(acc["account_id"]), {}).setdefault(kind, {})
+        state["last_attempt_at"] = datetime.now().isoformat()
+        if success is not None:
+            state["last_error"] = None if success else error
+            if success:
+                state["last_success_at"] = state["last_attempt_at"]
+
+
 def write_snapshot(acc):
+    _record_export(acc, "account")
+    try:
+        result = _write_snapshot(acc)
+        _record_export(acc, "account", bool(result),
+                       acc.pop("_snapshot_error", "account export failed; see executor log"))
+        return result
+    except Exception as error:
+        _record_export(acc, "account", False, str(error))
+        raise
+
+
+def _write_snapshot(acc):
     account_id = acc["account_id"]
     gtdd = _get_vba_reader()
     if not callable(gtdd):
@@ -421,6 +447,7 @@ def write_snapshot(acc):
             log("[%s] snapshot VBA ACCOUNT failed args=%s: %s" % (
                 account_id, args, str(e)[:120]))
     if account is None:
+        acc["_snapshot_error"] = "native ACCOUNT returned no usable data"
         log("[%s] snapshot failed: VBA returned no account data" % account_id)
         return False
 
@@ -462,6 +489,7 @@ def write_snapshot(acc):
             log("[%s] snapshot VBA POSITION failed args=%s: %s" % (
                 account_id, args, str(e)[:120]))
     if positions is None:
+        acc["_snapshot_error"] = "native POSITION unavailable; previous snapshot retained"
         log("[%s] snapshot failed: VBA positions unavailable, previous snapshot retained" % account_id)
         return False
 
@@ -568,12 +596,25 @@ def _cancel_xt_order(trader, account_obj, account_id, order_id):
     return False, None, last_err
 
 
+def _write_producer_status(acc):
+    with _EXPORT_LOCK:
+        exports = {key: dict(value) for key, value in
+                   _EXPORT_STATE.get(str(acc["account_id"]), {}).items()}
+    last_tick = _MAIN_STATE.get("last_run", 0)
+    value = dict(account_id=acc["account_id"], version=_EXECUTOR_VERSION,
+                 started_at=_EXECUTOR_STARTED_AT, pid=os.getpid(),
+                 last_main_tick_at=datetime.fromtimestamp(last_tick).isoformat() if last_tick else None,
+                 observed_at=datetime.now().isoformat(), exports=exports)
+    _atomic_write_json(os.path.join(acc["dirs"]["status"], "producer.json"), value)
+
+
 def _write_heartbeat(acc):
     """Refresh this account's heartbeat. Called at each main tick and, crucially,
     during the order-wait loop so a slow order does not starve the heartbeat and
     make the strategy side falsely detect a disconnect."""
     _atomic_write_json(os.path.join(acc["dirs"]["status"], "heartbeat.json"),
                        {"ts": datetime.now().isoformat(), "account_id": acc["account_id"]})
+    _write_producer_status(acc)
 
 
 def _heartbeat_loop(acc):
@@ -673,6 +714,7 @@ def write_quotes(acc):
     if now - _LAST_QUOTES.get(account_id, 0) < interval:
         return False
     _LAST_QUOTES[account_id] = now
+    _record_export(acc, "quotes")
     try:
         cfg = _load_json(os.path.join(acc["dir"], "config.json")) or {}
         subscriptions = _load_json(os.path.join(acc["dirs"]["status"], "subscriptions.json")) or {}
@@ -703,8 +745,10 @@ def write_quotes(acc):
         _atomic_write_json(os.path.join(acc["dirs"]["status"], "quotes.json"), {
             "timestamp": datetime.now().isoformat(), "account_id": account_id,
             "source": "qmt", "quotes": quotes, "instruments": instruments})
+        _record_export(acc, "quotes", True)
         return True
     except Exception as e:
+        _record_export(acc, "quotes", False, str(e))
         if now - _QUOTE_ERRORS.get(account_id, 0) >= MAIN_LOG_INTERVAL_SEC:
             _QUOTE_ERRORS[account_id] = now
             log("[%s] quote export failed: %s" % (account_id, str(e)[:120]))

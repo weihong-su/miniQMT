@@ -93,6 +93,12 @@ http://localhost:5000          # web1.0 (Flask)，随系统自动启动
 
 ---
 
+### IPC 模式首次核对
+
+按 [IPC 部署指南](docs/site/miniqmt/qmt-ipc-fallback.md) 启动大 QMT 内置脚本，再启动 miniQMT。检查 `GET /api/connection/status` 中的 `ipc.ready`、账户快照和各股行情状态；午休、收盘的参考行情允许 `ready=true` 且 `trading_ready=false`。
+
+Web 的账户更新时间必须看来源时间，不能只看页面刷新。重启后总开关需要手动确认，其他分开关与单会话状态按各自规则恢复。更新源码后，以新进程启动日志的 `code_id` 核对加载结果；不要通过手写 IPC 订单验证安装。
+
 ## 3. 核心功能开关
 
 所有开关在 `config.py` 中配置：
@@ -174,7 +180,7 @@ python test/run_integration_regression_tests.py --all --verbose        # 详细�
 
 测试报告：`test/integration_test_report.md`
 
-当前版本为 **v3.9.6（2026-10-31）**，回归配置包含 38 个测试组（含 `fast` 快速子集）。`--all` 默认排除重复的 `fast` 组，`--all-with-fast` 包含快速子集；使用 Anaconda `python39` 在隔离副本实测为 38 组、172 次模块执行、3867 次用例执行全部通过，0 失败、0 错误、0 跳过。统计包含重复覆盖。
+当前发布版号仍为 **v3.9.6（2026-10-31）**；2026-11-27 的 IPC 与 Web 修正记录在 [开发中变更](CHANGELOG.md#unreleased)。当前回归配置包含 39 个测试组（含 `fast`）。2026-11-27 使用 Anaconda `python39` 在隔离源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行全部通过，0 失败、0 错误、0 跳过，成功率 100%**。次数包含 fast 与专项组的重复覆盖，不等同于源代码行覆盖率。
 
 ### 单个测试文件
 

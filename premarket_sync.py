@@ -36,6 +36,7 @@ class PreMarketSyncScheduler:
         self.compensation_window = config.PREMARKET_SYNC_TIME["compensation_window_minutes"]
         self.running = False
         self.timer = None
+        self.readiness_timer = None
         self.config_manager = get_config_manager()
 
     def calculate_next_sync_time(self):
@@ -158,6 +159,13 @@ class PreMarketSyncScheduler:
         delay = (next_time - datetime.now()).total_seconds()
         logger.info(f"下次盘前同步: {next_time.strftime('%Y-%m-%d %H:%M:%S')} (倒计时{delay/3600:.1f}小时)")
 
+        if config.ENABLE_QMT_IPC_FALLBACK:
+            if self.readiness_timer:
+                self.readiness_timer.cancel()
+            self.readiness_timer = threading.Timer(
+                max(0.0, delay - config.QMT_IPC_PREFLIGHT_LEAD_SECONDS), check_ipc_readiness)
+            self.readiness_timer.daemon = True
+            self.readiness_timer.start()
         self.timer = threading.Timer(delay, self._sync_and_reschedule)
         self.timer.daemon = True
         self.timer.start()
@@ -176,7 +184,47 @@ class PreMarketSyncScheduler:
         self.running = False
         if self.timer:
             self.timer.cancel()
+        if self.readiness_timer:
+            self.readiness_timer.cancel()
         logger.info("盘前同步调度器已停止")
+
+
+def check_ipc_readiness():
+    """独立盘前检查只读数据源，不启动生产端或恢复交易开关。"""
+    if not config.ENABLE_QMT_IPC_FALLBACK:
+        return None
+    from qmt_ipc_data import QmtIpcDataAdapter
+    state = QmtIpcDataAdapter().get_readiness()
+    notify = logger.info if state["ready"] else logger.warning
+    notify(f"[IPC_READY] 盘前数据{'已就绪' if state['ready'] else '未就绪'} "
+           f"heartbeat={state['heartbeat']}, account={state['account']}, quotes={state['quotes']}")
+    return state
+
+
+def _take_open_snapshot_with_retry(position_manager):
+    """仅在原有盘前补偿窗口内重试，窗口外不伪补开盘数据。"""
+    import settlement_db
+    now = datetime.now()
+    start = now.replace(hour=config.PREMARKET_SYNC_TIME["hour"],
+                        minute=config.PREMARKET_SYNC_TIME["minute"], second=0, microsecond=0)
+    end = start + timedelta(minutes=config.PREMARKET_SYNC_TIME["compensation_window_minutes"])
+    if not start <= now < end:
+        return -1, False, False
+    while True:
+        rows, equity_ok = settlement_db.take_snapshot(position_manager, settlement_db.SNAPSHOT_OPEN)
+        fresh = (config.ENABLE_SIMULATION_MODE or not config.ENABLE_QMT_IPC_FALLBACK or
+                 getattr(position_manager.qmt_trader, "position_snapshot_valid", False) is True)
+        complete = rows >= 0 and equity_ok and fresh
+        now = datetime.now()
+        if complete or not start <= now < end:
+            return rows, equity_ok, complete
+        delay = min(config.PREMARKET_SNAPSHOT_RETRY_SECONDS, (end - now).total_seconds())
+        if delay <= 0:
+            return rows, equity_ok, complete
+        logger.warning(f"开盘快照不完整，{delay:.0f}秒后在盘前窗口内重试")
+        time.sleep(delay)
+        if datetime.now() >= end:
+            return rows, equity_ok, complete
 
 
 def perform_premarket_sync():
@@ -214,6 +262,8 @@ def perform_premarket_sync():
         switch_count = sync_special_switches()
         results['switches_synced'] = switch_count
         logger.info(f"✓ 开关{switch_count}个")
+
+        results['ipc_readiness'] = check_ipc_readiness()
 
         # 步骤3: 重新初始化xtquant行情接口 (可配置)
         logger.info("[3/10] xtdata重连")
@@ -326,15 +376,17 @@ def perform_premarket_sync():
 
                 settlement_db.ensure_schema()
                 snapshot_pm = get_position_manager()
-                snap_rows, snap_equity_ok = settlement_db.take_snapshot(
-                    snapshot_pm, settlement_db.SNAPSHOT_OPEN)
+                snap_rows, snap_equity_ok, snap_complete = _take_open_snapshot_with_retry(snapshot_pm)
+                results['snapshot_complete'] = snap_complete
                 results['snapshot_positions'] = snap_rows
                 results['snapshot_equity_ok'] = snap_equity_ok
-                if snap_rows < 0 or not snap_equity_ok:
+                if not snap_complete:
                     results['errors'].append(
                         f"开盘快照不完整(持仓={snap_rows}, 净值={snap_equity_ok})")
-                logger.info(f"✓ 开盘快照: 持仓{snap_rows}只, "
-                            f"净值{'成功' if snap_equity_ok else '失败'}")
+                notify = logger.info if snap_complete else logger.warning
+                notify(f"{'✓' if snap_complete else '⚠'} 开盘快照: 持仓{snap_rows}只, "
+                       f"净值{'成功' if snap_equity_ok else '失败'}, "
+                       f"基准{'完整' if snap_complete else '不可用或不完整'}")
             except Exception as e:
                 logger.error(f"✗ 开盘快照失败: {str(e)}")
                 results['errors'].append(f"开盘快照失败: {str(e)}")
@@ -350,7 +402,9 @@ def perform_premarket_sync():
         logger.info("✓ 已记录")
 
         logger.info("=" * 50)
-        logger.info(f"盘前同步完成({execution_time}ms)")
+        results['status'] = 'partial' if results['errors'] else 'success'
+        (logger.warning if results['errors'] else logger.info)(
+            f"盘前同步{'部分完成' if results['errors'] else '完成'}({execution_time}ms)")
         logger.info("=" * 50)
 
         return results

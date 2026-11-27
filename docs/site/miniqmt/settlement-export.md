@@ -28,7 +28,7 @@
 | `time_source` | 成交时间来源，四态见下 |
 | `recorded_at` | 落库时刻 |
 | `order_id` | 委托编号。网格路径写 `trade_id` 的本就是它，历史行由回填补齐 |
-| `fill_ids` / `fills` | 原始成交编号（分号分隔）/ 合并笔数。库里存**原始 deal 粒度**，`fills` 恒为 1 |
+| `fill_ids` / `fills` | 原始成交编号集合 / 分笔数；普通分笔为 1，网格按委托聚合一行并保留全部原始编号与分笔数 |
 | `strategy_code` / `strategy_label` | 策略内部标识 / 中文枚举标签（落库时写死） |
 | `is_simulation` | 是否模拟成交 |
 | `commission_source` / `commission_rate` | 手续费来源（`broker`/`estimated`/`unknown`）与实际使用的费率 |
@@ -117,6 +117,14 @@ WHERE trade_id IS NOT NULL AND row_status='active'
 对账补记的行：能拿到成交时间就按真实时间落 `exchange`；拿不到才标 `reconcile_backfill`
 ——`parse_deal_time()` 已接住成交查询把 `traded_time` 转成的 `pandas.Timestamp`（naive-UTC），
 避免"补记时刻"冒充成交时间。
+
+### 跨日回执与聚合防重（2026-11-27）
+
+IPC 可能返回历史回执，补账须按实际成交日、账号、委托、证券与方向读取有效流水，不能以“程序今天启动”替代成交日期。短委托号可跨日或跨证券复用；网格聚合行已包含的 `fill_ids` 不应再次作为 external 分笔写入。
+
+历史成交补录清理 `ORDER_*` 占位时也限定实际成交日，保留今天同号的合法占位。查重失败暂停本轮补写，不把读取异常当作“没有记录”；借用外部连接时遵守调用方提交边界。
+
+Web 交易列表与交割单导出过滤 `row_status=active`。精确重复修正工具 `scripts/repair_duplicate_trade.py` 默认只预览，指定保留 / 排除行后核对账号、委托、证券、方向、实际日期及价量；应用前一致性备份，将重复行标为 `superseded` 并在同事务写审计，不删除原回执或调整持仓现金。已成交数据修正应在维护流程中先预览、确认重复证据，再应用。
 
 ## 券商对账单导入
 

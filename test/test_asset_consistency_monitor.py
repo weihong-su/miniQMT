@@ -132,7 +132,7 @@ class TestAssetConsistencyMonitor(unittest.TestCase):
 
     def test_skips_simulation_other_backends_and_closed_market(self):
         for name in ('ENABLE_SIMULATION_MODE', 'ENABLE_XTQUANT_MANAGER',
-                     'ENABLE_QMT_IPC_FALLBACK', 'ENABLE_QMT_RPC_FALLBACK'):
+                     'ENABLE_QMT_RPC_FALLBACK'):
             with self.subTest(name=name), patch.object(config, name, True):
                 self.pm._monitor_total_asset_consistency()
         with patch.object(config, 'is_continuous_trade_time', return_value=False):

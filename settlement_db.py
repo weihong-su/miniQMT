@@ -57,6 +57,27 @@ def _connect(db_path=None):
 
 # ============================== run_events ==============================
 
+def read_open_validation(db_path=None):
+    """只读返回当日开盘财务校验，缺少证据时不推断为通过。"""
+    result = dict(status="unavailable", date=datetime.now().strftime('%Y-%m-%d'),
+                  observed_at=None, identity_diff=None)
+    conn = None
+    try:
+        conn = _connect(db_path)
+        row = conn.execute(
+            "SELECT validation_status, observed_at, identity_diff FROM account_equity_daily "
+            "WHERE account=? AND date=? AND snapshot_type='open'",
+            (get_account_id(), result['date'])).fetchone()
+        if row:
+            result.update(status=row[0] or "unverified", observed_at=row[1], identity_diff=row[2])
+    except sqlite3.Error:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+    return result
+
+
 def log_event(event_type, level='INFO', detail=None, code=None,
               order_id=None, trade_id=None, account=None, db_path=None):
     """写一条运行事件。
@@ -730,7 +751,7 @@ def record_trade(record, conn=None, db_path=None):
 
         if not _has_extended_schema(conn, db_path):
             # 迁移未跑：模拟表多半也不存在，统一降级到旧表旧列，先保证不丢数据
-            return _insert_legacy(conn, record, trade_id, strategy, now_str)
+            return _insert_legacy(conn, record, trade_id, strategy, now_str, owns_conn)
 
         if is_sim and not db_migrate.table_exists(conn, 'trade_records_sim'):
             logger.warning("trade_records_sim 不存在，模拟成交暂存 trade_records；"
@@ -771,6 +792,24 @@ def record_trade(record, conn=None, db_path=None):
         account_used = record.get('account') or get_account_id()
         order_id_used = (str(record.get('order_id'))
                          if record.get('order_id') is not None else None)
+        # 聚合网格与分笔回调共用写事务，成交编号包含关系作为第二道防重。
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        if not is_sim and order_id_used and strategy != _cfg('GRID_STRATEGY_NAME', 'grid'):
+            day = str(deal_time_str or record.get('trade_time') or '')[:10]
+            code = _norm_code(record.get('stock_code'))
+            fill_ids = set(str(record.get('fill_ids') or trade_id or '').split(','))
+            rows = conn.execute(
+                "SELECT fill_ids FROM trade_records WHERE COALESCE(account,'')=? "
+                "AND order_id=? AND (stock_code=? OR stock_code LIKE ?) AND trade_type=? "
+                "AND substr(COALESCE(NULLIF(deal_time_str,''),trade_time),1,10)=? "
+                "AND strategy=? AND COALESCE(row_status,'active')='active'",
+                (account_used, order_id_used, code, code+'.%', record.get('trade_type'),
+                 day, _cfg('GRID_STRATEGY_NAME', 'grid'))).fetchall()
+            if fill_ids != {''} and any(fill_ids.issubset(set(str(row[0] or '').split(','))) for row in rows):
+                if owns_conn:
+                    conn.commit()
+                return 'duplicate'
         params = (
             account_used,
             record.get('stock_code'),
@@ -957,7 +996,7 @@ def _insert_raw(conn, record, now_str, owns_conn, db_path=None):
         return 'failed'
 
 
-def _insert_legacy(conn, record, trade_id, strategy, now_str):
+def _insert_legacy(conn, record, trade_id, strategy, now_str, owns_conn):
     """迁移未执行时的降级写入，只写旧列。
 
     宁可少几个归因字段，也不能丢成交记录。
@@ -972,7 +1011,8 @@ def _insert_legacy(conn, record, trade_id, strategy, now_str):
              record.get('trade_time') or now_str, record.get('trade_type'),
              record.get('price'), record.get('volume'), record.get('amount'),
              trade_id, record.get('commission'), strategy))
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return 'legacy_inserted' if cur.rowcount else 'duplicate'
     except Exception as e:
         logger.error(f"交易流水降级写入失败: 流水号={trade_id}, error={e}")

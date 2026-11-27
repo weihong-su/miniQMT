@@ -52,6 +52,42 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 ---
 
+## Flask 账户与 IPC 状态（2026-11-27 开发中）
+
+这些扩展以 Flask 直连为准；网关兼容端点不保证下发同样字段。
+
+### `GET /api/status` 的 `account`
+
+| 字段 | 含义 |
+| --- | --- |
+| `dataStatus` | `fresh` / `stale` / `unavailable`，按账户来源与刷新结果判断 |
+| `timestamp` / `dataAgeSeconds` | 原始来源时间与年龄；首次无来源时可为空，失败不改成当前时间 |
+| `dataError` | 刷新失败或缺乏来源的说明 |
+| `totalAssets` / `availableBalance` / `frozenCash` / `maxHoldingValue` | 柜台总资产、可用、冻结和持仓市值 |
+| `valuation` | 另行记录行情估值、柜台市值、资产差额及证据时点 |
+| `quoteMode` | `realtime` / `reference`，连续交易或参考时段 |
+| `openValidation` | 当日开盘财务证据，含 `status`、`date`、`observed_at`、`identity_diff` |
+
+`openValidation.status` 为 `valid`、`pending_review`、`unverified` 或 `unavailable`。账户新鲜与开盘差额待复核可以同时出现；恒等式为“可用 + 冻结 + 持仓市值”，差额只告警，不触发断连或反推现金。账户查询失败保留最后有效金额和原时间；没有有效证据时前端显示 `--`。
+
+### `GET /api/connection/status` 的 `ipc`
+
+IPC 实盘模式返回下列结构，其他模式下 `ipc` 可为空：
+
+| 字段 | 含义 |
+| --- | --- |
+| `heartbeat` / `account` / `quotes` | 各来源的 `available`、`asof`、`age_seconds`、`max_age_seconds` 和错误 |
+| `quotes.stocks` | 各股 `reason`、`message`、`quote_asof`、`quote_age_seconds` 等诊断 |
+| `producer` | 大 QMT 的版本、PID、启动 / 主循环时间与账户、报价导出结果 |
+| `ready` | 当前时段数据链路就绪 |
+| `trading_ready` | 连续交易时段且配置股票池报价可用于交易判断 |
+
+`connected` 是交易管理器连接状态，不能单凭它断言账户或每股行情都可用。午休或收盘允许 `ready=true`、`trading_ready=false`，并显示参考报价；连续交易时仍按单股源时间最大 15 秒及健康门槛 70 判断。
+
+### `GET /api/macd/advice` 的历史状态
+
+成功结果可包含 `history_status=fresh|cache`、`history_asof` 与既有 `updated`，分别说明日线来源和指标日期。指数刷新失败但本地合法日线足量时明确标记缓存；必需日线不足时返回 `status=error`，`history_status=insufficient|unavailable` 和原因。指标不可用也不会伪造新建议；最少日线数量由 `MACD_ADVICE_MIN_HISTORY_BARS` 配置。
+
 ## 行情源健康 {#market-health}
 
 `GET /api/market/health` 返回内存中的行情源健康快照，不触发行情请求、不落库，重启后样本清空。当前默认 `MARKET_HEALTH_OBSERVE_ONLY = False`，持仓监控会按健康评分与数据源策略判断行情是否可参与交易信号检测；如需只观察不拦截，可显式改为 `True`。
@@ -89,7 +125,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
     该接口目前由 Flask 直连模式提供；xtquant_manager 网关的 `/api/v1/health` 是网关账号连接健康，不等同于 miniQMT 的行情源健康评分。
 
 !!! info "Tushare `no_data` 语义  [2026-09-29]"
-    历史查询成功但区间内没有交易日时，Tushare 健康事件返回 `ok=true`、`reason=no_data`，不会累计连续失败或触发冷却。日期范围过滤后没有新增记录使用 `reason=no_new_data`。只有返回 `None`、超时或异常才计入 `failure_count`；前端或监控程序不应把 `no_data` 解释为数据源离线。
+    明确日期区间内没有新增记录可记为 `no_data` / `no_new_data`。未指定增量区间的首次请求为空、且没有足量本地历史缓存时记为 `empty_history` 失败；`None`、超时和异常同样计入失败。实时与历史按不同 purpose 记录，不能用实时健康评分证明历史数据已更新。
 
 ---
 
@@ -99,7 +135,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 |------|------|------|--------|
 | GET | `/api/positions` | 当前持仓列表（含 SQLite 持久化字段：名称/建仓日/止损价；`change_percentage` 由 tick 计算，裸代码自动补交易所后缀） | ✅ 完整 |
 | GET | `/api/positions-all` | 全部持仓详情 | ✅ 完整 |
-| GET | `/api/trade-records` | 交易记录（优先读 SQLite `trade_records`，`trade_time` 统一格式化为 `YYYY-MM-DD HH:MM:SS`） | ✅ 完整 |
+| GET | `/api/trade-records` | 交易记录（Flask 读取有效 `trade_records`，排除 `superseded`，`trade_time` 统一格式化为 `YYYY-MM-DD HH:MM:SS`） | ✅ 完整 |
 | GET | `/api/orders` | **当日委托列表**（含在途未成交），在途委托排在前面 | ✅ 完整 |
 | POST | `/api/initialize_positions` | 初始化持仓数据 🔑 需 Token | ❌ |
 | POST | `/api/holdings/init` | 初始化持股配置（返回体含 `status`，供 web1.0 按钮判定成败） 🔑 需 Token | ❌ |
@@ -150,7 +186,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
       （拿不到成交时间，`trade_time` 即补记时刻）。该字段只在导出交割单的诊断列中可见，
       `/api/trade-records` 不下发
 
-    对账幂等：同一笔成交不会被写第二遍（详见[交割单数据管道](settlement-export.md#push-outage-reconcile)）。
+    对账按实际成交日、账号、委托、证券和方向隔离；已记账的网格聚合不会再次补成 external。历史成交清理占位时保留今日同号记录。Flask 列表过滤被审计排除的 `superseded` 行（详见[交割单数据管道](settlement-export.md#push-outage-reconcile)）。
 
 !!! tip "交易时间格式兼容"
     `trade_records.trade_time` 在库中可能混合多种写法：QMT 成交回报带微秒（`2026-07-31 09:31:50.610000`）、系统内部写入为秒级（`2026-07-31 09:30:44`），历史数据还可能是 ISO（含 `T` 分隔符）。`_format_trade_time_for_response()` 依次尝试带微秒/不带微秒的严格解析，再回退到 `pd.to_datetime`，全部失败才原样返回并记 WARNING。此前统一走 `pd.to_datetime` 在混合格式下会整列抛错，导致交易记录接口 500。
@@ -177,6 +213,11 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 !!! note "自动买入模块调用边界  [v3.9.4]"
     自动买入实盘模式复用该端点，并在请求前通过 `/api/positions` 做持仓防重；持仓查询非 200、非 JSON 或返回 `status=error` 时本轮 fail-safe，不调用买入端点。自动买入自身的 `--simulate` 模式只运行筛选与记录链路，不会向该端点发送请求；它不同于主程序 `ENABLE_SIMULATION_MODE=True` 时由该端点执行模拟成交。
+
+!!! note "自动买入限额的入口边界"
+    交易执行器内部实盘自动策略（含网格）独立核对单股全持仓及在途预占，门槛为 `MAX_POSITION_VALUE`；未知提交与未同步成交继续保留占用。`M_real` / `manual*` 手动策略不进入该新增门控。
+
+    此 Web 端点沿用 `manual_buy`，独立自动买入模块也复用它。`X-Automatic-Trade: 1` 当前用于受限止损补仓检查，不能视为通用敞口门控开关。调用者须同时核对服务端实际入口和自身策略约束；不能把请求已受理等同于已成交。
 
 !!! note "网关下单走 v1 接口"
     xtquant_manager 网关模式下，下单使用 `/api/v1/accounts/{account_id}/orders`。web2.0 在网关模式下通过 v1 接口下单，而不是调用 Flask 的 `/api/actions/execute_buy`。
@@ -241,7 +282,8 @@ web1.0 网格悬停卡片直接使用该接口。为避免前端重复换算，�
 |------|------|
 | `stats.profit_ratio` | 与 `stats.pnl_snapshot.profit_ratio` 同源，真实网格盈亏率，小数格式 |
 | `stats.grid_profit` | 与 `stats.pnl_snapshot.total_pnl` 同源，真实网格盈亏金额 |
-| `stats.current_investment` / `stats.max_investment` | 资金使用分子/分母 |
+| `stats.current_investment` / `stats.max_investment` | 网格 lot 成本使用量 / 上限，不等于账户全持仓市值 |
+| `stats.buy_budget` | 最近一次 lot 买入预算诊断：`blocked`、`remaining`、`required_amount`、`required_volume`、`reserved_price`；尚无诊断时可为空 |
 | `stats.deviation_ratio` | 网格中心漂移偏离，等同 `GridSession.get_deviation_ratio()`，即 `abs(current_center_price - center_price) / center_price` |
 | `stats.center_deviation_ratio` | 带方向的中心漂移偏离，`(current_center_price - center_price) / center_price`；前端用它显示“上移/下移” |
 | `stats.market_deviation_ratio` | 当前市价相对当前网格中心价的偏离，`abs(current_price - current_center_price) / current_center_price` |

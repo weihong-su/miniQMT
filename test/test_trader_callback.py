@@ -35,6 +35,7 @@ import os
 import time
 import sqlite3
 import threading
+import tempfile
 import unittest
 import pandas as pd
 from datetime import datetime, timedelta, timezone
@@ -690,45 +691,39 @@ class TestTraderCallback(TestBase):
     # ===================================================================
 
     def test_c1_take_profit_half_trade_syncs_profit_triggered_to_sqlite(self):
-        """take_profit_half 成交后，profit_triggered 应立即写入 SQLite"""
-        stock_code = "301560"
-        order_id = 940572673
-
-        conn = sqlite3.connect(config.DB_PATH)
-        conn.execute("""
-            INSERT OR REPLACE INTO positions
-            (stock_code, volume, available, cost_price, profit_triggered, last_update)
-            VALUES (?, 1100, 500, 42.12, 0, ?)
-        """, (stock_code, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
-        conn.close()
-
-        self.pm.track_order(stock_code, order_id, "take_profit_half", {"volume": 600})
-        trade = _FakeTrade(order_id=order_id, stock_code=f"{stock_code}.SZ")
-        self.pm._on_trade_callback(trade)
-
-        # 等待后台线程写入（最多3秒）
-        deadline = time.time() + 3.0
-        profit_triggered_in_db = 0
-        while time.time() < deadline:
-            conn = sqlite3.connect(config.DB_PATH)
-            row = conn.execute(
-                "SELECT profit_triggered FROM positions WHERE stock_code=?",
-                (stock_code,)
-            ).fetchone()
-            conn.close()
-            if row and row[0]:
-                profit_triggered_in_db = row[0]
-                break
-            time.sleep(0.1)
-
-        self.assertEqual(profit_triggered_in_db, 1,
-                         "take_profit_half 成交后 profit_triggered 应立即同步到 SQLite")
-
-        conn = sqlite3.connect(config.DB_PATH)
-        conn.execute("DELETE FROM positions WHERE stock_code=?", (stock_code,))
-        conn.commit()
-        conn.close()
+        """真实异步同步应在三秒内落库，重复组运行不能继承其他测试的数据库锁。"""
+        stock_code, order_id = "301560", 940572673
+        finished = threading.Event()
+        original_sync = self.pm._sync_profit_triggered_to_sqlite
+        def sync(code):
+            try:
+                original_sync(code)
+            finally:
+                finished.set()
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "profit_sync.db")
+            conn = sqlite3.connect(database)
+            try:
+                conn.execute("""CREATE TABLE positions
+                    (stock_code TEXT PRIMARY KEY,volume INTEGER,available INTEGER,
+                     cost_price REAL,profit_triggered INTEGER,last_update TEXT)""")
+                conn.execute("INSERT INTO positions VALUES (?,1100,500,42.12,0,?)",
+                             (stock_code, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                conn.commit()
+            finally:
+                conn.close()
+            with patch.object(config, "DB_PATH", database), \
+                 patch.object(self.pm, "_sync_profit_triggered_to_sqlite", side_effect=sync):
+                self.pm.track_order(stock_code, order_id, "take_profit_half", {"volume": 600})
+                self.pm._on_trade_callback(_FakeTrade(order_id, f"{stock_code}.SZ"))
+                self.assertTrue(finished.wait(3), "实际异步写入必须在三秒内结束")
+            conn = sqlite3.connect(database)
+            try:
+                row = conn.execute("SELECT profit_triggered FROM positions WHERE stock_code=?",
+                                   (stock_code,)).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(row[0], 1, "take_profit_half 成交后 profit_triggered 应立即同步到 SQLite")
 
     def test_c1b_take_profit_half_trade_marks_memory_profit_triggered(self):
         """take_profit_half 成交后，内存持仓也应标记 profit_triggered"""
@@ -3102,42 +3097,40 @@ class TestTraderCallback(TestBase):
                 self.pm._reconciled_stock_codes = set()
 
     def test_i1_reconnect_does_not_block_forever_when_old_trader_stop_hangs(self):
-        """重连清理旧 xttrader 时应有超时保护，不能被 stop() 永久卡住。"""
+        """旧 stop 尚未放行时新连接必须能返回，避免磁盘日志耗时影响判断。"""
+        entered, release, returned = threading.Event(), threading.Event(), threading.Event()
         class BlockingOldTrader:
             def stop(self):
-                time.sleep(0.3)
-
+                entered.set()
+                release.wait(5)
         class NewTrader:
             def register_callback(self, callback):
                 self.callback = callback
-
             def start(self):
                 pass
-
             def connect(self):
                 return 0
-
             def subscribe(self, account):
                 return 0
-
         trader = easy_qmt_trader(path="dummy", account="TEST_ACCOUNT")
         trader.xt_trader = BlockingOldTrader()
-
-        old_timeout = getattr(config, "QMT_STOP_TIMEOUT", None)
-        try:
-            config.QMT_STOP_TIMEOUT = 0.05
-            with self._patch_xtquant_trader(NewTrader()):
-                start = time.time()
-                result = trader.connect()
-                elapsed = time.time() - start
-        finally:
-            if old_timeout is None:
-                delattr(config, "QMT_STOP_TIMEOUT")
-            else:
-                config.QMT_STOP_TIMEOUT = old_timeout
-
-        self.assertIsNotNone(result)
-        self.assertLess(elapsed, 0.2, "旧 trader.stop() 卡住时 connect() 也不应长时间阻塞")
+        results = []
+        def connect():
+            try:
+                results.append(trader.connect())
+            finally:
+                returned.set()
+        worker = threading.Thread(target=connect)
+        with patch.object(config, "QMT_STOP_TIMEOUT", 0.05), self._patch_xtquant_trader(NewTrader()):
+            try:
+                worker.start()
+                self.assertTrue(entered.wait(2), "旧 stop 必须已开始执行")
+                self.assertTrue(returned.wait(2), "旧 stop 未结束时新连接必须独立返回")
+                self.assertFalse(release.is_set())
+                self.assertIsNotNone(results[0])
+            finally:
+                release.set()
+                worker.join(5)
 
     # ── I2~I5: 重连后旧 callback 不得干扰新连接（P0-2 回归） ────────────────
     #

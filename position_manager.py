@@ -118,32 +118,8 @@ class PositionManager:
         self.monitor_thread = None
         self.stop_flag = False
 
-        # 模拟模式: 跳过 QMT 连接，避免无 QMT 时测试卡住
-        if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
-            logger.warning("[SIMULATION] 模拟模式: 跳过 QMT 连接")
-            self.qmt_trader = None
-            self.qmt_connected = False
-        else:
-            # 初始化交易接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 客户端）
-            self.qmt_trader = _create_qmt_trader()
-
-            # 修复：检查QMT连接结果
-            connect_result = self.qmt_trader.connect()
-
-            if connect_result is None:
-                logger.error("[ERROR] QMT未连接")
-                logger.warning("[WARNING] 离线模式")
-                # 设置标志位，标记QMT未连接
-                self.qmt_connected = False
-            else:
-                logger.info("[OK] QMT已连接")
-                self.qmt_connected = True
-                # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
-                self.qmt_trader.register_trade_callback(self._on_trade_callback)
-                if hasattr(self.qmt_trader, 'register_order_callback'):
-                    self.qmt_trader.register_order_callback(self._on_order_callback)
-                # Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
-                self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
+        self.qmt_trader = None
+        self.qmt_connected = False
 
         # 创建内存数据库
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -189,7 +165,6 @@ class PositionManager:
         self._sync_duration_seconds = None
         self.sync_thread = None
         self.sync_stop_flag = False
-        self.start_sync_thread()
 
         # 添加信号状态管理
         self.signal_lock = threading.Lock()
@@ -246,6 +221,36 @@ class PositionManager:
         self._reconnect_thread = None  # 记录后台重连线程（仅用于诊断）
         self._asset_monitor_last_check = None
         self._asset_monitor_abnormal = False  # 与重连状态共用 _reconnect_lock 保护
+
+        # 对象状态及共享锁就绪后才连接和暴露回调，防止启动回执访问半初始化对象。
+        # 模拟模式: 跳过 QMT 连接，避免无 QMT 时测试卡住
+        if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+            logger.warning("[SIMULATION] 模拟模式: 跳过 QMT 连接")
+            self.qmt_trader = None
+            self.qmt_connected = False
+        else:
+            # 初始化交易接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 客户端）
+            self.qmt_trader = _create_qmt_trader()
+
+            # 修复：检查QMT连接结果
+            connect_result = self.qmt_trader.connect()
+
+            if connect_result is None:
+                logger.error("[ERROR] QMT未连接")
+                logger.warning("[WARNING] 离线模式")
+                # 设置标志位，标记QMT未连接
+                self.qmt_connected = False
+            else:
+                logger.info("[OK] QMT已连接")
+                self.qmt_connected = True
+                # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
+                self.qmt_trader.register_trade_callback(self._on_trade_callback)
+                if hasattr(self.qmt_trader, 'register_order_callback'):
+                    self.qmt_trader.register_order_callback(self._on_order_callback)
+                # Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
+                self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
+
+        self.start_sync_thread()
 
 
     def check_qmt_connection_health(self):
@@ -326,6 +331,7 @@ class PositionManager:
                 if success:
                     with self._reconnect_lock:
                         self.qmt_connected = True
+                        self._ipc_reconnect_interval = config.XTQUANT_RECONNECT_INTERVAL
                     # 重新注册成交回报回调
                     try:
                         self.qmt_trader.register_trade_callback(self._on_trade_callback)
@@ -352,7 +358,13 @@ class PositionManager:
                     logger.info(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}成功，恢复正常运行')
                 else:
                     self.qmt_connected = False
-                    logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}失败')
+                    if config.ENABLE_QMT_IPC_FALLBACK:
+                        with self._reconnect_lock:
+                            self._ipc_reconnect_interval = min(config.QMT_IPC_RECONNECT_MAX_INTERVAL_SECONDS,
+                                                               self._qmt_reconnect_interval() * 2)
+                        logger.debug('[RECONNECT] IPC 仍不可用，继续等待生产端')
+                    else:
+                        logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}失败')
             except Exception as e:
                 self.qmt_connected = False
                 logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}异常: {e}')
@@ -367,12 +379,16 @@ class PositionManager:
         )
         self._reconnect_thread.start()
         if reason:
-            logger.info(f"[RECONNECT] 已发起{mode}请求: {reason}")
+            (logger.debug if config.ENABLE_QMT_IPC_FALLBACK else logger.info)(f"[RECONNECT] 已发起{mode}请求: {reason}")
         return False
 
     def start_qmt_connect_async(self, reason="manual"):
         """对外提供的异步连接入口（用于模式切换或手动连接）。"""
         return self._start_qmt_connect_worker(mode="connect", reason=reason)
+
+    def _qmt_reconnect_interval(self):
+        base = config.XTQUANT_RECONNECT_INTERVAL
+        return getattr(self, '_ipc_reconnect_interval', base) if config.ENABLE_QMT_IPC_FALLBACK else base
 
     def _attempt_qmt_reconnect(self):
         """
@@ -397,7 +413,7 @@ class PositionManager:
                 logger.info('[RECONNECT] 已有连接任务进行中，跳过本次重连')
                 return False
             now = time.time()
-            cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+            cooldown = self._qmt_reconnect_interval()
 
             if now - self._last_reconnect_time < cooldown:
                 remaining = int(cooldown - (now - self._last_reconnect_time))
@@ -407,7 +423,7 @@ class PositionManager:
             self._last_reconnect_time = now
 
         # 锁外启动后台重连，避免阻塞监控线程
-        logger.warning('[RECONNECT] 开始尝试重连 QMT 交易接口...')
+        (logger.debug if config.ENABLE_QMT_IPC_FALLBACK else logger.warning)('[RECONNECT] 开始尝试重连 QMT 交易接口...')
         return self._start_qmt_connect_worker(mode="reconnect", reason="auto_reconnect")
 
     def _probe_qmt_recovered(self):
@@ -434,6 +450,8 @@ class PositionManager:
         try:
             if not trader.ping_xttrader():
                 return False
+            if config.ENABLE_QMT_IPC_FALLBACK and hasattr(trader, '_read_account_snapshot'):
+                trader._read_account_snapshot()
             ensure_push_ready = getattr(trader, 'ensure_trade_push_ready', None)
             if callable(ensure_push_ready) and not ensure_push_ready():
                 logger.warning('[MONITOR] QMT 同步查询已恢复，但交易主推订阅未恢复，保持断连状态')
@@ -446,6 +464,9 @@ class PositionManager:
             except Exception as cb_error:
                 logger.warning(f'[MONITOR] QMT 恢复后重新注册回调失败，保持断连状态: {cb_error}')
                 return False
+            if config.ENABLE_QMT_IPC_FALLBACK:
+                with self._reconnect_lock:
+                    self._ipc_reconnect_interval = config.XTQUANT_RECONNECT_INTERVAL
             return True
         except Exception as e:
             logger.debug(f'[MONITOR] QMT 恢复探测异常(视为未恢复): {e}')
@@ -2468,7 +2489,7 @@ class PositionManager:
     def _monitor_total_asset_consistency(self):
         """核对可用现金、冻结资金及行情持仓市值，仅告警，不改变连接状态。"""
         if (config.ENABLE_SIMULATION_MODE or config.ENABLE_XTQUANT_MANAGER
-                or config.ENABLE_QMT_IPC_FALLBACK or config.ENABLE_QMT_RPC_FALLBACK
+                or config.ENABLE_QMT_RPC_FALLBACK
                 or not config.is_continuous_trade_time()):
             return
 
@@ -2588,7 +2609,7 @@ class PositionManager:
             return account_info
         except Exception as e:
             if config.ENABLE_QMT_IPC_FALLBACK:
-                log_throttled(logger, logging.ERROR, 'ipc_account_unavailable',
+                log_throttled(logger, logging.WARNING, 'ipc_account_unavailable',
                               f"获取账户信息时出错: {e}")
             else:
                 logger.error(f"获取账户信息时出错: {str(e)}")
@@ -5077,6 +5098,10 @@ class PositionManager:
                                 '可能是盘前同步connect()失败导致，强制标记断连'
                             )
                             self.qmt_connected = False
+                        if config.ENABLE_QMT_IPC_FALLBACK and not self.qmt_connected and self._probe_qmt_recovered():
+                            self.qmt_connected = True
+                            self.last_position_update_time = 0
+                            logger.info('[MONITOR] IPC 源数据已恢复，结束等待')
                         qmt_ok = self.qmt_connected
                         logger.debug(
                             f'[MONITOR][非交易时段][loop#{loop_count}] '
@@ -5086,20 +5111,20 @@ class PositionManager:
                         if not qmt_ok:
                             consecutive_errors += 1
                             # 检查是否在重连冷却期内，减少警告噪音
-                            cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                            cooldown = self._qmt_reconnect_interval()
                             in_cooldown = (time.time() - self._last_reconnect_time) < cooldown
 
                             if (consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3)
                                     and not in_cooldown):
                                 # 达到阈值且冷却已结束时，报告本次重连尝试
-                                logger.error(
+                                (logger.debug if config.ENABLE_QMT_IPC_FALLBACK else logger.error)(
                                     f'❌ [MONITOR][非交易时段] 连续 {consecutive_errors} 次断连，触发重连'
                                 )
                                 self._attempt_qmt_reconnect()
                                 consecutive_errors = 0
                             elif not in_cooldown:
                                 # 非冷却期：输出WARNING提醒用户
-                                logger.warning(
+                                (logger.debug if config.ENABLE_QMT_IPC_FALLBACK else logger.warning)(
                                     f'[MONITOR][非交易时段] QMT 已断连，累计 {consecutive_errors}/'
                                     f'{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)} 次，将尝试重连'
                                 )
@@ -5114,19 +5139,21 @@ class PositionManager:
                     # QMT 断连时的休眠策略优化
                     if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
                         # 检查是否在重连冷却期内
-                        cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                        cooldown = self._qmt_reconnect_interval()
                         time_since_last_reconnect = time.time() - self._last_reconnect_time
 
                         if time_since_last_reconnect < cooldown:
                             # 冷却期内：使用较长间隔，减少日志噪音
-                            sleep_sec = min(60, config.MONITOR_NON_TRADE_SLEEP)
+                            sleep_sec = (config.QMT_IPC_HEALTH_PROBE_INTERVAL_SECONDS
+                                         if config.ENABLE_QMT_IPC_FALLBACK else
+                                         min(60, config.MONITOR_NON_TRADE_SLEEP))
                             logger.debug(
                                 f"非交易时间(第{loop_count}次循环), QMT断连冷却中"
                                 f"(剩余{int(cooldown - time_since_last_reconnect)}秒), 休眠{sleep_sec}秒"
                             )
                         else:
                             # 非冷却期：缩短休眠，让重连检测更及时
-                            sleep_sec = 10
+                            sleep_sec = config.QMT_IPC_HEALTH_PROBE_INTERVAL_SECONDS if config.ENABLE_QMT_IPC_FALLBACK else 10
                             logger.debug(f"非交易时间(第{loop_count}次循环), QMT断连, 休眠{sleep_sec}秒")
                     else:
                         sleep_sec = config.MONITOR_NON_TRADE_SLEEP
@@ -5197,15 +5224,14 @@ class PositionManager:
                                 f'[MONITOR] QMT 已断连，缓存数据不计为成功'
                                 f'（{consecutive_errors}/{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)}）'
                             )
-                            in_cooldown = (time.time() - self._last_reconnect_time) < getattr(
-                                config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                            in_cooldown = (time.time() - self._last_reconnect_time) < self._qmt_reconnect_interval()
                             if (consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3)
                                     and not in_cooldown):
-                                logger.error(
+                                (logger.debug if config.ENABLE_QMT_IPC_FALLBACK else logger.error)(
                                     f'❌ [MONITOR_CRITICAL] 连续{consecutive_errors}次QMT断连，触发重连'
                                 )
                                 self._attempt_qmt_reconnect()
-                            time.sleep(5)
+                            time.sleep(config.QMT_IPC_HEALTH_PROBE_INTERVAL_SECONDS if config.ENABLE_QMT_IPC_FALLBACK else 5)
                             last_loop_time = time.time()
                             continue
 
@@ -6394,10 +6420,12 @@ class PositionManager:
 
 # 单例模式
 _instance = None
+_instance_lock = threading.RLock()
 
 def get_position_manager():
-    """获取PositionManager单例"""
+    """串行完成实例初始化，防止启动回调与主线程重复创建对象。"""
     global _instance
-    if _instance is None:
-        _instance = PositionManager()
-    return _instance
+    with _instance_lock:
+        if _instance is None:
+            _instance = PositionManager()
+        return _instance

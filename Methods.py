@@ -196,6 +196,23 @@ def getStockData(code,
         return None
 
 
+def getIndexData(code, offset=100, freq=9, adjustflag='qfq'):
+    """指数走通达信指数接口，显式保留交易所，避免误取同号股票。"""
+    normalized = str(code).upper()
+    pure = normalized.split('.')[0]
+    if normalized.startswith(('SH.', 'SZ.')):
+        market, pure = normalized.split('.', 1)
+        normalized = pure + '.' + market
+    if pure in ('000001', '999999') and normalized.endswith('.SH'):
+        market, pure = 1, '000001'
+    elif pure.startswith('399'):
+        market = 0
+    else:
+        raise ValueError("指数代码缺少明确交易所")
+    client = Quotes.factory('std')
+    return client.index(symbol=pure, market=market, frequency=freq, start=0, offset=offset)
+
+
 def IsMarketGoingUp():
     # 指数代码
     indices = {

@@ -13,6 +13,7 @@ from typing import Optional, Dict, List
 import threading
 import time
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import config
@@ -457,6 +458,7 @@ class GridTradingManager:
         self.pending_grid_orders: Dict[str, dict] = {}  # 实盘委托待成交确认: {order_id: pending_info}
         self.submitting_grid_orders: Dict[str, dict] = {}  # 锁外下单保护: {submit_id: order_plan}
         self._position_cleared_confirmations: Dict[str, int] = {}
+        self.buy_budget_statuses: Dict[int, dict] = {}
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
         self.reconcile_lock = threading.Lock()  # 防止运行期 pending 对账并发进入
         self.last_order_reconcile_time = 0.0
@@ -1831,6 +1833,7 @@ class GridTradingManager:
             del self.sessions[stock_code_key]
             logger.debug(f"[网格] _stop_grid_session_unlocked: 从sessions中移除 {stock_code} (key={stock_code_key})")
         self._position_cleared_confirmations.pop(stock_code_key, None)
+        self.buy_budget_statuses.pop(session_id, None)
         if session_id in self.trackers:
             del self.trackers[session_id]
             logger.debug(f"[网格] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
@@ -1983,7 +1986,7 @@ class GridTradingManager:
         return None
 
     def _check_level_crossing(self, session: GridSession, tracker: PriceTracker, price: float,
-                              allow_sell: bool = True):
+                              allow_sell: bool = True, allow_buy: bool = True):
         """检查是否穿越档位"""
         levels = session.get_grid_levels()
         logger.debug(f"[网格] _check_level_crossing: session_id={session.id}, stock_code={session.stock_code}, "
@@ -2007,7 +2010,7 @@ class GridTradingManager:
                        f"price={price:.2f}, 等待回调{session.callback_ratio*100:.2f}%")
 
         # 检查下穿(买入档位)
-        elif price < levels['lower'] and not tracker.waiting_callback:
+        elif allow_buy and price < levels['lower'] and not tracker.waiting_callback:
             logger.debug(f"[网格] _check_level_crossing: 检测到下穿买入档位 price={price:.2f} < lower={levels['lower']:.2f}")
             # Gap 2修复：max_investment 耗尽时跳过买入穿越检测。
             # 若不检查，买入失败后 tracker 虽重置为 waiting=False，但价格仍在下轨以下，
@@ -2090,6 +2093,10 @@ class GridTradingManager:
                 except Exception as e:
                     logger.debug(f"[网格] 持仓受限原因待确认: {e}")
 
+        risk_price = self._calculate_buy_reserved_price(
+            stock_code, current_price,
+            not config.ENABLE_SIMULATION_MODE and config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL
+            and config.GRID_USE_COUNTERPARTY_PRICE)
         with self.lock:
             session = self.sessions.get(self._normalize_code(stock_code))
             if not session:
@@ -2144,10 +2151,14 @@ class GridTradingManager:
                     tracker.reset(current_price)
                 logger.info(f"[网格] {stock_code} 可卖数量已恢复，重新评估当前价格")
 
+            budget = self._update_buy_budget_status_unlocked(session, risk_price)
+            if budget["blocked"] and tracker.direction == 'falling':
+                tracker.reset(current_price)
             tracker.update_price(current_price)
 
             # 3. 检查是否穿越新档位
-            self._check_level_crossing(session, tracker, current_price, allow_sell=not sell_restricted)
+            self._check_level_crossing(session, tracker, current_price,
+                                      allow_sell=not sell_restricted, allow_buy=not budget["blocked"])
 
             # 4. 检查回调触发
             signal_type = tracker.check_callback(session.callback_ratio)
@@ -3269,6 +3280,39 @@ class GridTradingManager:
     def _create_submit_id(self, session_id: int, side: str) -> str:
         return f"{session_id}:{side}:{int(time.time() * 1000000)}"
 
+    def get_buy_budget_status(self, stock_code: str) -> dict:
+        """读取已评估的买入预算，不访问柜台。"""
+        with self.lock:
+            session = self.sessions.get(self._normalize_code(stock_code))
+            return dict(getattr(self, "buy_budget_statuses", {}).get(session.id, {})) if session else {}
+
+    def _update_buy_budget_status_unlocked(self, session, reserved_price):
+        """持锁评估预算，资金不足只阻止买入，不暂停会话或卖出。"""
+        remaining = max(0.0, session.max_investment - session.current_investment
+                        - self._get_reserved_buy_amount_unlocked(session.id))
+        required_volume = ((int(session.fixed_volume) // 100) * 100
+                           if session.trade_mode == "shares" else 100)
+        required_amount = max(100, required_volume) * reserved_price
+        state = dict(blocked=remaining < required_amount, remaining=remaining,
+                     required_volume=required_volume, required_amount=required_amount,
+                     reserved_price=reserved_price, reason="budget_insufficient" if remaining < required_amount else "ready")
+        if not hasattr(self, "buy_budget_statuses"):
+            self.buy_budget_statuses = {}
+        previous = self.buy_budget_statuses.get(session.id, {})
+        self.buy_budget_statuses[session.id] = state
+        from logger import log_throttled, reset_log_throttle
+        key = f"grid_buy_budget:{session.id}"
+        if state["blocked"]:
+            log_throttled(logger, logging.INFO, key,
+                          f"[网格] {session.stock_code} 买入预算不足，等待额度恢复 "
+                          f"remaining={remaining:.2f}, required={required_amount:.2f}, "
+                          f"required_volume={required_volume}, reserved_price={reserved_price:.4f}")
+        else:
+            reset_log_throttle(key)
+            if previous.get("blocked"):
+                logger.info(f"[网格] {session.stock_code} 买入预算已恢复，重新评估信号")
+        return state
+
     def _build_grid_order_plan(self, session: GridSession, signal: dict, position_snapshot=None) -> Optional[dict]:
         """锁内生成下单计划；不调用任何券商接口。"""
         stock_code = session.stock_code
@@ -3336,6 +3380,8 @@ class GridTradingManager:
             if reserved_price <= 0:
                 logger.warning(f"[网格] {stock_code} 买入风险价无效")
                 return None
+            if self._update_buy_budget_status_unlocked(session, reserved_price)["blocked"]:
+                return None
 
             # ── 买入量基数统一：与卖出量一致，取持仓总数 × position_ratio ──
             # 原方案买入基于金额(max_investment×position_ratio/price)，卖出基于持仓(available×ratio)，
@@ -3344,7 +3390,9 @@ class GridTradingManager:
             #       如无持仓（首次买入）回退为基于金额计算。
             position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
             current_volume = int(position.get('volume', 0) or 0) if position else 0
-            if current_volume > 0:
+            if session.trade_mode == "shares":
+                volume = (int(session.fixed_volume) // 100) * 100
+            elif current_volume > 0:
                 # 有持仓：买入量与卖出量统一基数 = 总持仓 × position_ratio
                 volume = (int(current_volume * session.position_ratio) // 100) * 100
                 if volume < 100:
@@ -3438,9 +3486,12 @@ class GridTradingManager:
                 )
                 return None
 
-            sell_volume = (int(effective_available * session.position_ratio) // 100) * 100
-            if sell_volume == 0:
-                sell_volume = 100
+            if session.trade_mode == "shares":
+                sell_volume = (int(session.fixed_volume) // 100) * 100
+            else:
+                sell_volume = (int(effective_available * session.position_ratio) // 100) * 100
+                if sell_volume == 0:
+                    sell_volume = 100
             if sell_volume > effective_available:
                 sell_volume = (int(effective_available) // 100) * 100
             if sell_volume <= 0:

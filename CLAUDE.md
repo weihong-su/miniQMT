@@ -240,6 +240,16 @@ Get-Content logs/qmt_trading.log -Wait  # Windows PowerShell
 
 ## 核心架构
 
+### IPC 启动与投递约束（2026-11-27）
+
+- `PositionManager` 必须先建立内存、缓存、版本、信号、委托、刷新、网格及重连状态，再连接交易通道、注册回调，最后启动同步线程。
+- `get_position_manager()` 与 `get_trading_executor()` 的实例构造由可重入锁串行发布；后台回调可在构造返回前到达，不能因此重复构造对象。
+- IPC 无成交消费者时不推进成交去重缓存；委托回报只有在实际回调投递成功后才进入去重集合。回调列表在锁内复制、锁外调用。
+- 跨日补账按实际成交日期、账号、委托、证券及方向隔离；清理 `ORDER_*` 占位流水也必须使用实际成交日。网格聚合行与真实分笔通过 `fill_ids` 核对，不能把已记账网格重复补成 external。
+- 资产公式为可用资金 + 冻结资金 + 持仓市值；资产与估值偏差只告警，不断连、不反推可用现金。
+- 实盘内部自动买入独立核对单股全持仓及在途预占；未知提交不重发，已成但持仓未同步时保留数量核对基准。
+- 新增回归：`test/test_ipc_startup_race.py`、`test/test_runtime_ops_20261126.py`、`test/test_runtime_ops_20261127.py`。说明见 [IPC 指南](docs/site/miniqmt/qmt-ipc-fallback.md)。
+
 ### 关键设计原则
 
 **1. 信号检测与执行分离** (最重要!)
@@ -922,7 +932,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 38 个测试组（含 `fast` 快速子集）。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 39 个测试组（含 `fast` 快速子集）。
 
 ### 测试基础设施
 
@@ -967,9 +977,14 @@ thread_monitor.get_status()
 | `qmt_rpc` | high | 大QMT RPC 交易后端（契约兼容、只读门禁、回调/委托映射） |
 | `simulation_trading_e2e` | critical | 模拟交易模式端到端（核心链路/Web下单/策略四分支/模式切换） |
 | `p1_fixes` | high | 重连缓存刷新/QMT自恢复探测/信号保活与时效兜底/超时泄漏可观测 |
-| `fast` | critical | 快速验证子集（当前配置 59 次模块执行、1487 次用例执行） |
+| `priority_optimization` | critical | 跨日订单身份、成交终态、迁移审计与资产估值 |
+| `executor_cancel_order` | critical | TradingExecutor 撤单通道与委托持仓管理集成 |
+| `grid_pause_after_full_exit` | critical | 全仓止盈或止损成交后的同股网格暂停 |
+| `positions_cache` | critical | 持仓缓存失效、版本触发与假空窗口防护 |
+| `settlement_export` | critical | 交割单、快照、净值、手续费及券商导入导出 |
+| `fast` | critical | 快速验证子集（当前配置 59 次模块执行、1507 次用例执行） |
 
-**测试统计（当前配置）**: 38组（含 `fast`）。`--all` 默认排除重复的 `fast` 组；v3.9.6 发布前于 2026-10-31 使用 Anaconda `python39` 在隔离副本执行 `--all-with-fast`，实测为38组、172次模块执行、3867次用例执行，全部通过、0失败、0错误、0跳过，成功率100%；统计包含 fast 与专项组的重复覆盖。
+**测试统计（当前配置）**：当前回归配置包含 39 个测试组（含 `fast`）。2026-11-27 使用 Anaconda `python39` 在隔离源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行全部通过，0 失败、0 错误、0 跳过，成功率 100%**。次数包含 fast 与专项组的重复覆盖，不等同于源代码行覆盖率。
 
 ### 编写新测试的规范
 

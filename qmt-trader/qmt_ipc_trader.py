@@ -23,7 +23,7 @@ import random
 import math
 import threading
 from datetime import datetime
-from qmt_ipc_data import IpcSnapshotUnavailable, QmtIpcDataAdapter, read_snapshot, source_timestamp
+from qmt_ipc_data import IpcSnapshotUnavailable, QmtIpcDataAdapter, read_snapshot, source_timestamp, heartbeat_is_fresh
 
 try:
     import pandas as pd
@@ -37,7 +37,7 @@ except ImportError:
     config = None
 
 try:
-    from logger import get_logger
+    from logger import get_logger, log_throttled, reset_log_throttle
     logger = get_logger("qmt_ipc_trader")
 except Exception:
     import logging
@@ -225,6 +225,7 @@ class QmtIpcTrader:
         """
         cfg_path = self._dir('config.json')
         existing = self._read_json(cfg_path) or {}
+        previous = dict(existing)
         existing['account_id'] = self.account
         existing['account_type'] = self.account_type
         existing['stocks'] = [self.adjust_stock(code) for code in getattr(config, 'STOCK_POOL', [])]
@@ -236,6 +237,8 @@ class QmtIpcTrader:
         if not existing.get('qmt_path') and self.path:
             existing['qmt_path'] = self.path
         existing['updated_by'] = 'miniQMT'
+        if existing == previous:
+            return
         existing['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
             with open(cfg_path, 'w', encoding='utf-8') as f:
@@ -253,10 +256,12 @@ class QmtIpcTrader:
             self._ensure_dirs()
             self._write_ipc_config()
             if not self._is_qmt_alive():
-                logger.error('QmtIpcTrader 连接失败: 大QMT心跳文件缺失或过期，请确认大QMT端脚本在运行')
+                log_throttled(logger, 30, 'ipc_connect_failure:' + str(self.account),
+                              'IPC 生产端心跳不可用，等待恢复；请核对大 QMT 脚本及输出目录')
                 self._connected = False
                 return None
             self._connected = True
+            reset_log_throttle('ipc_connect_failure:' + str(self.account))
             self._start_deal_poller()
             logger.info('QmtIpcTrader 连接成功（大QMT心跳正常）')
             return (self, self)
@@ -268,9 +273,7 @@ class QmtIpcTrader:
     def _is_qmt_alive(self):
         """检查大QMT心跳文件是否新鲜。"""
         path = self._dir('status', 'heartbeat.json')
-        if not os.path.exists(path):
-            return False
-        return (time.time() - os.path.getmtime(path)) < self.heartbeat_max_age
+        return heartbeat_is_fresh(path, self.heartbeat_max_age)
 
     def ping_xttrader(self):
         """探测大QMT是否在线（供 position_manager 心跳检查）。"""
@@ -317,6 +320,7 @@ class QmtIpcTrader:
         except IpcSnapshotUnavailable as exc:
             snapshot_time, snapshot_error = None, str(exc)
         return {
+            'readiness': QmtIpcDataAdapter(account=self.account).get_readiness(),
             'snapshot_available': snapshot_error is None,
             'snapshot_time': snapshot_time,
             'snapshot_error': snapshot_error,
@@ -335,7 +339,7 @@ class QmtIpcTrader:
 
     def reconnect_xttrader(self):
         """重连：重新检查心跳并重启轮询线程。"""
-        logger.warning('QmtIpcTrader 正在重连（重新检查大QMT心跳）...')
+        logger.debug('QmtIpcTrader 正在重连（重新检查大QMT心跳）...')
         result = self.connect()
         return result is not None
 
@@ -405,9 +409,11 @@ class QmtIpcTrader:
 
                         # 委托状态回调（每个 order_id 每种状态触发一次）
                         order_key = (str(oid), status)
-                        if order_key not in self._seen_orders:
-                            self._seen_orders.add(order_key)
-                            self._fire_order_callback(rec)
+                        with self._cache_lock:
+                            unseen = order_key not in self._seen_orders
+                        if unseen and self._fire_order_callback(rec):
+                            with self._cache_lock:
+                                self._seen_orders.add(order_key)
 
                         if status in ('filled', 'partial', 'partial_cancelled'):
                             self._dispatch_deals(rec)
@@ -418,6 +424,9 @@ class QmtIpcTrader:
 
     def _dispatch_deals(self, rec):
         """原生成交按真实编号投递；旧累计回执按金额差换算分笔价。"""
+        with self._cache_lock:
+            if not self._trade_callbacks:
+                return
         key = str(rec.get('order_id'))
         fills = rec.get('deals')
         if isinstance(fills, list):
@@ -466,7 +475,7 @@ class QmtIpcTrader:
         )
         with self._cache_lock:
             callbacks = list(self._trade_callbacks)
-        success = True
+        success = bool(callbacks)
         for cb in callbacks:
             try:
                 cb(trade)
@@ -476,13 +485,18 @@ class QmtIpcTrader:
         return success
 
     def _fire_order_callback(self, rec):
-        """把回执构造成 XtOrder-like 对象，触发 order_callbacks。"""
+        """只在已注册回调实际投递成功后确认，启动空窗及异常允许下轮重试。"""
         order = self._rec_to_order(rec)
-        for cb in self._order_callbacks:
+        with self._cache_lock:
+            callbacks = list(self._order_callbacks)
+        success = bool(callbacks)
+        for cb in callbacks:
             try:
                 cb(order)
             except Exception as e:
+                success = False
                 logger.error(f'order_callback 异常: {e}')
+        return success
 
     # ------------------------------------------------------------------
     # 下单
@@ -767,32 +781,40 @@ class QmtIpcTrader:
             price=rec.get('price', 0) or rec.get('filled_price', 0),
             traded_volume=filled,
             traded_price=rec.get('filled_price', 0),
-            order_status=_IPC_STATUS_TO_QMT.get(status, 56),
+            order_status=_IPC_STATUS_TO_QMT.get(status, 50),
             status_msg=status,
             strategy_name=rec.get('strategy', ''),
             order_remark=rec.get('remark', ''),
         )
 
     def _read_all_orders(self):
-        """从 done/ 目录聚合近 N 秒内的委托对象列表。"""
-        orders = []
-        done_dir = self._dir('orders', 'done')
-        if not os.path.isdir(done_dir):
-            return orders
+        """合并回执及在途文件；终态回执优先，避免新发布委托漏算预占。"""
+        orders = {}
         cutoff = time.time() - self.done_lookback
-        for fname in os.listdir(done_dir):
-            if not fname.endswith('.json'):
+        for directory in ('pending', 'processing', 'done'):
+            path = self._dir('orders', directory)
+            if not os.path.isdir(path):
                 continue
-            fpath = os.path.join(done_dir, fname)
-            try:
-                if os.path.getmtime(fpath) < cutoff:
+            for fname in os.listdir(path):
+                if not fname.endswith('.json'):
                     continue
-            except OSError:
-                continue
-            rec = self._read_json(fpath)
-            if rec:
-                orders.append(self._rec_to_order(rec))
-        return orders
+                fpath = os.path.join(path, fname)
+                try:
+                    if directory == 'done' and os.path.getmtime(fpath) < cutoff:
+                        continue
+                except OSError:
+                    continue
+                rec = self._read_json(fpath)
+                if not rec:
+                    continue
+                if rec.get('account_id') and str(rec['account_id']) != str(self.account):
+                    continue
+                if directory != 'done':
+                    rec = dict(rec, status='pending', total_volume=rec.get('volume', 0),
+                               orig_timestamp=rec.get('timestamp'))
+                order = self._rec_to_order(rec)
+                orders[str(order.order_id)] = order
+        return list(orders.values())
 
     def query_stock_orders(self):
         """查询当日委托，兼容 easy_qmt_trader.query_stock_orders()。返回 DataFrame。"""

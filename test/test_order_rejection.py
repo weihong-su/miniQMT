@@ -49,6 +49,9 @@ class TestOrderRejection(unittest.TestCase):
 
             pm = Mock()
             pm.qmt_trader = Mock()
+            pm.qmt_trader.position.return_value = []
+            pm.qmt_trader.query_stock_orders.return_value = []
+            pm.qmt_trader.select_slippage.side_effect = lambda **kw: kw['price']
             pm.qmt_trader.can_buy.return_value = True
             pm.qmt_trader.can_sell.return_value = True
             pm.qmt_trader.check_buy.return_value = True

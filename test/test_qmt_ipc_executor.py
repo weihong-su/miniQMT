@@ -328,26 +328,34 @@ class TestHandleAccountHeartbeat(_ExecBase):
         self.assertEqual([f for f in os.listdir(self.acc["dirs"]["status"]) if f.endswith(".tmp")], [])
 
     def test_slow_snapshot_does_not_block_heartbeat(self):
-        started = threading.Event()
-        _orig_write_snapshot = ex.write_snapshot
-        _orig_archive_old = ex.archive_old
+        # 直接验证快照尚未放行时心跳调用已返回，避免把磁盘耗时当成线程阻塞。
+        started, release, returned = threading.Event(), threading.Event(), threading.Event()
+        _orig_write_snapshot, _orig_archive_old = ex.write_snapshot, ex.archive_old
         def slow_snapshot(acc):
             started.set()
-            time.sleep(1.2)
+            release.wait(5)
             return False
-        ex.write_snapshot = slow_snapshot
-        ex.archive_old = lambda acc: None
+        def handle():
+            try:
+                ex.handle_account(self.acc)
+            finally:
+                returned.set()
+        ex.write_snapshot, ex.archive_old = slow_snapshot, lambda acc: None
+        worker = threading.Thread(target=handle)
         try:
-            t0 = time.time()
-            ex.handle_account(self.acc)
-            elapsed = time.time() - t0
+            worker.start()
+            self.assertTrue(started.wait(3))
+            self.assertTrue(returned.wait(2), "快照未完成时心跳处理必须能独立返回")
+            hb = os.path.join(self.acc["dirs"]["status"], "heartbeat.json")
+            self.assertTrue(os.path.exists(hb))
+            self.assertFalse(release.is_set())
         finally:
-            ex.write_snapshot = _orig_write_snapshot
-            ex.archive_old = _orig_archive_old
-        hb = os.path.join(self.acc["dirs"]["status"], "heartbeat.json")
-        self.assertTrue(os.path.exists(hb))
-        self.assertTrue(started.wait(0.5))
-        self.assertLess(elapsed, 0.5)
+            release.set()
+            worker.join(5)
+            snapshot = ex._SNAPSHOT_STATE.get(self.acc["account_id"], {}).get("thread")
+            if snapshot:
+                snapshot.join(5)
+            ex.write_snapshot, ex.archive_old = _orig_write_snapshot, _orig_archive_old
 
     def test_main_starts_all_heartbeat_threads_before_handling_accounts(self):
         acc2_dir = os.path.join(self.tmp, "TEST_ACC_2")

@@ -336,6 +336,14 @@ python -m autobuy.app --once --simulate # 单次安全试跑，不发送真实�
 
 ---
 
+### IPC 运行与 Web 状态（2026-11-27 开发中）
+
+大 QMT 原生账户、行情、下单与撤单通过文件 IPC 提供；miniQMT 启动时先完成共享状态与锁初始化，再连接和注册回调，未成功投递的历史回执保留重试。部署和时效判定见 [IPC 指南](docs/site/miniqmt/qmt-ipc-fallback.md)。
+
+Web1.0 分别展示账户数据新鲜度、实时/参考行情、开盘财务校验和 MACD 历史来源。账户新鲜与财务待复核可同时出现；资产核对包含冻结资金，差额只告警。详见 [Web 说明](web1.0/readme.md) 与 [Web API](docs/site/miniqmt/web-api.md)。
+
+网格固定股数买入按整单预算校验；交易执行器内部实盘自动买入叠加单股全持仓及在途预占上限。边界见 [网格交易](docs/site/miniqmt/grid-trading.md)。代码更新后需重启相应进程加载，运行中的源码标识以启动日志的 `code_id` 为准。
+
 ## 📚 文档
 
 - **[在线文档站](https://weihong-su.github.io/miniQMT/)** - 完整文档（mkdocs，源码在 `docs/site/`）
@@ -354,7 +362,7 @@ python -m autobuy.app --once --simulate # 单次安全试跑，不发送真实�
 
 ### 回归测试框架（推荐）
 
-项目集成了完整的回归测试框架。当前配置包含 38 个测试组（含 `fast` 快速子集）；`--all` 默认排除重复的 `fast` 组，`--all-with-fast` 会连同快速子集一起运行。v3.9.6 发布前于 2026-10-31 使用 Anaconda `python39`，在隔离源码副本执行 `--all-with-fast`：38 组、172 次模块执行、3867 次用例执行全部通过，0 失败、0 错误、0 跳过。次数包含 fast 与专项组的重复覆盖。
+当前回归配置包含 39 个测试组（含 `fast`）。2026-11-27 使用 Anaconda `python39` 在隔离源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行全部通过，0 失败、0 错误、0 跳过，成功率 100%**。次数包含 fast 与专项组的重复覆盖，不等同于源代码行覆盖率。 `--all` 排除重复的 fast 组，`--all-with-fast` 包含该组。
 
 ```bash
 # 快速验证（5分钟内完成，检查关键功能）

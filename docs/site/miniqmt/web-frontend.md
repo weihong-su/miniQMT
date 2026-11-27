@@ -124,11 +124,31 @@ web2.0 用「三级开关总览」面板（`TierSwitches.vue`，位于参数面�
 
 实现见 `web2.0/src/utils/freshness.ts`。
 
+### web1.0 账户来源与 IPC 就绪状态（2026-11-27 开发中）
+
+以下字段来自 Flask 直连，web1.0 已展示；web2.0 的页面年龄提示仍按上表规则。页面轮询、账户来源新鲜度、报价可交易性和财务校验是不同指标。
+
+| 字段 | 状态与含义 |
+| --- | --- |
+| `account.dataStatus` | `fresh` 有效来源；`stale` 保留的过期/刷新失败缓存；`unavailable` 尚无有效来源 |
+| `account.timestamp` / `dataAgeSeconds` | 原始账户来源时间及年龄；失败不刷新为当前时间，初次不可用可为空 |
+| `account.quoteMode` | `realtime` / `reference`，描述连续交易或参考时段 |
+| `account.openValidation` | 当日开盘财务核验；`valid` / `pending_review` / `unverified` / `unavailable` |
+| `account.valuation` | 柜台市值、行情估值、差额和证据时点 |
+
+资产核对包含冻结资金。账户 `fresh` 可同时伴随开盘 `pending_review`；只保留差额告警，不断连、不自动停止策略、不用差额反推现金。
+
+IPC 的 `/api/connection/status` 另返回 `ipc.ready` 与 `ipc.trading_ready`、各股报价及生产端导出信息。午休或收盘显示参考行情且 `trading_ready=false` 正常；这不等于连接断开。仅有新心跳或文件重新导出，也不能把过期单股报价视为实时行情。
+
+web1.0 的 MACD 悬浮窗显示 `history_asof`；指数使用缓存时提示缓存来源，必需历史不足时显示原因。网格悬浮窗显示 `buy_budget` 的剩余额度与需求，预算不足只暂停新增买单判断，卖出和会话开关各自生效。字段结构见 [Web API](web-api.md)。
+
+Python 后端更新需重启加载；前端刷新只重载页面。核对启动日志的 `code_id` 和三个开关，再检查持仓、在途委托与历史回执。部署及排障见 [IPC 指南](qmt-ipc-fallback.md)。
+
 ### 行情源健康与休市空区间
 
 Flask 直连模式可通过 `GET /api/market/health` 查看内存中的行情源健康快照。该快照与上面的前端数据新鲜度是两套指标：前者衡量 xtdata、Tushare、Mootdx 的请求质量，后者衡量页面最后一次成功刷新距今多久。
 
-Tushare 历史查询成功但指定区间没有交易数据时，健康事件记为 `reason=no_data`、`ok=true`，不会累计连续失败或进入冷却。常见场景是周末或法定休市后首个交易日，历史库已更新到前一交易日，而待补区间全部为休市日。`no_data` 表示“请求成功、没有可写入日线”，不表示接口不可用；`None`、超时和异常才属于失败。
+Tushare 明确日期区间内没有新增交易数据时可记为 `no_data` / `no_new_data`。未指定增量区间的首次历史请求返回空表，且没有足量本地缓存时，记录 `empty_history` 失败；不能把必需历史缺失解释为链路正常。实时与历史请求按不同 purpose 记录，历史失败不直接等同于实时行情失效。
 
 该健康接口目前仅由 Flask 直连提供；xtquant_manager 的 `/api/v1/health` 反映网关与账号连接状态，不是行情源评分。完整响应结构见 [Web API · 行情源健康](web-api.md#market-health)。
 

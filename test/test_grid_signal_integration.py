@@ -71,6 +71,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             enabled=False,
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.15,
@@ -102,6 +103,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,  # ±5%
             callback_ratio=0.005,  # 0.5%
             max_deviation=0.15,
@@ -169,6 +171,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.15,
@@ -219,6 +222,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.15,
@@ -267,6 +271,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.20,  # 更大的偏离容忍度
@@ -320,6 +325,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.15,
@@ -366,6 +372,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.30,  # 高容忍度
@@ -414,6 +421,7 @@ class TestGridSignalIntegration(unittest.TestCase):
             stock_code='000001.SZ',
             center_price=10.0,
             current_center_price=10.0,
+            max_investment=20000,
             price_interval=0.05,
             callback_ratio=0.005,
             max_deviation=0.15,
