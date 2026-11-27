@@ -124,7 +124,7 @@ web2.0 用「三级开关总览」面板（`TierSwitches.vue`，位于参数面�
 
 实现见 `web2.0/src/utils/freshness.ts`。
 
-### web1.0 账户来源与 IPC 就绪状态（2026-11-27 开发中）
+### web1.0 账户来源与 IPC 就绪状态（v3.9.7）
 
 以下字段来自 Flask 直连，web1.0 已展示；web2.0 的页面年龄提示仍按上表规则。页面轮询、账户来源新鲜度、报价可交易性和财务校验是不同指标。
 
@@ -208,7 +208,7 @@ Tushare 明确日期区间内没有新增交易数据时可记为 `no_data` / `n
 
 ## 页面标题与发布版本
 
-当前版本为 **v3.9.6（2026-10-31）**。web1.0 和 web2.0 的页面标题都使用 `%MINIQMT_RELEASE_VERSION%` 占位符，真实发布版本统一来自项目根目录的 `release_version.json`。
+当前版本为 **v3.9.7（2026-11-27）**。web1.0 和 web2.0 的页面标题都使用 `%MINIQMT_RELEASE_VERSION%` 占位符，真实发布版本统一来自项目根目录的 `release_version.json`。
 
 - web1.0：`web_server.py` 返回 `web1.0/index.html` 时注入版本号，同时给 `script.js` 和本地 `static/tailwind.min.css` 添加基于 mtime 的缓存版本参数；升级后刷新页面可核对版本
 - web2.0：`web2.0/vite.config.ts` 在 Vite 构建阶段注入版本号，更新 `release_version.json` 后需要重新执行 `npm run build`

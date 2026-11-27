@@ -2,7 +2,7 @@
 
 基于迅投 QMT API 的**无人值守量化交易系统**，集成自动化交易策略执行、智能持仓管理、动态止盈止损和网格交易。
 
-当前版本：**v3.9.6（2026-10-31）**。主要变更见[版本日志](../changelog.md)，长期运行维护见[无人值守运行](unattended.md#runtime-retention)。
+当前版本：**v3.9.7（2026-11-27）**。主要变更见[版本日志](../changelog.md)，IPC 部署见[文件 IPC](qmt-ipc-fallback.md)，长期运行维护见[无人值守运行](unattended.md#runtime-retention)。
 
 ## 核心特性
 

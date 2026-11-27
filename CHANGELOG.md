@@ -6,7 +6,9 @@
 
 ## [Unreleased]
 
-2026-11-27：完善大 QMT 文件 IPC、启动回报处理、跨日账本与 Web 状态说明。当前发布版号仍为 v3.9.6，本节记录主分支开发变更。
+## [3.9.7] - 2026-11-27
+
+本版完善大 QMT 文件 IPC、启动回报处理、跨日账本、自动买入预占与 Web 状态说明。
 
 ### Added
 
@@ -1211,7 +1213,8 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.6...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.9.7...HEAD
+[3.9.7]: https://github.com/weihong-su/miniQMT/compare/v3.9.6...v3.9.7
 [3.9.6]: https://github.com/weihong-su/miniQMT/compare/v3.9.5...v3.9.6
 [3.9.5]: https://github.com/weihong-su/miniQMT/compare/v3.9.4...v3.9.5
 [3.9.4]: https://github.com/weihong-su/miniQMT/compare/v3.9.3...v3.9.4

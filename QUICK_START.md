@@ -180,7 +180,7 @@ python test/run_integration_regression_tests.py --all --verbose        # 详细�
 
 测试报告：`test/integration_test_report.md`
 
-当前发布版号仍为 **v3.9.6（2026-10-31）**；2026-11-27 的 IPC 与 Web 修正记录在 [开发中变更](CHANGELOG.md#unreleased)。当前回归配置包含 39 个测试组（含 `fast`）。2026-11-27 使用 Anaconda `python39` 在隔离源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行全部通过，0 失败、0 错误、0 跳过，成功率 100%**。次数包含 fast 与专项组的重复覆盖，不等同于源代码行覆盖率。
+当前发布版本为 **v3.9.7（2026-11-27）**，IPC 与 Web 修正见 [版本变更](CHANGELOG.md#397---2026-11-27)。当前回归配置包含 39 个测试组（含 `fast`）。2026-11-27 使用 Anaconda `python39` 在隔离源码副本执行 `--all-with-fast`：**39 组、178 次模块执行、4121 次用例执行全部通过，0 失败、0 错误、0 跳过，成功率 100%**。次数包含 fast 与专项组的重复覆盖，不等同于源代码行覆盖率。
 
 ### 单个测试文件
 

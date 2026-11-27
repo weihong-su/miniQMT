@@ -1,6 +1,6 @@
 # web1.0 说明
 
-当前发布版本：**v3.9.6（2026-10-31）**，统一读取根目录 `release_version.json`。
+当前发布版本：**v3.9.7（2026-11-27）**，统一读取根目录 `release_version.json`。
 
 web1.0 是 miniQMT 当前的 Flask 直连监控界面，由 `web_server.py` 启动并托管 `web1.0/index.html`、`script.js`、`static/tailwind.min.css` 等静态资源。默认监听 `127.0.0.1:5000`；多账号启动时端口按账号顺序递增为 `5000`、`5001`、……
 
@@ -54,7 +54,7 @@ web1.0 是 miniQMT 当前的 Flask 直连监控界面，由 `web_server.py` 启�
 - 对手价用于选择限价委托的报价；在途数量、撤废状态应与委托队列和后台日志一起核对。
 - 网页清空日志不会清理旧备份或测试目录。运行数据维护使用默认预览的 `scripts/cleanup_runtime_artifacts.py`，详见[无人值守说明](../docs/site/miniqmt/unattended.md#runtime-retention)。
 
-## 账户、行情与财务状态（2026-11-27 开发中）
+## 账户、行情与财务状态（v3.9.7）
 
 界面刷新成功只表示请求成功。账户金额旁的来源时间与后台状态应分别核对：
 

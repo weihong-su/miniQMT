@@ -549,7 +549,7 @@ miniQMT 内部统一使用 `000001.SZ` / `600036.SH` / `920118.BJ` 格式。用�
 
 ## 发布版本号
 
-当前发布版本为 **v3.9.6（2026-10-31）**，版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`（**运行时**注入，改完重启即生效）；web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符（**构建时**注入，必须重新 `npm run build` 才生效）。
+当前发布版本为 **v3.9.7（2026-11-27）**，版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`（**运行时**注入，改完重启即生效）；web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符（**构建时**注入，必须重新 `npm run build` 才生效）。
 
 !!! warning "发布清单不止两个文件"
     此处原先写的是「只需要同步更新 `release_version.json` 和 `CHANGELOG.md`」，据此执行已经

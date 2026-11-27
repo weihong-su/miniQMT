@@ -52,7 +52,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 ---
 
-## Flask 账户与 IPC 状态（2026-11-27 开发中）
+## Flask 账户与 IPC 状态（v3.9.7）
 
 这些扩展以 Flask 直连为准；网关兼容端点不保证下发同样字段。
 
